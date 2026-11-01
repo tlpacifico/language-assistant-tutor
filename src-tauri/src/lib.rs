@@ -1,9 +1,12 @@
 //! Base da aplicação desktop da fase 1.
 //!
-//! `domain` reúne os contratos e as regras independentes de hardware; a
-//! interface inicial apresenta apenas a pergunta fixa.
+//! `domain` reúne os contratos e as regras independentes de hardware,
+//! `audio` os tipos partilhados com a captura e `storage` os artefactos locais
+//! com JSON atómico e recuperação.
 
+pub mod audio;
 pub mod domain;
+pub mod storage;
 
 /// Arranca a janela Tauri.
 pub fn run() {
