@@ -1,0 +1,27 @@
+# Normalização de fim de linha: ficheiros de texto com LF no repositório.
+* text=auto eol=lf
+
+# Ficheiros que devem manter os bytes originais.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.wav binary
+*.mp3 binary
+*.onnx binary
+*.bin binary
+*.safetensors binary
+*.pth binary
+*.sqlite binary
+*.db binary
+
+# Ficheiros de sistema Windows.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Linguagem dos ficheiros no GitHub.
+*.rs linguist-language=Rust
+*.ts linguist-language=TypeScript
+*.tsx linguist-language=TypeScript

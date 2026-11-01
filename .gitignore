@@ -1,0 +1,114 @@
+# ---------------------------------------------------------------------------
+# Ignorados do projeto (React + TypeScript, Rust + Tauri 2, auxiliar Python)
+# Regra geral: versionar código, configuração e documentação; ignorar
+# dependências, artefactos de compilação, modelos, áudio e dados locais.
+# ---------------------------------------------------------------------------
+
+# --- Sistema operativo e editores -----------------------------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Node / Vite / TypeScript --------------------------------------------
+node_modules/
+dist/
+dist-ssr/
+build/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.eslintcache
+.stylelintcache
+
+# --- Rust / Cargo / Tauri -------------------------------------------------
+# O Cargo.lock é versionado: é uma aplicação, não uma biblioteca.
+target/
+gen/schemas/
+*.rs.bk
+
+# --- Python auxiliar (faster-whisper, Kokoro) -----------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage/
+
+# --- Modelos locais (pesos grandes, preparados fora do repositório) -------
+models/
+*.bin
+*.onnx
+*.safetensors
+*.pth
+*.pt
+*.ckpt
+*.gguf
+
+# --- Áudio produzido durante o desenvolvimento ---------------------------
+# Exceção: fixtures de teste versionáveis em tests/fixtures ou testdata.
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+*.opus
+*.webm
+!**/fixtures/**
+!**/testdata/**
+
+# --- Dados locais da aplicação -------------------------------------------
+# Gravações, derivados e metadados de sessões não pertencem à árvore do código.
+app-data/
+local-data/
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# --- Credenciais e configuração local ------------------------------------
+.env
+.env.*
+!.env.example
+secrets/
+*.pfx
+*.p12
+*.jks
+*.keystore
+
+# --- Registos e temporários ----------------------------------------------
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# --- Ferramentas de agentes / estado local de desenvolvimento -------------
+.opencode/
+.claude/settings.local.json
