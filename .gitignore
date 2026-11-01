@@ -37,7 +37,7 @@ lerna-debug.log*
 # --- Rust / Cargo / Tauri -------------------------------------------------
 # O Cargo.lock é versionado: é uma aplicação, não uma biblioteca.
 target/
-gen/schemas/
+**/gen/schemas/
 *.rs.bk
 
 # --- Python auxiliar (faster-whisper, Kokoro) -----------------------------
