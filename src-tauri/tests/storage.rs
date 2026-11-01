@@ -511,6 +511,70 @@ fn replaces_existing_json_atomically() -> Result<(), AppError> {
 }
 
 #[test]
+fn set_normalized_registers_derived_file() -> Result<(), AppError> {
+    let (_temp, root, store) = fixture();
+    let attempt = store.publish(record(&store, b"RIFF resposta"))?;
+    let directory = attempt_path(&root, &attempt.id);
+    assert!(attempt.normalized_file.is_none(), "ainda não há derivado");
+
+    fs::write(directory.join("normalized.wav"), b"RIFF normalizado")
+        .expect("criar o derivado normalizado");
+
+    let updated = store.set_normalized(&attempt.id, "normalized.wav")?;
+    assert_eq!(
+        updated.normalized_file.as_deref(),
+        Some("normalized.wav"),
+        "o derivado fica registado no manifesto"
+    );
+
+    let restored = store.restore_last()?;
+    let attempt_after = restored.attempt.expect("a resposta continua publicada");
+    assert_eq!(
+        attempt_after.normalized_file.as_deref(),
+        Some("normalized.wav")
+    );
+    assert!(
+        restored.warnings.is_empty(),
+        "o derivado existe, logo não há avisos: {:?}",
+        restored.warnings
+    );
+    assert_eq!(
+        manifest_json(&directory)["normalizedFile"],
+        "normalized.wav"
+    );
+    Ok(())
+}
+
+#[test]
+fn set_normalized_rejects_invalid_reference() -> Result<(), AppError> {
+    let (_temp, root, store) = fixture();
+    let attempt = store.publish(record(&store, b"RIFF resposta"))?;
+    let directory = attempt_path(&root, &attempt.id);
+    fs::write(root.join("evil.wav"), b"RIFF fora da pasta").expect("criar ficheiro fora");
+
+    let escaping = store
+        .set_normalized(&attempt.id, "../evil.wav")
+        .expect_err("uma referência que sai da pasta deve ser recusada");
+    assert_eq!(escaping.code, error_code::ARTIFACT_MISSING);
+    assert!(!escaping.retryable);
+
+    let missing = store
+        .set_normalized(&attempt.id, "normalized.wav")
+        .expect_err("um derivado inexistente não pode ser registado");
+    assert_eq!(missing.code, error_code::ARTIFACT_MISSING);
+    assert!(!missing.retryable);
+
+    // Nada foi registado: a resposta continua sem derivado.
+    assert!(manifest_json(&directory)["normalizedFile"].is_null());
+    let restored = store
+        .restore_last()?
+        .attempt
+        .expect("a resposta continua publicada");
+    assert!(restored.normalized_file.is_none());
+    Ok(())
+}
+
+#[test]
 fn failed_write_before_replace_keeps_data() -> Result<(), AppError> {
     let (_temp, root, store) = fixture();
     let attempt = store.publish(record(&store, b"RIFF resposta"))?;

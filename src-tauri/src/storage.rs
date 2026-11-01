@@ -322,6 +322,32 @@ impl AttemptStore {
         Ok(review)
     }
 
+    /// Regista o derivado normalizado de uma resposta já publicada.
+    ///
+    /// O ficheiro tem de existir dentro da pasta da resposta; a referência fica
+    /// relativa, como as restantes do manifesto, e é resolvida pelo mesmo
+    /// caminho da leitura, sem permitir sair da pasta. A tarefa 3 chama este
+    /// método depois de `normalize_wav` e a tarefa 6 usa-o na coordenação.
+    pub fn set_normalized(&self, attempt_id: &str, reference: &str) -> Result<Attempt, AppError> {
+        let directory = self.attempt_directory(attempt_id)?;
+        let mut manifest = self.read_manifest(&directory)?;
+        let path = resolve_reference(&directory, reference).ok_or_else(|| {
+            artifact_missing(format!(
+                "A referência do áudio normalizado não é válida: {reference}."
+            ))
+        })?;
+        if !path.is_file() {
+            return Err(artifact_missing(format!(
+                "O áudio normalizado não foi encontrado em {}; a resposta mantém os restantes dados.",
+                path.display()
+            )));
+        }
+
+        manifest.normalized_file = Some(reference.to_owned());
+        write_json(&directory.join(MANIFEST_FILE), &manifest)?;
+        Ok(self.load(&manifest)?.attempt)
+    }
+
     /// Regista a última operação aplicada a uma resposta.
     pub fn set_operation(
         &self,
