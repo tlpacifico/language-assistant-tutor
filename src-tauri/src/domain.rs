@@ -332,8 +332,13 @@ impl AppState {
     }
 
     /// Um resultado só se aplica ao pedido pendente e à geração atual do auxiliar.
+    ///
+    /// A geração 0 nunca é aceite: identifica a ausência de uma encarnação do
+    /// processo, pelo que um resultado que a alegue não pode ser aplicado.
     pub fn accepts_result(&self, request_id: &str, generation: u64) -> bool {
-        generation == self.worker_generation && self.active_request.as_deref() == Some(request_id)
+        generation > 0
+            && generation == self.worker_generation
+            && self.active_request.as_deref() == Some(request_id)
     }
 
     /// Ocupa o estado com uma nova gravação, se estiver livre.

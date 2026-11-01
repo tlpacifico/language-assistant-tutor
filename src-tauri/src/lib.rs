@@ -7,6 +7,7 @@
 pub mod audio;
 pub mod domain;
 pub mod storage;
+pub mod worker;
 
 /// Arranca a janela Tauri.
 pub fn run() {
