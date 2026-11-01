@@ -94,6 +94,9 @@ pub struct CaptureInterruption {
 pub type EventSink = Arc<dyn Fn(AudioEvent) + Send + Sync>;
 
 /// Porta de áudio usada pelo serviço.
+///
+/// Captura e reprodução são mutuamente exclusivas: começar a gravar pára a
+/// reprodução e `play` é recusado com `BUSY` enquanto o microfone está aberto.
 pub trait AudioPort: Send + Sync {
     fn availability(&self) -> AvailabilityAudio;
     fn start_capture(&self, target: RecordingTarget) -> Result<(), AppError>;
@@ -295,15 +298,26 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                         }
                     }
                 }
-                Command::Play { path, reply } => match backend.play(path) {
-                    Ok(()) => {
-                        playing = true;
-                        let _ = reply.send(Ok(()));
+                Command::Play { path, reply } => {
+                    // O microfone e a saída não funcionam ao mesmo tempo: a
+                    // captura tem prioridade e a reprodução é recusada até ela
+                    // terminar (só esta camada conhece o estado da captura).
+                    if capturing {
+                        let _ = reply.send(Err(AppError::busy(
+                            "Não é possível reproduzir áudio enquanto o microfone está a gravar.",
+                        )));
+                    } else {
+                        match backend.play(path) {
+                            Ok(()) => {
+                                playing = true;
+                                let _ = reply.send(Ok(()));
+                            }
+                            Err(error) => {
+                                let _ = reply.send(Err(error));
+                            }
+                        }
                     }
-                    Err(error) => {
-                        let _ = reply.send(Err(error));
-                    }
-                },
+                }
                 Command::StopPlayback(reply) => {
                     let result = backend.stop_playback();
                     if result.is_ok() {

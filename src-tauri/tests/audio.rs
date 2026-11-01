@@ -15,7 +15,7 @@ use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use sha2::{Digest, Sha256};
 
 use language_assistant_tutor::audio::capture::{
-    channel, CaptureFailure, CaptureSpec, FailureKind, PendingCapture,
+    channel, CaptureFailure, CaptureSpec, FailureKind, PendingCapture, PARTIAL_FILE,
 };
 use language_assistant_tutor::audio::normalize::normalize_wav;
 use language_assistant_tutor::audio::{
@@ -396,6 +396,101 @@ fn recording_stops_playback() {
         probe.steps().last().map(String::as_str),
         Some("stop_capture")
     );
+}
+
+#[test]
+fn playback_is_blocked_while_recording() {
+    let root = tempfile::tempdir().expect("pasta temporária");
+    let audio_file = root.path().join("resposta.wav");
+    write_wav(
+        &audio_file,
+        int_spec(48_000, 1),
+        &tone(48_000, 440.0, 0.1, 0.2),
+    );
+
+    let fake = FakeAudio::default();
+    let probe = fake.clone();
+    let audio = NativeAudio::with_backend(move || Box::new(fake), |_event: AudioEvent| {})
+        .expect("criar porta de áudio");
+
+    audio.play(audio_file.clone()).expect("reproduzir");
+    let folder = target(root.path(), "gravacao");
+    audio
+        .start_capture(folder.clone())
+        .expect("começar a gravar");
+
+    let error = audio
+        .play(audio_file.clone())
+        .expect_err("reproduzir durante a gravação tem de ser recusado");
+    assert_eq!(error.code, "BUSY");
+    assert!(error.retryable);
+    assert_eq!(
+        probe.steps(),
+        vec!["play", "stop_playback", "start_capture"],
+        "a reprodução recusada não pode chegar ao dispositivo nem retomar a saída"
+    );
+
+    // A gravação continua válida e a recusa não a interrompe.
+    let captured = audio.stop_capture().expect("terminar gravação");
+    assert_eq!(captured.id, folder.id);
+
+    // Terminada a captura, a saída volta a estar disponível.
+    audio.play(audio_file).expect("reproduzir depois de gravar");
+    assert_eq!(probe.steps().last().map(String::as_str), Some("play"));
+}
+
+/// Um WAV cujo cabeçalho não pôde ser fechado não é publicado como recuperável.
+///
+/// O bloqueio de bytes é obrigatório em Windows: a escrita do cabeçalho pelo
+/// escritor falha mesmo com a captura a correr, sem depender de um disco cheio.
+#[cfg(windows)]
+#[test]
+fn unfinalized_header_is_not_published() {
+    use std::fs::OpenOptions;
+
+    let root = tempfile::tempdir().expect("pasta temporária");
+    let folder = target(root.path(), "cabecalho");
+    let pending = PendingCapture::begin(folder.clone(), spec_48k_mono()).expect("iniciar captura");
+    let partial = folder.directory.join(PARTIAL_FILE);
+
+    // Bloco pequeno: fica no buffer do escritor, pelo que só o fecho do
+    // cabeçalho toca no disco bloqueado.
+    pending
+        .channel()
+        .push(vec![50i16; 480])
+        .expect("entregar bloco");
+    wait_for_frames(&pending, 480);
+
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&partial)
+        .expect("abrir o provisório para o bloquear");
+    lock.lock().expect("bloquear o provisório");
+
+    let outcome = pending.finish();
+    drop(lock);
+
+    assert!(
+        outcome.capture.is_none(),
+        "um WAV sem cabeçalho válido não pode ser apresentado como recuperável"
+    );
+    let error = outcome.error.expect("falha explícita");
+    assert_eq!(error.code, "CAPTURE_INTERRUPTED");
+    assert!(
+        error.message.contains("fechar o ficheiro WAV"),
+        "a falha forçada tem de ser o fecho do cabeçalho: {}",
+        error.message
+    );
+    assert!(!folder.directory.join("original.wav").exists());
+    let leftovers: Vec<_> = fs::read_dir(&folder.directory)
+        .expect("ler pasta")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("entradas")
+        .into_iter()
+        .map(|entry| entry.file_name())
+        .collect();
+    assert!(leftovers.is_empty(), "ficaram ficheiros: {leftovers:?}");
 }
 
 // ---------------------------------------------------------------------------

@@ -391,8 +391,11 @@ impl PendingCapture {
 
     /// Fecha o WAV, renomeia o provisório e devolve o que é recuperável.
     ///
-    /// Sem amostras não há ficheiro nenhum: o provisório é removido e o
-    /// resultado diz que não existe áudio recuperável.
+    /// Só publica `original.wav` quando o cabeçalho foi fechado e o ficheiro
+    /// reaberto confirma as amostras escritas: um WAV com tamanhos provisórios
+    /// não é reproduzível e nunca é apresentado como recuperável. Sem amostras
+    /// não há ficheiro nenhum: o provisório é removido e o resultado diz que
+    /// não existe áudio recuperável.
     pub fn finish(mut self) -> CaptureOutcome {
         if let Some(sender) = self.sender.take() {
             let _ = sender.send(Block::End);
@@ -400,12 +403,14 @@ impl PendingCapture {
         let outcome = match self.writer.take() {
             Some(handle) => handle.join().unwrap_or_else(|_| WriterOutcome {
                 frames: 0,
+                finalized: false,
                 error: Some(capture_interrupted(
-                    "A escrita do áudio terminou de forma inesperada; o que já estava gravado foi conservado.",
+                    "A escrita do áudio terminou de forma inesperada e não há áudio recuperável; grave novamente.",
                 )),
             }),
             None => WriterOutcome {
                 frames: 0,
+                finalized: false,
                 error: None,
             },
         };
@@ -414,6 +419,19 @@ impl PendingCapture {
         let error = outcome
             .error
             .or_else(|| self.channel.interruption().map(|failure| failure.error()));
+
+        // Sem cabeçalho fechado o ficheiro não é reproduzível: não se publica.
+        if !outcome.finalized {
+            remove_partial(&self.partial);
+            return CaptureOutcome {
+                capture: None,
+                error: Some(error.unwrap_or_else(|| {
+                    capture_interrupted(
+                        "Não foi possível fechar o cabeçalho do ficheiro WAV e não há áudio recuperável; grave novamente.",
+                    )
+                })),
+            };
+        }
 
         let frames = outcome.frames;
         if frames == 0 {
@@ -425,6 +443,16 @@ impl PendingCapture {
                         "A gravação ficou sem amostras e não há áudio para recuperar; grave novamente.",
                     )
                 })),
+            };
+        }
+
+        // Reabrir confirma que o cabeçalho publicado descreve as amostras que o
+        // escritor contou; sem essa confirmação o áudio não é recuperável.
+        if let Err(verify_error) = verify_closed_wav(&self.partial, self.spec, frames) {
+            remove_partial(&self.partial);
+            return CaptureOutcome {
+                capture: None,
+                error: Some(verify_error),
             };
         }
 
@@ -459,9 +487,10 @@ impl PendingCapture {
     }
 }
 
-/// Resultado do escritor: frames confirmados e eventual falha.
+/// Resultado do escritor: frames confirmados, cabeçalho fechado e eventual falha.
 struct WriterOutcome {
     frames: u64,
+    finalized: bool,
     error: Option<AppError>,
 }
 
@@ -475,6 +504,7 @@ fn write_blocks(
 ) -> WriterOutcome {
     let mut samples = 0u64;
     let mut error = None;
+    let mut finalized = false;
 
     while let Ok(block) = receiver.recv() {
         let Block::Samples(block) = block else {
@@ -503,19 +533,46 @@ fn write_blocks(
         }
     }
 
-    if let Err(finalize_error) = writer.finalize() {
-        let message =
-            format!("Não foi possível fechar o ficheiro WAV da gravação: {finalize_error}.");
-        monitor.record(FailureKind::Writer, Some(message.clone()));
-        if error.is_none() {
-            error = Some(capture_interrupted(message));
+    match writer.finalize() {
+        Ok(()) => finalized = true,
+        Err(finalize_error) => {
+            let message = format!(
+                "Não foi possível fechar o ficheiro WAV da gravação: {finalize_error}. Não há áudio recuperável; grave novamente."
+            );
+            monitor.record(FailureKind::Writer, Some(message.clone()));
+            if error.is_none() {
+                error = Some(capture_interrupted(message));
+            }
         }
     }
 
     WriterOutcome {
         frames: samples / u64::from(channels.max(1)),
+        finalized,
         error,
     }
+}
+
+/// Confirma que o provisório fechado é um WAV PCM16 decodificável com o número
+/// de frames contado pelo escritor.
+fn verify_closed_wav(path: &Path, spec: CaptureSpec, frames: u64) -> Result<(), AppError> {
+    let reader = hound::WavReader::open(path).map_err(|error| {
+        capture_interrupted(format!(
+            "O ficheiro da gravação ficou ilegível ({error}) e não há áudio recuperável; grave novamente."
+        ))
+    })?;
+    let read = reader.spec();
+    let read_frames = u64::from(reader.duration());
+    if read.channels != spec.channels
+        || read.sample_rate != spec.sample_rate
+        || read.bits_per_sample != 16
+        || read_frames != frames
+    {
+        return Err(capture_interrupted(format!(
+            "O ficheiro da gravação ficou incompleto ({read_frames} frames de {frames} esperados) e não há áudio recuperável; grave novamente."
+        )));
+    }
+    Ok(())
 }
 
 /// Duração em milissegundos, arredondada ao milissegundo.
