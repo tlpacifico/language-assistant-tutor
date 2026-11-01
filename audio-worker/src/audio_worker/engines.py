@@ -560,7 +560,19 @@ class EngineRegistry:
 
         progress("loading")
         started = time.perf_counter()
-        pipeline = self._kokoro(paths)
+        try:
+            pipeline = self._kokoro(paths)
+        except WorkerError:
+            raise
+        except Exception as error:
+            # O ``health`` so confirma ficheiros e pacotes: se a construcao do
+            # modelo falhar (por exemplo, pesos incompativeis com a versao do
+            # transformers), o problema e dos modelos preparados, nao da rede.
+            raise WorkerError(
+                f"Não foi possível carregar o modelo Kokoro a partir de «{paths.kokoro_weights}». "
+                "Execute de novo a preparação offline dos modelos.",
+                code=MODEL_MISSING,
+            ) from error
         load_ms = _elapsed_ms(started)
 
         progress("processing")

@@ -397,6 +397,36 @@ def test_synthesize_concatenates_every_segment_at_24k(tmp_path: Path, monkeypatc
     assert result["loadMs"] >= 0 and result["processingMs"] >= 0
 
 
+def test_synthesize_reports_kokoro_load_failure_as_model_error(tmp_path: Path, monkeypatch):
+    """Falha ao construir o modelo e dos modelos preparados, nao erro de rede."""
+    manifest = write_manifest(tmp_path)
+    registry = EngineRegistry(manifest)
+    paths = registry.paths()
+    create_kokoro_assets(paths)
+    monkeypatch.setattr(engines, "missing_synthesis_assets", lambda paths: [])
+    stages: list[str] = []
+
+    def broken_loader(paths, **kwargs):
+        raise RuntimeError("pesos incompatíveis com a versão instalada")
+
+    monkeypatch.setattr(engines, "load_kokoro_pipeline", broken_loader)
+
+    with pytest.raises(WorkerError) as raised:
+        registry.synthesize(
+            {"text": QUESTION, "outputPath": str(tmp_path / "question-cache" / "a.wav")},
+            stages.append,
+        )
+
+    assert raised.value.code == "MODEL_MISSING"
+    assert raised.value.retryable is False
+    assert "Kokoro" in raised.value.message
+    assert "preparação offline" in raised.value.message
+    assert str(paths.kokoro_weights) in raised.value.message
+    # A falha acontece ao carregar o modelo, antes de gerar ou escrever audio.
+    assert stages == ["loading"]
+    assert not (tmp_path / "question-cache").exists()
+
+
 def test_synthesize_rejects_bad_requests(tmp_path: Path):
     registry = EngineRegistry(write_manifest(tmp_path))
 
