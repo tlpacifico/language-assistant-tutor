@@ -42,6 +42,11 @@ npm.cmd install
 | Lint Rust | `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` |
 | Compilar a aplicação sem instalador | `npm.cmd run tauri -- build --no-bundle` |
 | Instalador completo | `npm.cmd run tauri -- build` |
+| Criar o ambiente do auxiliar Python | `py -3.11 -m venv .venv` |
+| Instalar PyTorch CPU + auxiliar | ver [`audio-worker/README.md`](audio-worker/README.md) |
+| Preparar modelos offline (rede) | `.\.venv\Scripts\python.exe -m audio_worker.prepare` |
+| Testes do auxiliar Python | `.\.venv\Scripts\python.exe -m pytest audio-worker/tests -q` |
+| Verificar o ambiente Python | `.\.venv\Scripts\python.exe -m pip check` |
 
 `npm.cmd test` ainda não encontra ficheiros de teste: o Vitest está configurado
 com `passWithNoTests` e a interface só ganha testes na tarefa 7.
@@ -59,7 +64,17 @@ src-tauri/src/lib.rs          Arranque Tauri
 src-tauri/src/domain.rs       Tipos do domínio, AppState e Action
 src-tauri/tests/domain.rs     Regras de ocupação, geração e contrato
 contracts/app-v1.example.json Exemplo partilhado e verificado no teste Rust
+contracts/worker-v1.examples.json  Exemplos do protocolo auxiliar v1
+config/audio.example.json     Configuração pessoal documentada (não versionar a real)
+audio-worker/                 Auxiliar Python (faster-whisper + Kokoro)
+  src/audio_worker/{protocol,engines,prepare,__main__}.py
+  tests/{test_protocol,test_engines,test_offline_models}.py
 ```
+
+O auxiliar Python usa a `.venv` na raiz, fala o protocolo `worker-v1` e nunca
+descarrega modelos durante a prática; ver
+[`audio-worker/README.md`](audio-worker/README.md) para instalação e preparação
+offline.
 
 A pergunta da fase 1 é fixa:
 `Tell me about a time you solved a difficult problem at work.`

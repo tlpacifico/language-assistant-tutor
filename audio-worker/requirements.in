@@ -1,0 +1,16 @@
+# Dependências diretas do auxiliar Python (fase 1).
+#
+# O PyTorch não está aqui: tem de ser instalado primeiro a partir do índice CPU
+# oficial, para não trazer as rodas CUDA. Ver docs/setup (ou o README):
+#
+#   py -3.11 -m venv .venv
+#   .\.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   .\.venv\Scripts\python.exe -m pip install -r audio-worker/requirements.in
+#   .\.venv\Scripts\python.exe -m pip install -e "audio-worker[test]"
+#
+# Versões fixadas pelo plano da fase 1 (secção 1). As dependências transitivas
+# ficam resolvidas e registadas em requirements.lock.txt.
+faster-whisper==1.2.1
+kokoro==0.9.4
+misaki[en]==0.9.4
+soundfile>=0.12.1
