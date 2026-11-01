@@ -111,4 +111,5 @@ temp/
 
 # --- Ferramentas de agentes / estado local de desenvolvimento -------------
 .opencode/
+.superpowers/
 .claude/settings.local.json
