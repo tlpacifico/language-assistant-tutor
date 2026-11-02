@@ -211,9 +211,14 @@ fn fresh_database_has_version_one() {
         report.4
     );
 
-    // Regra R1: esta tarefa cria o esquema e a versão, sem inserir perguntas.
-    assert_eq!(report.5, 0, "nenhuma pergunta é inserida na migração");
-    assert_eq!(report.6, 0, "o seed é responsabilidade da tarefa 2");
+    // A migração não insere perguntas (regra R1); o seed é aplicado por
+    // `Database::open` depois de a migração ter sucesso, dentro da sua própria
+    // transação e marcado uma única vez em `content_seeds`.
+    assert_eq!(
+        report.5, 20,
+        "abrir a base aplica o banco inicial de 20 perguntas"
+    );
+    assert_eq!(report.6, 1, "o seed fica marcado uma única vez");
 
     assert_eq!(
         report.7,

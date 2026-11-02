@@ -1,0 +1,145 @@
+{
+  "version": "questions-v1",
+  "questions": [
+    {
+      "id": "1612f4b0-d437-43ec-b898-bb86ec18bf53",
+      "text": "Tell me about a time you disagreed with a colleague.",
+      "category": "conflict_collaboration",
+      "competencies": ["Gestão de conflitos"],
+      "criteria": ["Explicar a divergência, a ação própria e o desfecho."]
+    },
+    {
+      "id": "53553e89-d464-4803-9dc6-d47842845668",
+      "text": "Describe a time you helped a team work together more effectively.",
+      "category": "conflict_collaboration",
+      "competencies": ["Colaboração"],
+      "criteria": ["Identificar o obstáculo e a contribuição individual."]
+    },
+    {
+      "id": "60e354a6-3a0e-499a-908b-fbfe222b9a9d",
+      "text": "Tell me about a time you had to explain a technical issue to someone without a technical background.",
+      "category": "conflict_collaboration",
+      "competencies": ["Comunicação"],
+      "criteria": ["Explicar a adaptação da mensagem e como verificou a compreensão."]
+    },
+    {
+      "id": "01650db0-7b4f-4563-9776-69a8078b4c88",
+      "text": "Describe a time you worked with someone whose approach was different from yours.",
+      "category": "conflict_collaboration",
+      "competencies": ["Colaboração"],
+      "criteria": ["Explicar como coordenaram o trabalho e o que aconteceu."]
+    },
+    {
+      "id": "d9e244e0-fa3a-4b19-a69f-c3db66e50562",
+      "text": "Tell me about a time you took initiative without being asked.",
+      "category": "leadership_initiative",
+      "competencies": ["Iniciativa"],
+      "criteria": ["Distinguir a decisão própria e o efeito ou aprendizagem."]
+    },
+    {
+      "id": "751d4805-49a6-4431-8fa2-7c024a724816",
+      "text": "Describe a time you helped someone develop a skill.",
+      "category": "leadership_initiative",
+      "competencies": ["Liderança"],
+      "criteria": ["Identificar a necessidade, o apoio prestado e o resultado observado."]
+    },
+    {
+      "id": "4bb9b2a7-77cc-4a71-a407-a21ba7b0b2f6",
+      "text": "Tell me about a time you influenced a decision without formal authority.",
+      "category": "leadership_initiative",
+      "competencies": ["Influência"],
+      "criteria": ["Explicar os argumentos e a contribuição para a decisão."]
+    },
+    {
+      "id": "05e560bf-74d0-44d2-a63a-a64cf4582780",
+      "text": "Tell me about a time you made a mistake at work.",
+      "category": "failure_learning",
+      "competencies": ["Responsabilidade"],
+      "criteria": ["Reconhecer o papel próprio, a reação e a aprendizagem."]
+    },
+    {
+      "id": "8e756d37-ab03-4581-b4ff-806937bd9676",
+      "text": "Describe a time you received feedback that was difficult to hear.",
+      "category": "failure_learning",
+      "competencies": ["Aprendizagem"],
+      "criteria": ["Explicar a reação e como usou ou ponderou o feedback."]
+    },
+    {
+      "id": "8dd35381-2e9a-47a7-8a59-1e0213aeb87d",
+      "text": "Tell me about a time an approach you tried did not work.",
+      "category": "failure_learning",
+      "competencies": ["Reflexão"],
+      "criteria": ["Explicar o que falhou e a mudança ou aprendizagem seguinte."]
+    },
+    {
+      "id": "fcc17711-2174-4a9f-b8dd-ba1b258bcee1",
+      "text": "Tell me about a time you solved a difficult problem at work.",
+      "category": "problem_solving",
+      "competencies": ["Resolução de problemas"],
+      "criteria": ["Explicar o problema, o raciocínio, as ações próprias e o desfecho."]
+    },
+    {
+      "id": "d4c889a8-5040-4926-8a0f-abc5ea147a22",
+      "text": "Describe a time you investigated a problem with incomplete information.",
+      "category": "problem_solving",
+      "competencies": ["Análise"],
+      "criteria": ["Explicar como recolheu informação e lidou com a incerteza."]
+    },
+    {
+      "id": "8b21bb8a-0757-434e-a56b-fa0f3ed2f7f5",
+      "text": "Tell me about a time you had to choose between different solutions.",
+      "category": "problem_solving",
+      "competencies": ["Decisão"],
+      "criteria": ["Explicitar alternativas, compromisso e consequência."]
+    },
+    {
+      "id": "08eb8283-d10a-4ee4-a97f-bf575ee89268",
+      "text": "Describe a time you improved a process that was causing problems.",
+      "category": "problem_solving",
+      "competencies": ["Melhoria de processos"],
+      "criteria": ["Distinguir o problema inicial, a mudança e o efeito observado."]
+    },
+    {
+      "id": "e02d782f-f397-48ab-a9a4-deb5f52d77ee",
+      "text": "Tell me about a time you had competing deadlines.",
+      "category": "priorities_deadlines",
+      "competencies": ["Priorização"],
+      "criteria": ["Explicar critérios de prioridade, comunicação e desfecho."]
+    },
+    {
+      "id": "db078f98-a3ce-4a4e-8c20-90e0ca3c25e3",
+      "text": "Describe a time you realised you might miss a deadline.",
+      "category": "priorities_deadlines",
+      "competencies": ["Gestão de expectativas"],
+      "criteria": ["Explicar quando identificou o risco e como atuou."]
+    },
+    {
+      "id": "74221cc0-cb22-46b8-9732-c3e80751934b",
+      "text": "Tell me about a time you had to reduce the scope of a task.",
+      "category": "priorities_deadlines",
+      "competencies": ["Gestão de âmbito"],
+      "criteria": ["Justificar a escolha e as consequências para o objetivo."]
+    },
+    {
+      "id": "e6ad8be7-967a-497f-b9b3-d509b53b55a6",
+      "text": "Tell me about a time your priorities changed unexpectedly.",
+      "category": "change_adaptation",
+      "competencies": ["Adaptação"],
+      "criteria": ["Explicar a mudança e como reorganizou o trabalho."]
+    },
+    {
+      "id": "4c85f3a8-fc1c-46d0-9d90-37edda1edeb7",
+      "text": "Describe a time you had to learn a new tool or process quickly.",
+      "category": "change_adaptation",
+      "competencies": ["Aprendizagem"],
+      "criteria": ["Explicar a necessidade, a estratégia e o resultado."]
+    },
+    {
+      "id": "6baf143d-bd98-479e-9cf6-0bfa67d1e58b",
+      "text": "Tell me about a time you worked through a major change in your team.",
+      "category": "change_adaptation",
+      "competencies": ["Gestão da mudança"],
+      "criteria": ["Descrever a mudança, a ação individual e a aprendizagem."]
+    }
+  ]
+}

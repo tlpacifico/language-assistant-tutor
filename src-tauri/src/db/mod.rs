@@ -9,7 +9,8 @@
 //! uma base criada por uma versão mais recente é recusada sem escrita. Só depois
 //! se ativam os pragmas e, quando a versão é 0, se aplica a migração dentro de
 //! uma transação. Uma falha reverte tudo; a recuperação nunca apaga nem recria a
-//! base.
+//! base. Depois de a migração estar aplicada, `open` garante o banco inicial de
+//! perguntas: a marca `questions-v1` em `content_seeds` torna o seed único.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -19,6 +20,10 @@ use rusqlite::Connection;
 
 use crate::domain::{error_code, AppError};
 use crate::interview::Result;
+
+mod questions;
+
+pub use questions::*;
 
 /// Versão do esquema escrita em `PRAGMA user_version`.
 pub const DATABASE_VERSION: u32 = 1;
@@ -33,12 +38,19 @@ pub struct Database {
 }
 
 impl Database {
-    /// Abre (ou cria) a base de dados e aplica a migração em falta.
+    /// Abre (ou cria) a base de dados, aplica a migração em falta e garante o
+    /// banco inicial de perguntas.
+    ///
+    /// O seed é idempotente: numa base já semeada, ou já editada pelo
+    /// utilizador, nada é escrito. Uma falha do seed devolve o erro e reverte
+    /// apenas o seed; o esquema migrado mantém-se.
     pub fn open(path: PathBuf) -> Result<Self> {
-        Self::open_with_schema(path, MIGRATION_V1)
+        let database = Self::open_with_schema(path, MIGRATION_V1)?;
+        database.ensure_question_seed()?;
+        Ok(database)
     }
 
-    /// Abre a base com um esquema explícito.
+    /// Abre a base com um esquema explícito, sem aplicar o banco de perguntas.
     ///
     /// A abertura real usa sempre [`MIGRATION_V1`]; os testes de rollback
     /// injetam um esquema inválido para provar que a transação reverte.
