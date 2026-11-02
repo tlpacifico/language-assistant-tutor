@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissões base da janela principal da fase 1.",
+  "description": "Permissões base da janela principal da fase 1, incluindo a subscrição do evento practice://snapshot.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:event:default"]
 }
