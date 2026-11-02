@@ -272,21 +272,21 @@ impl AppService {
 
         let request_id = format!("health-{}", uuid::Uuid::new_v4());
         let request = WorkerRequest::health(request_id.clone());
-        // Uma verificação cujo resultado nunca chega tem de sair de `loading`:
-        // o identificador permite reconhecer a falha do auxiliar mais tarde.
-        *self.lock_health() = Some(request_id);
         match worker_task(move || control.submit(request)).await {
-            Ok(()) => Ok(self.commit(|state| {
-                state.availability.transcription = ComponentState::loading();
-                state.availability.synthesis = ComponentState::loading();
-            })),
-            // Um pedido em curso não permite verificar agora; conserva o que se sabe.
-            Err(error) if error.code == error_code::BUSY => {
-                *self.lock_health() = None;
-                Ok(self.snapshot())
+            Ok(()) => {
+                // O identificador só é guardado depois de o auxiliar aceitar o
+                // pedido: `BUSY` significa que a verificação anterior continua
+                // pendente e é essa que tem de ser reconhecida no timeout.
+                *self.lock_health() = Some(request_id);
+                Ok(self.commit(|state| {
+                    state.availability.transcription = ComponentState::loading();
+                    state.availability.synthesis = ComponentState::loading();
+                }))
             }
+            // Um pedido em curso não permite verificar agora; conserva o que se
+            // sabe e, sobretudo, o identificador da verificação pendente.
+            Err(error) if error.code == error_code::BUSY => Ok(self.snapshot()),
             Err(error) => {
-                *self.lock_health() = None;
                 let snapshot = self.commit(|state| {
                     state.availability.transcription = error_state(&error);
                     state.availability.synthesis = error_state(&error);
@@ -333,6 +333,9 @@ impl AppService {
                 }))
             }
             Err(error) => {
+                // O reinício recusado substitui a verificação pendente: uma
+                // falha tardia dela não pode reescrever este erro.
+                *self.lock_health() = None;
                 let snapshot = self.commit(|state| {
                     state.availability.transcription = error_state(&error);
                     state.availability.synthesis = error_state(&error);
@@ -1074,10 +1077,17 @@ impl AppService {
         if generation == 0 || generation != self.generation.load(Ordering::SeqCst) {
             return;
         }
+        let recovered = health.transcription.status == ComponentStatus::Ready
+            && health.synthesis.status == ComponentStatus::Ready;
         self.commit(|state| {
             state.set_worker_generation(generation);
             state.availability.transcription = health.transcription;
             state.availability.synthesis = health.synthesis;
+            if recovered {
+                // O auxiliar voltou a estar completamente disponível: o erro da
+                // verificação anterior já não descreve o estado atual.
+                state.last_error = None;
+            }
         });
     }
 

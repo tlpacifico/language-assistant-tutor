@@ -151,6 +151,8 @@ struct WorkerState {
     generation: u64,
     running: bool,
     shutdowns: usize,
+    busy_submit: bool,
+    fail_restart: bool,
 }
 
 /// Auxiliar controlado: registra pedidos e permite injetar eventos.
@@ -166,6 +168,8 @@ impl Default for FakeWorker {
                 generation: 1,
                 running: true,
                 shutdowns: 0,
+                busy_submit: false,
+                fail_restart: false,
             }),
         }
     }
@@ -183,6 +187,16 @@ impl FakeWorker {
     fn shutdowns(&self) -> usize {
         self.state.lock().expect("estado do auxiliar").shutdowns
     }
+
+    /// O próximo `submit` é recusado como se já houvesse um pedido pendente.
+    fn fail_next_submit_busy(&self) {
+        self.state.lock().expect("estado do auxiliar").busy_submit = true;
+    }
+
+    /// O próximo `restart` é recusado como se já houvesse um pedido pendente.
+    fn fail_next_restart(&self) {
+        self.state.lock().expect("estado do auxiliar").fail_restart = true;
+    }
 }
 
 impl WorkerControl for FakeWorker {
@@ -195,12 +209,22 @@ impl WorkerControl for FakeWorker {
                 true,
             ));
         }
+        if state.busy_submit {
+            state.busy_submit = false;
+            return Err(AppError::busy("O auxiliar já está a processar um pedido."));
+        }
         state.requests.push(request);
         Ok(())
     }
 
     fn restart(&self) -> Result<(), AppError> {
         let mut state = self.state.lock().expect("estado do auxiliar");
+        if state.fail_restart {
+            state.fail_restart = false;
+            return Err(AppError::busy(
+                "Há um pedido em curso; aguarde que termine antes de reiniciar.",
+            ));
+        }
         state.generation += 1;
         state.running = true;
         Ok(())
@@ -1152,5 +1176,155 @@ async fn failed_health_check_reports_component_error_and_recovers() {
     assert_eq!(
         recovered.availability.synthesis.status,
         ComponentStatus::Ready
+    );
+    assert!(
+        recovered.last_error.is_none(),
+        "a recuperação completa limpa o erro da verificação"
+    );
+}
+
+#[tokio::test]
+async fn busy_refresh_keeps_pending_health_tracking() {
+    let harness = Harness::new().await;
+
+    let first = harness
+        .service
+        .refresh_availability()
+        .await
+        .expect("primeira verificação");
+    assert_eq!(
+        first.availability.transcription.status,
+        ComponentStatus::Loading
+    );
+    let pending = last_health_request(&harness);
+
+    // Uma segunda verificação dentro da janela do pedido pendente recebe BUSY
+    // e não pode substituir o identificador da verificação em curso.
+    harness.worker.fail_next_submit_busy();
+    let busy = harness
+        .service
+        .refresh_availability()
+        .await
+        .expect("verificação ocupada");
+    assert_eq!(
+        busy.availability.transcription.status,
+        ComponentStatus::Loading
+    );
+    assert_eq!(
+        harness
+            .requests()
+            .iter()
+            .filter(|request| request.op == WorkerOp::Health)
+            .count(),
+        1,
+        "o pedido recusado com BUSY não chega ao auxiliar"
+    );
+
+    // O timeout continua a corresponder ao pedido que ficou pendente.
+    harness
+        .service
+        .on_worker_event(WorkerEvent {
+            generation: 1,
+            message: WorkerMessage::Failed {
+                request_id: pending.clone(),
+                error: AppError::new(
+                    error_code::WORKER_TIMEOUT,
+                    "O auxiliar não devolveu o resultado dentro do prazo.",
+                    true,
+                ),
+            },
+        })
+        .await;
+
+    let failed = harness.service.snapshot();
+    assert_eq!(
+        failed.availability.transcription.status,
+        ComponentStatus::Error
+    );
+    assert_eq!(failed.availability.synthesis.status, ComponentStatus::Error);
+    assert_eq!(
+        failed.last_error.expect("erro visível").code,
+        error_code::WORKER_TIMEOUT
+    );
+
+    // Uma verificação posterior recupera e limpa o erro.
+    harness
+        .service
+        .refresh_availability()
+        .await
+        .expect("verificação de recuperação");
+    let recovered_request = last_health_request(&harness);
+    assert_ne!(recovered_request, pending);
+    harness
+        .service
+        .on_worker_event(WorkerEvent {
+            generation: 1,
+            message: WorkerMessage::Completed {
+                request_id: recovered_request,
+                result: WorkerResult::Health(HealthResult {
+                    transcription: ComponentState::ready(),
+                    synthesis: ComponentState::ready(),
+                }),
+            },
+        })
+        .await;
+    let recovered = harness.service.snapshot();
+    assert_eq!(
+        recovered.availability.transcription.status,
+        ComponentStatus::Ready
+    );
+    assert_eq!(
+        recovered.availability.synthesis.status,
+        ComponentStatus::Ready
+    );
+    assert!(recovered.last_error.is_none());
+}
+
+#[tokio::test]
+async fn failed_restart_discards_the_pending_health_handle() {
+    let harness = Harness::new().await;
+    harness
+        .service
+        .refresh_availability()
+        .await
+        .expect("verificação pendente");
+    let pending = last_health_request(&harness);
+
+    harness.worker.fail_next_restart();
+    let error = harness
+        .service
+        .restart_worker()
+        .await
+        .expect_err("o reinício é recusado");
+    assert_eq!(error.code, error_code::BUSY);
+    let refused = harness.service.snapshot();
+    assert_eq!(
+        refused.availability.transcription.status,
+        ComponentStatus::Error
+    );
+    assert_eq!(
+        refused.last_error.as_ref().expect("erro visível").code,
+        error_code::BUSY
+    );
+
+    // A falha tardia da verificação antiga não substitui o erro do reinício.
+    harness
+        .service
+        .on_worker_event(WorkerEvent {
+            generation: 1,
+            message: WorkerMessage::Failed {
+                request_id: pending,
+                error: AppError::new(
+                    error_code::WORKER_TIMEOUT,
+                    "O auxiliar não devolveu o resultado dentro do prazo.",
+                    true,
+                ),
+            },
+        })
+        .await;
+    let after = harness.service.snapshot();
+    assert_eq!(
+        after.last_error.expect("erro do reinício").code,
+        error_code::BUSY
     );
 }
