@@ -474,6 +474,59 @@ fn locked_original_stays_publishable_for_the_next_start() {
     );
 }
 
+/// Um WAV truncado ou vazio é corrupção permanente, não um bloqueio: a captura
+/// fica interrompida (uma vez) e o arranque seguinte não repete o aviso.
+#[test]
+fn corrupt_original_is_interrupted_not_retried() {
+    let harness = harness();
+    let (session, question) = harness.session();
+
+    // Zero bytes: o Hound falha a ler o cabeçalho inicial.
+    let (empty, empty_id) = harness.reserve(&session, &question, 0);
+    fs::write(empty.directory.join("original.wav"), b"").expect("escrever um WAV vazio");
+
+    // Cabeçalho «RIFF...WAVE» válido mas truncado antes de `fmt`/`data`: o Hound
+    // chega ao fim de ficheiro ao ler o bloco seguinte.
+    let (truncated, truncated_id) = harness.reserve(&session, &question, 0);
+    fs::write(
+        truncated.directory.join("original.wav"),
+        b"RIFF\x10\x00\x00\x00WAVE",
+    )
+    .expect("escrever um cabeçalho truncado");
+
+    let report = reconcile(&harness.database, &harness.artifacts).expect("reconciliar");
+    assert!(report.published.is_empty());
+    assert_eq!(report.warnings.len(), 2, "{:?}", report.warnings);
+    assert!(
+        report.warnings.iter().all(|warning| !warning.retryable),
+        "uma corrupção permanente não é repetível: {:?}",
+        report.warnings
+    );
+
+    let detail = harness.detail(&session);
+    for (id, directory) in [
+        (&empty_id, &empty.directory),
+        (&truncated_id, &truncated.directory),
+    ] {
+        let recording = recordings(&detail)
+            .iter()
+            .find(|recording| &recording.id == id)
+            .expect("gravação guardada");
+        assert_eq!(recording.state, RecordingState::Interrupted);
+        assert!(recording.original_file.is_none());
+        assert!(recording.capture.is_none(), "sem duração inventada");
+        assert!(
+            directory.join("original.wav").is_file(),
+            "o ficheiro corrompido é conservado"
+        );
+    }
+
+    // Já não está pendente: o arranque seguinte não volta a avisar.
+    let again = reconcile(&harness.database, &harness.artifacts).expect("reconciliar outra vez");
+    assert!(again.published.is_empty());
+    assert!(again.warnings.is_empty(), "{:?}", again.warnings);
+}
+
 #[test]
 fn part_file_is_not_a_saved_answer() {
     let harness = harness();
@@ -492,6 +545,11 @@ fn part_file_is_not_a_saved_answer() {
     let report = reconcile(&harness.database, &harness.artifacts).expect("reconciliar");
     assert!(report.published.is_empty());
     assert_eq!(report.warnings.len(), 1);
+    assert!(
+        !report.warnings[0].retryable,
+        "uma captura sem original é terminal, não pendente: {:?}",
+        report.warnings
+    );
 
     let detail = harness.detail(&session);
     let recording = &recordings(&detail)[0];

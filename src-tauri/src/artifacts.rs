@@ -329,9 +329,11 @@ pub fn inspect_file(path: &Path) -> Result<CaptureMeta> {
     }
 
     let mut reader = WavReader::open(path).map_err(|error| match error {
-        // Um bloqueio de partilha (32), acesso negado (5) ou bloqueio (33) do
-        // Windows é transitório: o ficheiro pode ser publicado mais tarde.
-        hound::Error::IoError(error) => io_failure(format!(
+        // Só os bloqueios de acesso transitórios do Windows são repetíveis:
+        // partilha (32), acesso negado (5) e bloqueio (33). O Hound também
+        // devolve `IoError` sintético no fim de ficheiro («Failed to read enough
+        // bytes»), sem código do sistema: um cabeçalho truncado é permanente.
+        hound::Error::IoError(error) if is_transient_io(&error) => io_failure(format!(
             "Não foi possível abrir o áudio original neste momento: {error}."
         )),
         error => invalid_audio(format!("O áudio original não é um WAV legível: {error}.")),
@@ -538,6 +540,23 @@ fn io_failure(message: impl Into<String>) -> AppError {
     AppError::new(error_code::STORAGE_WRITE_FAILED, message, true)
 }
 
+/// Apenas os bloqueios de acesso transitórios do Windows são repetíveis.
+///
+/// Códigos do sistema: 32 (partilha), 5 (acesso negado) e 33 (bloqueio). Todos
+/// os outros erros de I/O — incluindo o erro sintético do Hound para o fim de
+/// ficheiro, que não tem código do sistema — são permanentes.
+fn is_transient_io(error: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        matches!(error.raw_os_error(), Some(32 | 5 | 33))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = error;
+        false
+    }
+}
+
 /// Ligações simbólicas e junções do Windows (reparse points).
 fn is_link(metadata: &fs::Metadata) -> bool {
     #[cfg(windows)]
@@ -556,9 +575,17 @@ fn artifact_missing(message: impl Into<String>) -> AppError {
     AppError::new(error_code::ARTIFACT_MISSING, message, false)
 }
 
+/// Captura sem original finalizado: terminal, não repetível pelo mesmo pedido.
+///
+/// A recuperação é gravar de novo; distinguir isto de um bloqueio transitório
+/// permite ao serviço decidir entre «tentar mais tarde» e «captura perdida».
 fn interrupted_capture(recording_id: &str) -> AppError {
-    capture_interrupted(format!(
-        "A captura da gravação {recording_id} foi interrompida e não deixou áudio \
-         original finalizado; a resposta não foi publicada e pode ser gravada de novo."
-    ))
+    AppError::new(
+        error_code::CAPTURE_INTERRUPTED,
+        format!(
+            "A captura da gravação {recording_id} foi interrompida e não deixou áudio \
+             original finalizado; a resposta não foi publicada e pode ser gravada de novo."
+        ),
+        false,
+    )
 }
