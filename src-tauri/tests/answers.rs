@@ -17,7 +17,7 @@ use language_assistant_tutor::artifacts::{normalized_reference, ArtifactStore};
 use language_assistant_tutor::audio::{CapturedAudio, RecordingTarget};
 use language_assistant_tutor::db::Database;
 use language_assistant_tutor::domain::{
-    error_code, AppError, CaptureMeta, Segment, Transcript, TranscriptStatus,
+    error_code, AppError, CaptureMeta, OperationKind, Segment, Transcript, TranscriptStatus,
 };
 use language_assistant_tutor::interview::{
     AdvanceSession, AnswerTarget, ConfirmAnswer, OperationTarget, RecordingState, ReviewOrigin,
@@ -586,6 +586,161 @@ fn transcript_append_creates_and_closes_its_operation() {
         count(&harness.database, "SELECT count(*) FROM transcripts"),
         1
     );
+}
+
+#[test]
+fn operation_starts_running_and_completes_with_its_timing() {
+    let harness = harness();
+    let detail = harness.questions(1);
+    let session = detail.summary.id.clone();
+    let question = detail.questions[0].question.id.clone();
+    let recording_id = harness.record(&session, &question, 0);
+    let target = OperationTarget {
+        session_id: session,
+        session_question_id: question,
+        recording_id: Some(recording_id),
+        selection_version: 1,
+        operation_id: "op-running".to_owned(),
+        worker_generation: 2,
+    };
+
+    // A linha é criada em `running` quando o pedido é submetido, com alvo,
+    // geração e configuração.
+    harness
+        .database
+        .begin_operation(
+            OperationKind::Transcribe,
+            &target,
+            Some(&json!({ "device": "cpu" })),
+        )
+        .expect("registar a operação");
+    assert_eq!(
+        text(
+            &harness.database,
+            "SELECT state FROM operations WHERE id = 'op-running'"
+        ),
+        "running"
+    );
+    assert_eq!(
+        count(
+            &harness.database,
+            "SELECT count(*) FROM operations
+              WHERE id = 'op-running' AND finished_at IS NULL
+                AND worker_generation = 2"
+        ),
+        1
+    );
+    assert_eq!(
+        text(
+            &harness.database,
+            "SELECT source_config_json FROM operations WHERE id = 'op-running'"
+        ),
+        r#"{"device":"cpu"}"#
+    );
+
+    // O resultado fecha a mesma linha, com tempos e sem erro.
+    harness
+        .database
+        .append_transcript(
+            target,
+            transcript("tr-running", "Automatic text."),
+            json!({}),
+        )
+        .expect("guardar a transcrição");
+    let (state, created_at, finished_at, error_json) = harness
+        .database
+        .with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT state, created_at, finished_at, error_json
+                       FROM operations WHERE id = 'op-running'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                        ))
+                    },
+                )
+                .map_err(test_error)
+        })
+        .expect("ler a operação encerrada");
+    assert_eq!(state, "completed");
+    assert!(created_at.is_some(), "a operação guarda a hora de início");
+    assert!(
+        finished_at.is_some(),
+        "a operação guarda a hora de conclusão"
+    );
+    assert!(error_json.is_none(), "uma operação concluída não tem erro");
+}
+
+#[test]
+fn failed_operation_keeps_its_error_and_receives_no_result() {
+    let harness = harness();
+    let detail = harness.questions(1);
+    let session = detail.summary.id.clone();
+    let question = detail.questions[0].question.id.clone();
+    let recording_id = harness.record(&session, &question, 0);
+    let target = OperationTarget {
+        session_id: session,
+        session_question_id: question,
+        recording_id: Some(recording_id),
+        selection_version: 1,
+        operation_id: "op-failed".to_owned(),
+        worker_generation: 2,
+    };
+    harness
+        .database
+        .begin_operation(OperationKind::Transcribe, &target, None)
+        .expect("registar a operação");
+
+    harness
+        .database
+        .fail_operation(
+            "op-failed",
+            &AppError::new(
+                error_code::WORKER_TIMEOUT,
+                "O auxiliar não devolveu o resultado dentro do prazo.",
+                true,
+            ),
+        )
+        .expect("encerrar a operação falhada");
+
+    let (state, error_json, finished) = harness
+        .database
+        .with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT state, error_json, finished_at
+                       FROM operations WHERE id = 'op-failed'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                        ))
+                    },
+                )
+                .map_err(test_error)
+        })
+        .expect("ler a operação falhada");
+    assert_eq!(state, "failed");
+    assert!(
+        error_json.contains(error_code::WORKER_TIMEOUT),
+        "o erro guardado identifica a falha: {error_json}"
+    );
+    assert!(finished.is_some());
+
+    // Um resultado que chegue depois já não encontra uma operação em curso.
+    let error = harness
+        .database
+        .append_transcript(target, transcript("tr-late", "Late."), json!({}))
+        .expect_err("uma operação encerrada não aceita resultados");
+    assert_eq!(error.code, error_code::STALE_SOURCE);
+    assert_eq!(table_count(&harness.database, "transcripts"), 0);
 }
 
 #[test]

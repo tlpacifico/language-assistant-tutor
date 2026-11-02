@@ -186,6 +186,8 @@ struct InterviewState {
     current: Option<QuestionDetail>,
     availability: Availability,
     recording_id: Option<Id>,
+    /// Reserva cuja publicação falhou, espelhada de `pending_publish`.
+    pending_recording_id: Option<Id>,
     finalizing: bool,
     model_job: Option<ModelJobView>,
     playback: Option<PlaybackTarget>,
@@ -206,6 +208,7 @@ impl InterviewState {
             current: None,
             availability: Availability::loading(),
             recording_id: None,
+            pending_recording_id: None,
             finalizing: false,
             model_job: None,
             playback: None,
@@ -283,6 +286,7 @@ impl InterviewState {
             current: self.current.clone(),
             availability: self.availability.clone(),
             recording_id: self.recording_id.clone(),
+            pending_recording_id: self.pending_recording_id.clone(),
             finalizing: self.finalizing,
             model_job: self.model_job.clone(),
             playback: self.playback,
@@ -642,6 +646,78 @@ impl AppService {
         }
     }
 
+    // -- operações ----------------------------------------------------------
+
+    /// Fecha a operação indicada: falhada com o erro, ou interrompida sem ele.
+    ///
+    /// Uma falha ao fechar a linha não substitui o erro original; fica visível
+    /// na fotografia e a reconciliação do próximo arranque recupera a linha.
+    async fn close_operation(
+        &self,
+        database: &Database,
+        operation_id: &str,
+        error: Option<&AppError>,
+    ) {
+        let database = database.clone();
+        let operation_id = operation_id.to_owned();
+        let closed = match error {
+            Some(error) => {
+                let error = error.clone();
+                database_task(move || database.fail_operation(&operation_id, &error)).await
+            }
+            None => database_task(move || database.interrupt_operation(&operation_id)).await,
+        };
+        if let Err(close) = closed {
+            self.record_error(&close);
+        }
+    }
+
+    /// Fecha a operação do trabalho de modelo em curso sem resultado aplicado.
+    ///
+    /// Usada quando o resultado é descartado ou o pedido não chega a ser aceite:
+    /// a operação nunca fica `running` para sempre enquanto a aplicação corre.
+    async fn abandon_model_operation(&self, error: Option<&AppError>) {
+        let operation_id = {
+            let state = self.lock_state();
+            state
+                .model_job
+                .as_ref()
+                .map(|job| job.target.operation_id.clone())
+        };
+        let Some(operation_id) = operation_id else {
+            return;
+        };
+        let Some(database) = self.lock_database().clone() else {
+            return;
+        };
+        self.close_operation(&database, &operation_id, error).await;
+    }
+
+    /// Encerra como concluída a operação do trabalho de modelo em curso.
+    ///
+    /// A síntese não grava resultado em tabela própria: o encerramento e os
+    /// tempos ficam apenas na linha da operação.
+    async fn complete_model_operation(&self) {
+        let operation_id = {
+            let state = self.lock_state();
+            state
+                .model_job
+                .as_ref()
+                .map(|job| job.target.operation_id.clone())
+        };
+        let Some(operation_id) = operation_id else {
+            return;
+        };
+        let Some(database) = self.lock_database().clone() else {
+            return;
+        };
+        let operation_id = operation_id.clone();
+        if let Err(error) = database_task(move || database.complete_operation(&operation_id)).await
+        {
+            self.record_error(&error);
+        }
+    }
+
     // -- encerramento -------------------------------------------------------
 
     /// Prepara o encerramento da aplicação.
@@ -699,7 +775,9 @@ impl AppService {
             }
         }
 
-        // Nenhum resultado tardio pode voltar a ser aplicado a partir daqui.
+        // Nenhum resultado tardio pode voltar a ser aplicado a partir daqui. Um
+        // trabalho em curso fica `interrupted` na base, recuperável no arranque.
+        self.abandon_model_operation(None).await;
         *self.lock_synthesis() = None;
         self.commit(|state| {
             state.finish_model_job();
@@ -848,10 +926,12 @@ impl AppService {
             state.model_job.as_ref().map(|job| job.target.clone())
         };
         let Some(target) = target else {
+            self.abandon_model_operation(None).await;
             self.commit(|state| state.finish_model_job());
             return;
         };
         let Some(recording_id) = target.recording_id.clone() else {
+            self.abandon_model_operation(None).await;
             self.commit(|state| state.finish_model_job());
             return;
         };
@@ -925,9 +1005,11 @@ impl AppService {
             // Um alvo confirmado ou substituído não é um erro a mostrar: a
             // operação termina como obsoleta e nada é escrito.
             Err(error) if is_obsolete(&error) => {
+                self.abandon_model_operation(None).await;
                 self.commit(|state| state.finish_model_job());
             }
             Err(error) => {
+                self.abandon_model_operation(Some(&error)).await;
                 let shown = error.clone();
                 self.commit(|state| {
                     state.finish_model_job();
@@ -958,6 +1040,7 @@ impl AppService {
             }
         };
         let Some(expected) = expected else {
+            self.abandon_model_operation(None).await;
             self.commit(|state| state.finish_model_job());
             return;
         };
@@ -985,6 +1068,7 @@ impl AppService {
         .await;
         if let Err(error) = validation {
             let _ = fs::remove_file(&expected);
+            self.abandon_model_operation(Some(&error)).await;
             let shown = error.clone();
             self.commit(|state| {
                 state.finish_model_job();
@@ -992,6 +1076,10 @@ impl AppService {
             });
             return;
         }
+
+        // A síntese ficou concluída; a reprodução que se segue pertence ao
+        // áudio, não muda o estado da operação.
+        self.complete_model_operation().await;
 
         // A síntese pode terminar enquanto um áudio está a ser ouvido; a
         // reprodução automática da pergunta substitui a reprodução em curso.
@@ -1052,6 +1140,7 @@ impl AppService {
         if kind == OperationKind::Synthesize {
             *self.lock_synthesis() = None;
         }
+        self.abandon_model_operation(Some(&error)).await;
 
         let running = self.worker_running();
         let shown = error.clone();

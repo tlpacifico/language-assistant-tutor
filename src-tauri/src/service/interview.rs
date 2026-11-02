@@ -466,13 +466,27 @@ impl AppService {
         let db = database.clone();
         let published = database_task(move || db.publish_recording(publishing)).await;
         if let Err(error) = published {
-            // O áudio finalizado fica disponível para repetir a publicação.
+            // O áudio finalizado fica disponível para repetir a publicação e a
+            // reserva continua visível com a ação de repetir, em qualquer página.
+            let pending_id = identity.recording_id.clone();
             *self.lock_pending() = Some(PendingPublication { capture, identity });
             self.commit(|state| {
                 state.recording_id = None;
                 state.finalizing = false;
+                state.pending_recording_id = Some(pending_id);
                 state.last_error = Some(error.clone());
             });
+            // Sem reler a sessão, a fotografia continuava a mostrar o detalhe
+            // anterior à captura e a reserva não aparecia em `current`. A
+            // releitura limpa o erro, por isso ele é reposto depois.
+            match self.refresh_session(&database).await {
+                Ok(_) => {
+                    self.commit(|state| state.last_error = Some(error.clone()));
+                }
+                Err(refresh) => {
+                    self.record_error(&refresh);
+                }
+            }
             return Err(error);
         }
 
@@ -485,6 +499,7 @@ impl AppService {
 
         self.commit(|state| {
             state.recording_id = None;
+            state.pending_recording_id = None;
             state.finalizing = false;
             state.playback = None;
             state.last_error = None;
@@ -792,7 +807,22 @@ impl AppService {
                 worker_generation: generation,
             },
         };
+        // A operação é registada antes de o pedido sair: um encerramento
+        // abrupto deixa uma linha `running` que a reconciliação recupera.
+        let operation = job.target.clone();
+        let operation_id = operation.operation_id.clone();
+        let db = database.clone();
+        let configuration = transcription_configuration();
+        if let Err(error) = database_task(move || {
+            db.begin_operation(OperationKind::Transcribe, &operation, Some(&configuration))
+        })
+        .await
+        {
+            self.record_error(&error);
+            return Err(error);
+        }
         if let Err(error) = self.commit_try(|state| state.begin_model_job(job)) {
+            self.close_operation(&database, &operation_id, None).await;
             self.record_error(&error);
             return Err(error);
         }
@@ -800,6 +830,8 @@ impl AppService {
         match worker_task(move || control.submit(request)).await {
             Ok(()) => Ok(self.snapshot()),
             Err(error) => {
+                self.close_operation(&database, &operation_id, Some(&error))
+                    .await;
                 self.commit(|state| {
                     state.finish_model_job();
                     state.last_error = Some(error.clone());
@@ -994,7 +1026,20 @@ impl AppService {
                 worker_generation: generation,
             },
         };
+        // A síntese também é uma operação registada: identidade, alvo, geração,
+        // estado e tempos ficam na base, não só na memória.
+        let operation = job.target.clone();
+        let operation_id = operation.operation_id.clone();
+        let db = database.clone();
+        if let Err(error) =
+            database_task(move || db.begin_operation(OperationKind::Synthesize, &operation, None))
+                .await
+        {
+            self.record_error(&error);
+            return Err(error);
+        }
         if let Err(error) = self.commit_try(|state| state.begin_model_job(job)) {
+            self.close_operation(&database, &operation_id, None).await;
             self.record_error(&error);
             return Err(error);
         }
@@ -1004,6 +1049,8 @@ impl AppService {
             Ok(()) => Ok(self.snapshot()),
             Err(error) => {
                 *self.lock_synthesis() = None;
+                self.close_operation(&database, &operation_id, Some(&error))
+                    .await;
                 self.commit(|state| {
                     state.finish_model_job();
                     state.last_error = Some(error.clone());

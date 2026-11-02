@@ -22,7 +22,7 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 use rusqlite::params;
 use serde_json::json;
 
-use language_assistant_tutor::artifacts::{ArtifactStore, NORMALIZED_FILE};
+use language_assistant_tutor::artifacts::{reconcile, ArtifactStore, NORMALIZED_FILE};
 use language_assistant_tutor::audio::{
     AudioEvent, AudioPort, AvailabilityAudio, CapturedAudio, RecordingTarget,
 };
@@ -1435,9 +1435,25 @@ async fn save_publication_can_retry() {
     );
     assert!(snapshot.recording_id.is_none());
     assert_eq!(
+        snapshot.pending_recording_id.as_deref(),
+        Some(pending_id.as_str()),
+        "a fotografia expõe a publicação pendente"
+    );
+    assert_eq!(
         snapshot.last_error.expect("erro visível").code,
         error_code::INVALID_AUDIO
     );
+    // A sessão foi relida: a reserva aparece na pergunta atual, com a ação de
+    // repetir o guardar alcançável no ecrã onde as tomadas são listadas.
+    let reserved = snapshot
+        .current
+        .as_ref()
+        .expect("pergunta atual")
+        .recordings
+        .iter()
+        .find(|recording| recording.id == pending_id)
+        .expect("a reserva pendente consta da pergunta atual");
+    assert_eq!(reserved.state, RecordingState::Reserved);
 
     // Uma gravação por publicar não pode ser esquecida nem fechar em silêncio.
     let current = harness.current();
@@ -1477,6 +1493,10 @@ async fn save_publication_can_retry() {
             .and_then(|current| current.question.selected_recording_id.clone()),
         Some(pending_id.clone())
     );
+    assert!(
+        retried.pending_recording_id.is_none(),
+        "depois de guardar, a publicação pendente desaparece"
+    );
     let current = retried.current.expect("pergunta atual");
     assert_eq!(
         current
@@ -1489,6 +1509,130 @@ async fn save_publication_can_retry() {
         "ready"
     );
     assert!(harness.original_path(&current, &pending_id).is_file());
+}
+
+/// Operação guardada na base de teste: tipo, estado, início, fim e erro.
+fn operation_row(
+    harness: &Harness,
+    id: &str,
+) -> (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    harness
+        .database
+        .with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT kind, state, created_at, finished_at, error_json
+                       FROM operations WHERE id = ?1",
+                    params![id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                            row.get::<_, Option<String>>(4)?,
+                        ))
+                    },
+                )
+                .map_err(|error| {
+                    AppError::new(error_code::DATABASE_UNAVAILABLE, error.to_string(), false)
+                })
+        })
+        .expect("ler a operação da base de teste")
+}
+
+/// Contagem de operações de um tipo na base de teste.
+fn operation_count(harness: &Harness, kind: &str) -> i64 {
+    harness
+        .database
+        .with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT count(*) FROM operations WHERE kind = ?1",
+                    params![kind],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| {
+                    AppError::new(error_code::DATABASE_UNAVAILABLE, error.to_string(), false)
+                })
+        })
+        .expect("contar as operações da base de teste")
+}
+
+#[tokio::test]
+async fn interrupted_operation_is_recovered_on_the_next_start() {
+    let harness = Harness::with_transcriber().await;
+    harness.record_once().await;
+    let request = harness
+        .transcription_requests()
+        .into_iter()
+        .next()
+        .expect("transcrição automática submetida");
+
+    // O pedido fica registado em `running` antes de o auxiliar responder; é o
+    // que um encerramento abrupto deixa para a reconciliação recuperar.
+    let (kind, state, created_at, finished_at, error) = operation_row(&harness, &request.id);
+    assert_eq!(kind, "transcribe");
+    assert_eq!(state, "running");
+    assert!(created_at.is_some());
+    assert!(finished_at.is_none());
+    assert!(error.is_none());
+
+    // O arranque seguinte encontra a linha e passa-a a recuperável.
+    let store = ArtifactStore::new(harness.artifacts_root.clone());
+    let report = reconcile(&harness.database, &store).expect("reconciliar no arranque");
+    assert_eq!(report.interrupted_operations, vec![request.id.clone()]);
+    let (_, state, _, finished_at, error) = operation_row(&harness, &request.id);
+    assert_eq!(state, "interrupted");
+    assert!(finished_at.is_some());
+    assert!(error.is_none());
+
+    // Repetir o arranque não volta a reportar a mesma operação.
+    let again = reconcile(&harness.database, &store).expect("reconciliar outra vez");
+    assert!(again.interrupted_operations.is_empty());
+}
+
+#[tokio::test]
+async fn transcription_closes_one_operation_with_its_timing() {
+    let harness = Harness::with_transcriber().await;
+    harness.record_once().await;
+    let request = harness
+        .transcription_requests()
+        .into_iter()
+        .next()
+        .expect("transcrição automática submetida");
+
+    harness
+        .service
+        .on_worker_event(WorkerEvent {
+            generation: 1,
+            message: WorkerMessage::Completed {
+                request_id: request.id.clone(),
+                result: transcription_result("machine words"),
+            },
+        })
+        .await;
+
+    let (kind, state, created_at, finished_at, error) = operation_row(&harness, &request.id);
+    assert_eq!(kind, "transcribe");
+    assert_eq!(state, "completed");
+    assert!(created_at.is_some(), "a operação guarda a hora de início");
+    assert!(
+        finished_at.is_some(),
+        "a operação guarda a hora de conclusão"
+    );
+    assert!(error.is_none());
+    assert_eq!(
+        operation_count(&harness, "transcribe"),
+        1,
+        "o pedido e o resultado partilham uma única operação"
+    );
 }
 
 #[tokio::test]

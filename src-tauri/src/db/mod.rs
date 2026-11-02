@@ -13,8 +13,9 @@
 //! perguntas: a marca `questions-v1` em `content_seeds` torna o seed único.
 //! `questions` reúne o banco editável, `sessions` a criação atómica das
 //! entrevistas guiadas, com as cópias fixas das perguntas, os avanços e os
-//! recibos dos pedidos, e `answers` as gravações, publicações, transcrições
-//! automáticas, revisões append-only e confirmações imutáveis.
+//! recibos dos pedidos, `answers` as gravações, publicações, transcrições
+//! automáticas, revisões append-only e confirmações imutáveis, e `operations` o
+//! registo dos pedidos ao auxiliar, do estado `running` ao encerramento.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -26,6 +27,7 @@ use crate::domain::{error_code, AppError};
 use crate::interview::Result;
 
 mod answers;
+mod operations;
 mod questions;
 mod sessions;
 

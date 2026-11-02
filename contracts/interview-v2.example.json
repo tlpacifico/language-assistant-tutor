@@ -138,6 +138,7 @@
       }
     },
     "recordingId": null,
+    "pendingRecordingId": null,
     "finalizing": false,
     "modelJob": null,
     "playback": null,

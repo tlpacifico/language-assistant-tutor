@@ -393,6 +393,8 @@ pub struct InterviewSnapshot {
     pub current: Option<QuestionDetail>,
     pub availability: Availability,
     pub recording_id: Option<Id>,
+    /// Captura finalizada cuja publicação falhou: a reserva continua por guardar.
+    pub pending_recording_id: Option<Id>,
     pub finalizing: bool,
     pub model_job: Option<ModelJobView>,
     pub playback: Option<PlaybackTarget>,

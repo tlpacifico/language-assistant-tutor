@@ -770,46 +770,6 @@ impl Database {
             Ok(())
         })
     }
-
-    /// Encerra todas as operações ainda em curso, devolvendo os identificadores.
-    ///
-    /// No arranque nada está a correr: uma linha `running` só pode vir de um
-    /// encerramento abrupto e fica `interrupted`, sem duplicar trabalho.
-    pub(crate) fn interrupt_running_operations(&self) -> Result<Vec<Id>> {
-        let now = utc_now();
-        self.with_connection(|connection| {
-            let transaction = connection
-                .transaction_with_behavior(TransactionBehavior::Immediate)
-                .map_err(write_failed)?;
-            let ids: Vec<Id> = {
-                let mut statement = transaction
-                    .prepare(
-                        "SELECT id FROM operations
-                          WHERE state = 'running'
-                          ORDER BY created_at, rowid",
-                    )
-                    .map_err(read_failed)?;
-                let mut rows = statement.query([]).map_err(read_failed)?;
-                let mut ids = Vec::new();
-                while let Some(row) = rows.next().map_err(read_failed)? {
-                    ids.push(row.get("id").map_err(read_failed)?);
-                }
-                ids
-            };
-            for id in &ids {
-                transaction
-                    .execute(
-                        "UPDATE operations
-                            SET state = 'interrupted', finished_at = ?2
-                          WHERE id = ?1 AND state = 'running'",
-                        params![id, now],
-                    )
-                    .map_err(write_failed)?;
-            }
-            transaction.commit().map_err(write_failed)?;
-            Ok(ids)
-        })
-    }
 }
 
 /// Gravações de uma pergunta da sessão, pela ordem de captura.
