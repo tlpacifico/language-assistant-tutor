@@ -345,6 +345,12 @@ export interface InterviewReview {
   /** A revisão pode ser editada, guardada e confirmada. */
   canEdit: boolean;
   canSave: boolean;
+  /**
+   * Indica, a partir dos valores mais recentes (mesmo antes do próximo
+   * render), se existe texto por guardar. Usado pela guarda de fecho para não
+   * fechar com uma edição que tenha escapado ao bloqueio do editor.
+   */
+  isDirty: () => boolean;
   error: AppError | null;
   setReviewText: (text: string) => void;
   saveReview: () => Promise<SaveOutcome>;
@@ -358,19 +364,28 @@ export interface InterviewReview {
  * `snapshot` é a fotografia conhecida da aplicação; `onSnapshot` recebe o
  * estado devolvido por cada mutação para que a navegação e a guarda de fecho
  * vejam a confirmação e o avanço sem uma segunda subscrição.
+ *
+ * `options.locked` bloqueia o rascunho enquanto a aplicação se prepara para
+ * fechar: o editor fica apenas de leitura e nenhuma edição nova entra no texto
+ * que já foi guardado.
  */
 export function useInterview(
   client: InterviewClient,
   snapshot: InterviewSnapshot | null,
   onSnapshot?: (snapshot: InterviewSnapshot) => void,
+  options: { locked?: boolean } = {},
 ): InterviewReview {
+  const locked = options.locked ?? false;
   const [state, dispatch] = useReducer(reducer, EMPTY_STATE);
   const stateRef = useRef(state);
+  const lockedRef = useRef(locked);
   const textRef = useRef("");
+  const baselineRef = useRef("");
   const intentionRef = useRef<{ key: string; requestId: string } | null>(null);
   const saveInFlight = useRef<Promise<SaveOutcome> | null>(null);
 
   stateRef.current = state;
+  lockedRef.current = locked;
 
   const answer = selectedAnswer(state.snapshot);
   const draft = answer ? state.drafts[answer.recording.id] : undefined;
@@ -382,9 +397,10 @@ export function useInterview(
   const text = draft?.text ?? "";
   if (draft) {
     textRef.current = draft.text;
+    baselineRef.current = draft.baseline;
   }
   const latest = latestTranscript(answer?.recording ?? null);
-  const canEdit = answer !== null && !confirmed && !state.confirming;
+  const canEdit = answer !== null && !confirmed && !state.confirming && !locked;
 
   // O rascunho é alinhado antes de a página ser apresentada: a revisão começa
   // preenchida, sem um instante com o editor vazio.
@@ -406,6 +422,11 @@ export function useInterview(
 
   const setReviewText = useCallback((nextText: string) => {
     const current = stateRef.current;
+    if (lockedRef.current) {
+      // A preparação do fecho bloqueia o editor: texto novo não entra num
+      // rascunho que já foi guardado para o fecho.
+      return;
+    }
     const selected = selectedAnswer(current.snapshot);
     const currentDraft = selected
       ? current.drafts[selected.recording.id]
@@ -422,6 +443,9 @@ export function useInterview(
 
   const discardReview = useCallback(() => {
     const current = stateRef.current;
+    if (lockedRef.current) {
+      return;
+    }
     if (current.confirming || current.snapshot?.current?.confirmation) {
       return;
     }
@@ -431,12 +455,22 @@ export function useInterview(
       : undefined;
     if (currentDraft) {
       textRef.current = currentDraft.baseline;
+      baselineRef.current = currentDraft.baseline;
     }
     dispatch({ type: "discard" });
   }, []);
 
   const runSave = useCallback(async (): Promise<SaveOutcome> => {
     const current = stateRef.current;
+    if (lockedRef.current) {
+      dispatch({
+        type: "save-failure",
+        error: invalid(
+          "A aplicação está a preparar o fecho. Aguarde que termine para guardar.",
+        ),
+      });
+      return "failed";
+    }
     const selected = selectedAnswer(current.snapshot);
     const currentDraft = selected
       ? current.drafts[selected.recording.id]
@@ -486,6 +520,9 @@ export function useInterview(
     try {
       const next = await client.saveReview(request);
       intentionRef.current = null;
+      // O texto escrito é agora a versão guardada: a guarda de fecho lê este
+      // valor sem esperar pelo próximo render.
+      baselineRef.current = text;
       dispatch({
         type: "save-success",
         snapshot: next,
@@ -517,6 +554,15 @@ export function useInterview(
 
   const confirm = useCallback(async (): Promise<boolean> => {
     const current = stateRef.current;
+    if (lockedRef.current) {
+      dispatch({
+        type: "confirm-failure",
+        error: invalid(
+          "A aplicação está a preparar o fecho. Aguarde que termine para confirmar.",
+        ),
+      });
+      return false;
+    }
     const selected = selectedAnswer(current.snapshot);
     const currentDraft = selected
       ? current.drafts[selected.recording.id]
@@ -567,6 +613,7 @@ export function useInterview(
     try {
       const next = await client.confirmAnswer(request);
       intentionRef.current = null;
+      baselineRef.current = textRef.current;
       dispatch({ type: "confirm-success", snapshot: next });
       onSnapshot?.(next);
       return true;
@@ -577,6 +624,11 @@ export function useInterview(
   }, [client, onSnapshot, stableRequestId]);
 
   const automatic = latest?.status === "completed" ? latest.text : "";
+
+  const isDirty = useCallback(
+    () => textRef.current !== baselineRef.current,
+    [],
+  );
 
   return {
     recordingId: answer?.recording.id ?? null,
@@ -597,6 +649,7 @@ export function useInterview(
       draft !== undefined &&
       text.trim() !== "" &&
       (draft.text !== draft.baseline || draft.version === 0),
+    isDirty,
     error: state.error,
     setReviewText,
     saveReview,

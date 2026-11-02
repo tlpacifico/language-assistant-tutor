@@ -137,7 +137,11 @@ export default function App({
     );
   }, []);
 
-  const review = useInterview(activeClient, snapshot, applySnapshot);
+  const review = useInterview(activeClient, snapshot, applySnapshot, {
+    locked: closing,
+  });
+  const reviewRef = useRef(review);
+  reviewRef.current = review;
 
   useEffect(() => {
     let active = true;
@@ -225,6 +229,20 @@ export default function App({
       // Finaliza uma captura ativa e recusa o fecho com uma publicação
       // pendente: nada fecha em silêncio.
       applySnapshot(await activeClient.prepareClose());
+      if (reviewRef.current.isDirty()) {
+        // Uma edição que tenha escapado ao bloqueio do editor não pode ser
+        // perdida em `destroy`: a janela fica e a decisão reaparece.
+        closingRef.current = false;
+        setClosing(false);
+        setGuardRequest({
+          intention: "close",
+          proceed: async () => {
+            setGuardRequest(null);
+            await closeNow();
+          },
+        });
+        return;
+      }
       if (activeWindow) {
         await activeWindow.destroy();
       }
@@ -352,6 +370,7 @@ export default function App({
         onSnapshot={applySnapshot}
         review={review}
         requestDecision={requestDecision}
+        closing={closing}
       />
     );
   } else {

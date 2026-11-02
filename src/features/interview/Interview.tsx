@@ -43,6 +43,8 @@ export interface InterviewProps {
     intention: InterviewGuardIntention,
     proceed: () => void | Promise<void>,
   ) => void;
+  /** A aplicação está a preparar o fecho: o ecrã fica bloqueado. */
+  closing?: boolean;
 }
 
 const RECORDING_STATE_LABELS: Record<RecordingState, string> = {
@@ -121,6 +123,7 @@ export default function Interview({
   onSnapshot,
   review,
   requestDecision,
+  closing = false,
 }: InterviewProps) {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState<AppError | null>(null);
@@ -292,7 +295,7 @@ export default function Interview({
     );
   }
 
-  const canUseAudio = !captureBusy && busyAction === null;
+  const canUseAudio = !captureBusy && busyAction === null && !closing;
   const canRecord =
     question !== null &&
     confirmation === null &&
@@ -300,8 +303,9 @@ export default function Interview({
     !review.confirming &&
     !captureBusy &&
     modelJob === null &&
-    busyAction === null;
-  const canSaveOrConfirm = !captureBusy && busyAction === null;
+    busyAction === null &&
+    !closing;
+  const canSaveOrConfirm = !captureBusy && busyAction === null && !closing;
   const playback = snapshot.playback;
   const errors: AppError[] = [];
   for (const error of [actionError, snapshot.lastError]) {
@@ -368,7 +372,7 @@ export default function Interview({
           <button
             type="button"
             onClick={() => void run(() => client.stopAudio())}
-            disabled={busyAction !== null}
+            disabled={busyAction !== null || closing}
           >
             Parar áudio
           </button>
@@ -407,7 +411,7 @@ export default function Interview({
             <button
               type="button"
               onClick={() => void stopRecording()}
-              disabled={busyAction !== null}
+              disabled={busyAction !== null || closing}
             >
               Terminar gravação
             </button>
@@ -442,7 +446,7 @@ export default function Interview({
                 selected={
                   current?.question.selectedRecordingId === take.id || false
                 }
-                disabled={busyAction !== null || captureBusy}
+                disabled={busyAction !== null || captureBusy || closing}
                 onPlay={() =>
                   void run(() =>
                     client.playAudio({
@@ -545,6 +549,13 @@ export default function Interview({
               </div>
             ) : null}
 
+            {closing ? (
+              <p className="practice__warning">
+                A aplicação está a preparar o fecho. A revisão fica bloqueada
+                até o fecho terminar.
+              </p>
+            ) : null}
+
             {review.confirmed ? null : (
               <div className="practice__actions">
                 <button
@@ -590,7 +601,11 @@ export default function Interview({
             type="button"
             onClick={() => void advance()}
             disabled={
-              confirmation === null || advancing || captureBusy || !question
+              confirmation === null ||
+              advancing ||
+              captureBusy ||
+              !question ||
+              closing
             }
           >
             {last ? "Terminar sessão" : "Próxima pergunta"}

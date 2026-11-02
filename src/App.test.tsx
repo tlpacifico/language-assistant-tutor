@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -79,6 +79,48 @@ function interviewInitial(): InterviewSnapshot {
       ],
     }),
   });
+}
+
+/** Fotografia devolvida pelo núcleo depois de guardar a revisão. */
+function reviewedSnapshot(
+  base: InterviewSnapshot,
+  text: string,
+  version = 1,
+): InterviewSnapshot {
+  const current = base.current;
+  if (!current) {
+    throw new Error("A fotografia base não tem pergunta corrente.");
+  }
+  return snapshot({
+    ...base,
+    revision: base.revision + 1,
+    current: {
+      ...current,
+      recordings: current.recordings.map((recording) =>
+        recording.id === current.question.selectedRecordingId
+          ? {
+              ...recording,
+              review: {
+                recordingId: recording.id,
+                sourceTranscriptId: "transcript-1",
+                origin: "automatic" as const,
+                text,
+                version,
+                savedAt: "2026-11-02T10:20:00Z",
+              },
+            }
+          : recording,
+      ),
+    },
+  });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }
 
 describe("App", () => {
@@ -338,5 +380,81 @@ describe("App", () => {
       ),
     ).toBeInTheDocument();
     expect(controller.destroy).not.toHaveBeenCalled();
+  });
+
+  it("não fecha com texto escrito durante a preparação do fecho", async () => {
+    const user = userEvent.setup();
+    const initial = interviewInitial();
+    const order: string[] = [];
+    const controller = fakeWindow(order);
+    const fake = fakeInterviewClient({ initial, questions: QUESTIONS });
+    const saved = deferred<InterviewSnapshot>();
+    const closing = deferred<InterviewSnapshot>();
+    let saves = 0;
+    vi.mocked(fake.client.saveReview).mockImplementation((request) => {
+      saves += 1;
+      if (saves === 1) {
+        return saved.promise;
+      }
+      return Promise.resolve(reviewedSnapshot(initial, request.text, 2));
+    });
+    vi.mocked(fake.client.prepareClose).mockImplementation(() => {
+      order.push("prepareClose");
+      return closing.promise;
+    });
+    render(
+      <App client={fake.client} windowHandle={controller.windowHandle} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Entrevista" }));
+    const editor = await screen.findByLabelText("Revisão editável");
+    await user.clear(editor);
+    await user.type(editor, "Saved before closing.");
+
+    await act(async () => {
+      controller.requestClose();
+    });
+    await user.click(screen.getByRole("button", { name: "Guardar e fechar" }));
+    expect(fake.client.saveReview).toHaveBeenCalledTimes(1);
+
+    // A escrita termina e o fecho chega a `prepareClose`; a edição seguinte
+    // acontece antes do render que bloqueia o editor, como numa corrida real.
+    await act(async () => {
+      saved.resolve(reviewedSnapshot(initial, "Saved before closing.", 1));
+      await saved.promise;
+      for (let hops = 0; hops < 12; hops += 1) {
+        if (vi.mocked(fake.client.prepareClose).mock.calls.length > 0) {
+          break;
+        }
+        await Promise.resolve();
+      }
+      fireEvent.change(editor, {
+        target: { value: "Saved before closing. Typed while closing." },
+      });
+    });
+
+    expect(fake.client.prepareClose).toHaveBeenCalledTimes(1);
+    expect(editor).toHaveAttribute("readonly");
+    expect(editor).toHaveValue("Saved before closing. Typed while closing.");
+
+    await act(async () => {
+      closing.resolve(snapshot({ ...initial, revision: 20 }));
+      await closing.promise;
+    });
+
+    // A versão mais recente está por guardar: a janela mantém-se e a decisão
+    // reaparece com o texto preservado.
+    await waitFor(() =>
+      expect(screen.getByText("Revisão por guardar")).toBeInTheDocument(),
+    );
+    expect(controller.destroy).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Revisão editável")).toHaveValue(
+      "Saved before closing. Typed while closing.",
+    );
+
+    // Guardar a versão nova liberta o fecho.
+    await user.click(screen.getByRole("button", { name: "Guardar e fechar" }));
+    await waitFor(() => expect(controller.destroy).toHaveBeenCalledTimes(1));
+    expect(order).toEqual(["prepareClose", "prepareClose", "destroy"]);
   });
 });
