@@ -11,9 +11,9 @@
 //! uma transação. Uma falha reverte tudo; a recuperação nunca apaga nem recria a
 //! base. Depois de a migração estar aplicada, `open` garante o banco inicial de
 //! perguntas: a marca `questions-v1` em `content_seeds` torna o seed único.
-//! `questions` reúne o banco editável e `sessions` a criação atómica das
+//! `questions` reúne o banco editável, `sessions` a criação atómica das
 //! entrevistas guiadas, com as cópias fixas das perguntas e os recibos dos
-//! pedidos.
+//! pedidos, e `answers` as gravações, publicações e transcrições automáticas.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -24,9 +24,11 @@ use rusqlite::Connection;
 use crate::domain::{error_code, AppError};
 use crate::interview::Result;
 
+mod answers;
 mod questions;
 mod sessions;
 
+pub(crate) use answers::PendingRecording;
 pub use questions::*;
 
 /// Versão do esquema escrita em `PRAGMA user_version`.

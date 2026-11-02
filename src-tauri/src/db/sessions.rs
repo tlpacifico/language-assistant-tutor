@@ -404,11 +404,13 @@ fn load_detail(connection: &Connection, session_id: &str) -> Result<Option<Sessi
 
     let mut questions = Vec::new();
     while let Some(row) = rows.next().map_err(read_failed)? {
+        let question = session_question(row)?;
+        // As gravações são preenchidas pela tarefa 4; a confirmação pertence à
+        // tarefa 5 e a consulta não inventa resultados.
+        let recordings = super::answers::load_recordings(connection, &question.id)?;
         questions.push(QuestionDetail {
-            question: session_question(row)?,
-            // As gravações e a confirmação entram nas tarefas 4 e 5; a
-            // consulta devolve o que está guardado e não inventa resultados.
-            recordings: Vec::new(),
+            question,
+            recordings,
             confirmation: None,
         });
     }

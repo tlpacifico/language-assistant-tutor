@@ -4,9 +4,10 @@
 //! os tipos partilhados com a captura e a reprodução, `storage` os artefactos
 //! locais com JSON atómico e recuperação, `worker` a supervisão do auxiliar
 //! Python, `service` a coordenação do fluxo e `commands` os comandos Tauri.
-//! `interview` reúne os DTOs e a validação das entrevistas guiadas e `db` a
-//! ligação SQLite recuperável com as migrações; nenhum deles está ainda ligado
-//! ao serviço da fase 1.
+//! `interview` reúne os DTOs e a validação das entrevistas guiadas, `db` a
+//! ligação SQLite recuperável com as migrações e `artifacts` os ficheiros de
+//! áudio geridos, com a reconciliação do arranque; nenhum deles está ainda
+//! ligado ao serviço da fase 1.
 //!
 //! O arranque liga os adaptadores reais: a pasta de dados é
 //! `app_data_dir()/phase1`, o auxiliar é configurado por `audio.json` em
@@ -15,6 +16,7 @@
 //! revisão continuam a funcionar; a disponibilidade indica o componente em
 //! falta.
 
+pub mod artifacts;
 pub mod audio;
 pub mod commands;
 pub mod db;
