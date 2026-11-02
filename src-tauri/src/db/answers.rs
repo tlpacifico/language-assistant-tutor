@@ -671,6 +671,40 @@ impl Database {
         })
     }
 
+    /// Estado e referência do original de uma gravação, para reprodução.
+    ///
+    /// Uma gravação desconhecida devolve `STALE_SOURCE`; nada é escrito.
+    pub(crate) fn recording_audio(
+        &self,
+        recording_id: &str,
+    ) -> Result<(RecordingState, Option<String>)> {
+        let row = self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT r.state, r.original_file
+                       FROM recordings r
+                      WHERE r.id = ?1",
+                    [recording_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>("state")?,
+                            row.get::<_, Option<String>>("original_file")?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(read_failed)
+        })?;
+        let Some((state, original_file)) = row else {
+            return Err(AppError::new(
+                error_code::STALE_SOURCE,
+                "A gravação indicada não existe. Atualize o histórico antes de a ouvir.",
+                false,
+            ));
+        };
+        Ok((parse_state(&state)?, original_file))
+    }
+
     /// Gravações que podem ter um original ainda por publicar.
     pub(crate) fn pending_recordings(&self) -> Result<Vec<PendingRecording>> {
         self.with_connection(|connection| {

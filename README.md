@@ -108,13 +108,14 @@ index.html, package.json, tsconfig.json, vite.config.ts
 rust-toolchain.toml
 scripts/verify.ps1            Checks automáticos com controlo de exit codes
 src/main.tsx                  Arranque React
-src/App.tsx                   Janela com a pergunta fixa
+src/App.tsx                   Janela mínima: disponibilidade e estado da base
 src/lib/contracts.ts          Tipos do contrato v1 (camelCase, enums snake_case)
-src/lib/tauri.ts              Adaptador PracticeClient over Tauri
-src/features/practice/        Interface de prática e revisão
-src-tauri/src/                Domínio, armazenamento, áudio, worker, serviço, comandos
-src-tauri/tests/              Testes de domínio, storage, áudio, worker e serviço
-contracts/                    Exemplos partilhados dos contratos v1
+src/lib/interview-contracts.ts Contratos v2 da entrevista guiada
+src/lib/interview-client.ts   Adaptador InterviewClient over Tauri
+src/features/practice/        practice.css reutilizado pela interface nova
+src-tauri/src/                Domínio, SQLite, artefactos, áudio, worker, serviço, comandos
+src-tauri/tests/              Testes de domínio, base, artefactos, áudio, worker e serviço
+contracts/                    Exemplos partilhados dos contratos v1 e v2
 config/audio.example.json     Configuração pessoal documentada (não versionar a real)
 audio-worker/                 Auxiliar Python (faster-whisper + Kokoro)
 docs/phase-1/                 setup.md e validation.md
@@ -140,3 +141,9 @@ espera (CA-14). Ver a matriz honesta em
 
 A pergunta da fase 1 é fixa:
 `Tell me about a time you solved a difficult problem at work.`
+
+A fase 2 (entrevista guiada) está em implementação: a base SQLite, os
+artefactos de áudio, as sessões, os comandos `interview_*`, a janela mínima e o
+cliente TypeScript já estão ligados ao serviço; as páginas de preparação,
+entrevista e histórico ainda não. O âmbito está em
+[`docs/superpowers/specs/2026-11-02-phase-2-guided-interview-design.md`](docs/superpowers/specs/2026-11-02-phase-2-guided-interview-design.md).

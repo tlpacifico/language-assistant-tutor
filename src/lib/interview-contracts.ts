@@ -127,6 +127,17 @@ export interface AnswerTarget {
   selectionVersion: Version;
 }
 
+/**
+ * Áudio que o núcleo sabe resolver para reprodução.
+ *
+ * O chamador indica apenas identidades: os caminhos são resolvidos no núcleo e
+ * nunca chegam da interface. A variante `legacy` lê um treino da fase 1.
+ */
+export type AudioSelection =
+  | { type: "question"; sessionId: Id; sessionQuestionId: Id }
+  | { type: "recording"; recordingId: Id }
+  | { type: "legacy"; attemptId: Id };
+
 export type ReviewOrigin = "automatic" | "manual_explicit";
 
 /** Revisão guardada (ou em edição) de uma gravação. */

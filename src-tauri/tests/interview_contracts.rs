@@ -8,11 +8,12 @@
 
 use language_assistant_tutor::domain::error_code;
 use language_assistant_tutor::interview::{
-    validate_count, validate_question, Category, Confirmation, InterviewSnapshot, ModelJobView,
-    OperationTarget, QuestionDetail, QuestionInput, ReviewOrigin, SessionMode, SessionStatus,
-    SessionSummary,
+    validate_count, validate_question, AudioSelection, Category, Confirmation, InterviewSnapshot,
+    ModelJobView, OperationTarget, QuestionDetail, QuestionInput, ReviewOrigin, SessionMode,
+    SessionStatus, SessionSummary,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 /// Forma do exemplo partilhado. O invólucro existe só no teste; os DTOs
 /// comparados são os tipos reais da aplicação.
@@ -106,6 +107,47 @@ fn v2_contract_matches_fixture() {
     assert!(parsed.snapshot.current.is_none());
     assert!(parsed.snapshot.warnings.is_empty());
     assert!(parsed.snapshot.last_error.is_none());
+}
+
+#[test]
+fn audio_selection_is_a_tagged_wire_type() {
+    let question = AudioSelection::Question {
+        session_id: "s-1".to_owned(),
+        session_question_id: "sq-1".to_owned(),
+    };
+    assert_eq!(
+        serde_json::to_value(&question).expect("serializar a seleção"),
+        json!({
+            "type": "question",
+            "sessionId": "s-1",
+            "sessionQuestionId": "sq-1",
+        })
+    );
+
+    let recording = AudioSelection::Recording {
+        recording_id: "rec-1".to_owned(),
+    };
+    assert_eq!(
+        serde_json::to_value(&recording).expect("serializar a seleção"),
+        json!({ "type": "recording", "recordingId": "rec-1" })
+    );
+
+    let legacy = AudioSelection::Legacy {
+        attempt_id: "attempt-1".to_owned(),
+    };
+    assert_eq!(
+        serde_json::to_value(&legacy).expect("serializar a seleção"),
+        json!({ "type": "legacy", "attemptId": "attempt-1" })
+    );
+
+    // A forma oposta também é aceite: a interface envia exatamente este JSON.
+    let parsed: AudioSelection = serde_json::from_value(json!({
+        "type": "question",
+        "sessionId": "s-1",
+        "sessionQuestionId": "sq-1",
+    }))
+    .expect("a seleção da interface deve ser aceite");
+    assert_eq!(parsed, question);
 }
 
 #[test]

@@ -1,9 +1,15 @@
-//! Contratos de domínio da fase 1.
+//! Contratos de domínio partilhados.
 //!
 //! Este módulo não depende de hardware, de ficheiros ou do processo auxiliar.
 //! Os tipos serializados espelham `src/lib/contracts.ts`: JSON em camelCase,
 //! enums em snake_case, identificadores UUID em texto, datas UTC em RFC3339 e
 //! durações inteiras em milissegundos.
+//!
+//! `Attempt`, `Review`, `Transcript` e `RestoreResult` descrevem os treinos da
+//! fase 1, cuja árvore `phase1/` continua a ser lida em modo de consulta.
+//! `AppState`, `AppSnapshot` e `ModelJob` são a fotografia da fase 1, conservada
+//! para os testes do protocolo do auxiliar; a entrevista guiada observa
+//! `interview::InterviewSnapshot`.
 
 use serde::{Deserialize, Serialize};
 
@@ -263,32 +269,6 @@ pub struct AppSnapshot {
 pub struct RestoreResult {
     pub attempt: Option<Attempt>,
     pub warnings: Vec<AppError>,
-}
-
-/// Intenção aplicada pela coordenação serial.
-///
-/// Espelha os comandos da secção 3 do plano; a tarefa 6 liga cada variante ao
-/// serviço correspondente.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Action {
-    RefreshAvailability,
-    StartRecording,
-    StopRecording,
-    RetrySaveRecording,
-    TranscribeResponse {
-        attempt_id: String,
-    },
-    PlayAudio {
-        target: PlaybackTarget,
-    },
-    StopAudio,
-    SaveReview {
-        attempt_id: String,
-        source_id: String,
-        text: String,
-    },
-    RestartWorker,
-    PrepareClose,
 }
 
 /// Estado da entrevista. A geração do auxiliar é interna e não serializa.

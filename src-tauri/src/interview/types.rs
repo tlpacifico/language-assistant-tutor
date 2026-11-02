@@ -261,6 +261,29 @@ pub struct AdvanceSession {
     pub expected_session_version: Version,
 }
 
+/// Áudio que o núcleo sabe resolver para reprodução.
+///
+/// O chamador indica apenas identidades: os caminhos são resolvidos no núcleo e
+/// nunca chegam da interface. A variante `Legacy` lê um treino da fase 1.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AudioSelection {
+    Question {
+        #[serde(rename = "sessionId")]
+        session_id: Id,
+        #[serde(rename = "sessionQuestionId")]
+        session_question_id: Id,
+    },
+    Recording {
+        #[serde(rename = "recordingId")]
+        recording_id: Id,
+    },
+    Legacy {
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+    },
+}
+
 /// Estado de uma gravação no ciclo de reserva, captura e publicação.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
