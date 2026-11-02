@@ -22,7 +22,7 @@ use language_assistant_tutor::audio::{
     AudioBackend, AudioEvent, AudioPort, AvailabilityAudio, CaptureInterruption, CapturedAudio,
     NativeAudio, RecordingTarget,
 };
-use language_assistant_tutor::domain::{AppError, CaptureMeta, ComponentState};
+use language_assistant_tutor::domain::{AppError, CaptureMeta, ComponentState, ComponentStatus};
 
 // ---------------------------------------------------------------------------
 // Utilitários
@@ -138,6 +138,8 @@ struct FakeAudio {
     steps: Arc<Mutex<Vec<String>>>,
     capturing: Option<RecordingTarget>,
     playing: Option<PathBuf>,
+    /// Atraso artificial em `start_capture`, para exercitar o prazo.
+    start_delay: Duration,
 }
 
 impl FakeAudio {
@@ -164,6 +166,9 @@ impl AudioBackend for FakeAudio {
 
     fn start_capture(&mut self, target: RecordingTarget) -> Result<(), AppError> {
         self.record("start_capture");
+        if !self.start_delay.is_zero() {
+            std::thread::sleep(self.start_delay);
+        }
         self.capturing = Some(target);
         Ok(())
     }
@@ -375,7 +380,7 @@ fn recording_stops_playback() {
 
     let fake = FakeAudio::default();
     let probe = fake.clone();
-    let audio = NativeAudio::with_backend(move || Box::new(fake), |_event: AudioEvent| {})
+    let audio = NativeAudio::with_backend(move || Box::new(fake.clone()), |_event: AudioEvent| {})
         .expect("criar porta de áudio");
 
     audio.play(audio_file).expect("reproduzir");
@@ -399,6 +404,55 @@ fn recording_stops_playback() {
 }
 
 #[test]
+fn timed_out_command_fails_the_port_until_reopen() {
+    let root = tempfile::tempdir().expect("pasta temporária");
+    let fake = FakeAudio {
+        start_delay: Duration::from_millis(200),
+        ..FakeAudio::default()
+    };
+    let probe = fake.clone();
+    let factory = fake.clone();
+    let audio = NativeAudio::with_timeout(
+        move || Box::new(factory.clone()),
+        |_event: AudioEvent| {},
+        Duration::from_millis(40),
+    )
+    .expect("criar porta de áudio");
+
+    let folder = target(root.path(), "lenta");
+    let error = audio
+        .start_capture(folder)
+        .expect_err("o comando de áudio excede o prazo");
+    assert_eq!(
+        error.code, "AUDIO_TIMEOUT",
+        "código próprio, não DEVICE_UNAVAILABLE"
+    );
+    assert!(error.retryable);
+
+    // A thread antiga pode concluir a operação depois do prazo; nenhum estado
+    // novo é enviado para lá até a porta ser reaberta explicitamente.
+    let steps_before = probe.steps();
+    let refused = audio
+        .stop_playback()
+        .expect_err("a porta falhada recusa comandos");
+    assert_eq!(refused.code, "AUDIO_TIMEOUT");
+    assert_eq!(
+        probe.steps(),
+        steps_before,
+        "um comando recusado não chega à thread antiga"
+    );
+
+    // Reabrir usa dispositivos novos e volta a aceitar comandos.
+    audio.reopen().expect("reabrir a porta de áudio");
+    let availability = audio.availability();
+    assert_eq!(availability.microphone.status, ComponentStatus::Ready);
+    assert!(
+        probe.steps().len() > steps_before.len(),
+        "a porta reaberta tem de falar com a thread nova"
+    );
+}
+
+#[test]
 fn playback_is_blocked_while_recording() {
     let root = tempfile::tempdir().expect("pasta temporária");
     let audio_file = root.path().join("resposta.wav");
@@ -410,7 +464,7 @@ fn playback_is_blocked_while_recording() {
 
     let fake = FakeAudio::default();
     let probe = fake.clone();
-    let audio = NativeAudio::with_backend(move || Box::new(fake), |_event: AudioEvent| {})
+    let audio = NativeAudio::with_backend(move || Box::new(fake.clone()), |_event: AudioEvent| {})
         .expect("criar porta de áudio");
 
     audio.play(audio_file.clone()).expect("reproduzir");

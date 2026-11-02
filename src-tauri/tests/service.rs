@@ -53,9 +53,16 @@ fn write_rate_wav(path: &Path, sample_rate: u32) {
 struct AudioState {
     capture: Option<RecordingTarget>,
     fail_stop: bool,
+    /// A paragem seguinte excede o prazo, mas o original fica finalizado.
+    stop_timeout: bool,
+    /// Falha injetada na abertura seguinte do microfone.
+    fail_start: Option<AppError>,
+    /// Disponibilidade amostrada; `None` significa pronto.
+    microphone: Option<ComponentState>,
     played: Vec<PathBuf>,
     playing: Option<PathBuf>,
     stops: usize,
+    reopens: usize,
 }
 
 /// Adaptador de áudio controlado pelos testes.
@@ -69,6 +76,21 @@ impl FakeAudio {
         self.state.lock().expect("estado do áudio").fail_stop = true;
     }
 
+    /// A próxima paragem expira, como uma thread de áudio que responde tarde.
+    fn fail_next_stop_timeout(&self) {
+        self.state.lock().expect("estado do áudio").stop_timeout = true;
+    }
+
+    /// A próxima abertura do microfone falha com o erro indicado.
+    fn fail_next_start(&self, error: AppError) {
+        self.state.lock().expect("estado do áudio").fail_start = Some(error);
+    }
+
+    /// Muda a disponibilidade devolvida pela porta até nova alteração.
+    fn set_microphone(&self, state: ComponentState) {
+        self.state.lock().expect("estado do áudio").microphone = Some(state);
+    }
+
     fn played(&self) -> Vec<PathBuf> {
         self.state.lock().expect("estado do áudio").played.clone()
     }
@@ -76,24 +98,48 @@ impl FakeAudio {
     fn playback_stops(&self) -> usize {
         self.state.lock().expect("estado do áudio").stops
     }
+
+    fn reopens(&self) -> usize {
+        self.state.lock().expect("estado do áudio").reopens
+    }
 }
 
 impl AudioPort for FakeAudio {
     fn availability(&self) -> AvailabilityAudio {
+        let state = self.state.lock().expect("estado do áudio");
         AvailabilityAudio {
-            microphone: ComponentState::ready(),
+            microphone: state
+                .microphone
+                .clone()
+                .unwrap_or_else(ComponentState::ready),
             playback: ComponentState::ready(),
         }
     }
 
     fn start_capture(&self, target: RecordingTarget) -> Result<(), AppError> {
+        let mut state = self.state.lock().expect("estado do áudio");
+        if let Some(error) = state.fail_start.take() {
+            return Err(error);
+        }
         write_rate_wav(&target.directory.join("original.wav"), 48_000);
-        self.state.lock().expect("estado do áudio").capture = Some(target);
+        state.capture = Some(target);
         Ok(())
     }
 
     fn stop_capture(&self) -> Result<CapturedAudio, AppError> {
         let mut state = self.state.lock().expect("estado do áudio");
+        if state.stop_timeout {
+            // A thread de áudio pode acabar por fechar o original depois de o
+            // pedido expirar: o ficheiro fica escrito e o serviço não recebe
+            // resposta nem evento.
+            state.stop_timeout = false;
+            state.capture = None;
+            return Err(AppError::new(
+                error_code::AUDIO_TIMEOUT,
+                "A thread de áudio não respondeu a tempo.",
+                true,
+            ));
+        }
         let target = state.capture.take().ok_or_else(|| {
             AppError::new(
                 error_code::CAPTURE_INTERRUPTED,
@@ -137,6 +183,13 @@ impl AudioPort for FakeAudio {
         let mut state = self.state.lock().expect("estado do áudio");
         state.playing = None;
         state.stops += 1;
+        Ok(())
+    }
+
+    fn reopen(&self) -> Result<(), AppError> {
+        let mut state = self.state.lock().expect("estado do áudio");
+        state.reopens += 1;
+        state.playing = None;
         Ok(())
     }
 }
@@ -1327,4 +1380,279 @@ async fn failed_restart_discards_the_pending_health_handle() {
         after.last_error.expect("erro do reinício").code,
         error_code::BUSY
     );
+}
+
+// ---------------------------------------------------------------------------
+// Reprodução, disponibilidade e recuperação de áudio
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn playback_is_allowed_while_transcribing() {
+    let harness = Harness::with_transcriber().await;
+    let snapshot = harness.record_once().await;
+    let attempt = snapshot.attempt.expect("resposta publicada");
+    let job = harness
+        .service
+        .snapshot()
+        .model_job
+        .expect("transcrição em curso");
+    assert_eq!(job.kind, OperationKind::Transcribe);
+
+    // Transcrever em CPU é a espera mais longa: ouvir a resposta é permitido.
+    let playing = harness
+        .service
+        .play_audio(PlaybackTarget::Response)
+        .await
+        .expect("ouvir a resposta durante a transcrição");
+    assert_eq!(playing.playback, Some(PlaybackTarget::Response));
+    assert!(playing.model_job.is_some());
+
+    // A pergunta já em cache também substitui a resposta a meio da transcrição.
+    let cache = harness
+        .root
+        .join("question-cache")
+        .join(format!("{}.wav", synthesis_cache_key(QUESTION)));
+    fs::create_dir_all(cache.parent().expect("pasta da cache")).expect("criar a cache");
+    write_rate_wav(&cache, 24_000);
+
+    let question = harness
+        .service
+        .play_audio(PlaybackTarget::Question)
+        .await
+        .expect("ouvir a pergunta em cache");
+    assert_eq!(question.playback, Some(PlaybackTarget::Question));
+    assert_eq!(
+        harness.audio.played(),
+        vec![harness.original_path(&attempt.id), cache],
+        "a reprodução da pergunta substitui a da resposta"
+    );
+}
+
+#[tokio::test]
+async fn playback_is_refused_while_recording() {
+    let harness = Harness::new().await;
+    harness
+        .service
+        .start_recording()
+        .await
+        .expect("começar a gravar");
+
+    let error = harness
+        .service
+        .play_audio(PlaybackTarget::Question)
+        .await
+        .expect_err("gravar impede reproduzir");
+    assert_eq!(error.code, error_code::BUSY);
+    assert!(harness.audio.played().is_empty());
+}
+
+#[tokio::test]
+async fn starting_recording_stops_playback() {
+    let harness = Harness::new().await;
+    let snapshot = harness.record_once().await;
+    let attempt = snapshot.attempt.expect("resposta publicada");
+    harness
+        .service
+        .play_audio(PlaybackTarget::Response)
+        .await
+        .expect("ouvir a resposta");
+    let stops = harness.audio.playback_stops();
+
+    // A spec manda terminar a reprodução ao começar a gravar, não exigir que o
+    // utilizador pare o áudio primeiro.
+    let recording = harness
+        .service
+        .start_recording()
+        .await
+        .expect("gravar com uma reprodução ativa");
+    assert!(recording.recording_id.is_some());
+    assert_eq!(recording.playback, None);
+    assert!(
+        harness.audio.playback_stops() > stops,
+        "a reprodução em curso tem de ser parada"
+    );
+    assert_eq!(
+        harness.audio.played(),
+        vec![harness.original_path(&attempt.id)]
+    );
+}
+
+#[tokio::test]
+async fn synthesis_completion_stops_current_playback() {
+    let harness = Harness::new().await;
+    health(
+        &harness.service,
+        ComponentStatus::Missing,
+        ComponentStatus::Ready,
+    )
+    .await;
+    harness.record_once().await;
+    harness
+        .service
+        .play_audio(PlaybackTarget::Response)
+        .await
+        .expect("ouvir a resposta");
+    let stops = harness.audio.playback_stops();
+
+    harness
+        .service
+        .play_audio(PlaybackTarget::Question)
+        .await
+        .expect("pedir a síntese da pergunta");
+    let request = harness
+        .requests()
+        .into_iter()
+        .find(|request| request.op == WorkerOp::Synthesize)
+        .expect("pedido de síntese");
+    let expected = harness
+        .root
+        .join("question-cache")
+        .join(format!("{}.wav", synthesis_cache_key(QUESTION)));
+    write_rate_wav(&expected, 24_000);
+
+    harness
+        .service
+        .on_worker_event(WorkerEvent {
+            generation: 1,
+            message: WorkerMessage::Completed {
+                request_id: request.id,
+                result: synthesis_result(&expected),
+            },
+        })
+        .await;
+
+    let after = harness.service.snapshot();
+    assert_eq!(after.playback, Some(PlaybackTarget::Question));
+    assert!(after.model_job.is_none());
+    assert!(
+        harness.audio.playback_stops() > stops,
+        "a reprodução automática da pergunta pára a resposta em curso"
+    );
+    assert_eq!(harness.audio.played().last(), Some(&expected));
+}
+
+#[tokio::test]
+async fn restart_worker_resamples_audio_availability() {
+    let harness = Harness::new().await;
+    assert_eq!(
+        harness.service.snapshot().availability.microphone.status,
+        ComponentStatus::Ready
+    );
+
+    // O microfone desaparece e o painel não pode continuar a dizer «Disponível».
+    harness.audio.set_microphone(ComponentState {
+        status: ComponentStatus::Missing,
+        message: Some("O microfone não está ligado.".to_owned()),
+    });
+    harness
+        .service
+        .restart_worker()
+        .await
+        .expect("reiniciar com o microfone em falta");
+    let missing = harness.service.snapshot();
+    assert_eq!(
+        missing.availability.microphone.status,
+        ComponentStatus::Missing
+    );
+    assert_eq!(harness.audio.reopens(), 1, "a porta de áudio é reaberta");
+
+    // Restaurado, o painel volta a ficar correto sem reiniciar a aplicação.
+    harness.audio.set_microphone(ComponentState::ready());
+    harness.service.restart_worker().await.expect("reiniciar");
+    assert_eq!(
+        harness.service.snapshot().availability.microphone.status,
+        ComponentStatus::Ready
+    );
+}
+
+#[tokio::test]
+async fn failed_start_resamples_microphone() {
+    let harness = Harness::new().await;
+    harness.audio.set_microphone(ComponentState {
+        status: ComponentStatus::Missing,
+        message: Some("O microfone não está ligado.".to_owned()),
+    });
+    harness.audio.fail_next_start(AppError::new(
+        error_code::DEVICE_UNAVAILABLE,
+        "O microfone foi desligado.",
+        true,
+    ));
+
+    let error = harness
+        .service
+        .start_recording()
+        .await
+        .expect_err("o microfone não abre");
+    assert_eq!(error.code, error_code::DEVICE_UNAVAILABLE);
+    let after = harness.service.snapshot();
+    assert_eq!(
+        after.availability.microphone.status,
+        ComponentStatus::Missing,
+        "uma falha de dispositivo volta a amostrar a disponibilidade"
+    );
+    assert!(after.recording_id.is_none());
+}
+
+#[tokio::test]
+async fn timed_out_stop_recovers_capture() {
+    let harness = Harness::new().await;
+    harness.service.start_recording().await.expect("gravar");
+    let recording_id = harness
+        .service
+        .snapshot()
+        .recording_id
+        .expect("identificador da gravação");
+
+    harness.audio.fail_next_stop_timeout();
+    let error = harness
+        .service
+        .stop_recording()
+        .await
+        .expect_err("a paragem expira");
+    assert_eq!(error.code, error_code::AUDIO_TIMEOUT);
+
+    // A thread pode ter fechado o original depois do prazo: é publicado como
+    // recuperável e o estado deixa de esperar um evento que não chega.
+    let snapshot = harness.service.snapshot();
+    assert!(snapshot.recording_id.is_none());
+    let attempt = snapshot.attempt.expect("o original é publicado");
+    assert_eq!(attempt.id, recording_id);
+    assert!(attempt.capture.incomplete);
+    assert!(harness.original_path(&recording_id).is_file());
+    assert_eq!(
+        snapshot.last_error.expect("erro visível").code,
+        error_code::AUDIO_TIMEOUT
+    );
+
+    // Sem a limpeza de `current_capture`, gravar ficava bloqueado.
+    harness
+        .service
+        .start_recording()
+        .await
+        .expect("gravar outra resposta");
+    harness
+        .service
+        .stop_recording()
+        .await
+        .expect("terminar a segunda gravação");
+
+    // O mesmo timeout ao fechar não pode deixar o encerramento bloqueado.
+    harness
+        .service
+        .start_recording()
+        .await
+        .expect("terceira gravação");
+    harness.audio.fail_next_stop_timeout();
+    let close_error = harness
+        .service
+        .prepare_close()
+        .await
+        .expect_err("o fecho falha no timeout");
+    assert_eq!(close_error.code, error_code::AUDIO_TIMEOUT);
+    assert!(harness.service.snapshot().attempt.is_some());
+    harness
+        .service
+        .prepare_close()
+        .await
+        .expect("o fecho seguinte conclui");
 }

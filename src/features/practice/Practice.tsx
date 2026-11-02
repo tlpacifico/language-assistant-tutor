@@ -113,10 +113,13 @@ export default function Practice({ client }: { client: PracticeClient }) {
     practice.review.attemptId !== null &&
     practice.review.attemptId !== attempt.id;
 
-  const canUseAudio = !recording && !job && !playback && !busy;
-  const canStartRecording = !recording && !job && !playback && !busy;
+  // Reproduzir durante uma transcrição é permitido pela spec; só uma síntese em
+  // curso (que vai reproduzir a pergunta) ocupa a saída.
+  const synthesizing = job?.kind === "synthesize";
+  const canUseAudio = !recording && !synthesizing && !busy;
+  const canStartRecording = !recording && !job && !busy;
   const canStopRecording = recording && !busy;
-  const canTranscribe = attempt !== null && !recording && !job && !playback && !busy;
+  const canTranscribe = attempt !== null && !recording && !job && !busy;
   const canSaveReview =
     transcript !== null &&
     !staleReview &&
@@ -352,6 +355,15 @@ export default function Practice({ client }: { client: PracticeClient }) {
                 );
               })}
             </ul>
+            <button
+              type="button"
+              onClick={() =>
+                void run("refresh-availability", () => client.refresh())
+              }
+              disabled={busy}
+            >
+              Verificar disponibilidade
+            </button>
           </section>
 
           <section className="practice__panel" aria-labelledby="capture-title">

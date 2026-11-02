@@ -218,6 +218,69 @@ describe("Practice", () => {
     expect(client.stopRecording).toHaveBeenCalledTimes(1);
   });
 
+  it("playback_is_allowed_while_transcribing", async () => {
+    await renderPractice(
+      snapshot({
+        revision: 2,
+        attempt: attempt(),
+        modelJob: {
+          id: "job-1",
+          attemptId: "attempt-1",
+          kind: "transcribe",
+          stage: "processing",
+        },
+      }),
+    );
+
+    expect(screen.getByRole("button", { name: "Ouvir pergunta" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Ouvir resposta" })).toBeEnabled();
+    // Transcrever continua a impedir outra gravação e outro trabalho de modelo.
+    expect(screen.getByRole("button", { name: "Iniciar gravação" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Transcrever resposta" }),
+    ).toBeDisabled();
+  });
+
+  it("playback_is_refused_during_synthesis", async () => {
+    await renderPractice(
+      snapshot({
+        revision: 2,
+        attempt: attempt(),
+        modelJob: {
+          id: "job-2",
+          attemptId: null,
+          kind: "synthesize",
+          stage: "loading",
+        },
+      }),
+    );
+
+    expect(screen.getByRole("button", { name: "Ouvir pergunta" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Ouvir resposta" })).toBeDisabled();
+  });
+
+  it("starting_recording_stops_playback", async () => {
+    const { mocks, user } = await renderPractice(
+      snapshot({ revision: 2, attempt: attempt(), playback: "response" }),
+    );
+
+    // A reprodução não obriga a carregar em «Parar áudio» primeiro: o núcleo
+    // pára a saída ao abrir o microfone.
+    const start = screen.getByRole("button", { name: "Iniciar gravação" });
+    expect(start).toBeEnabled();
+    await user.click(start);
+    expect(mocks.startRecording).toHaveBeenCalledTimes(1);
+  });
+
+  it("refresh_availability_is_reachable", async () => {
+    const { mocks, user } = await renderPractice(snapshot({ revision: 1 }));
+
+    await user.click(
+      screen.getByRole("button", { name: "Verificar disponibilidade" }),
+    );
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+  });
+
   it("shows_loading_without_freezing_editor", async () => {
     const { mocks, user } = await renderPractice(
       snapshot({

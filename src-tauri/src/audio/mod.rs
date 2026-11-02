@@ -17,7 +17,7 @@ pub mod playback;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -103,6 +103,12 @@ pub trait AudioPort: Send + Sync {
     fn stop_capture(&self) -> Result<CapturedAudio, AppError>;
     fn play(&self, path: PathBuf) -> Result<(), AppError>;
     fn stop_playback(&self) -> Result<(), AppError>;
+    /// Reabre a porta depois de um comando ter excedido o prazo.
+    ///
+    /// Depois de um `AUDIO_TIMEOUT` a porta recusa novos comandos: a thread
+    /// antiga pode ainda estar no dispositivo e o estado do serviço deixou de
+    /// ser comparável. Reabrir cria uma thread e uns dispositivos novos.
+    fn reopen(&self) -> Result<(), AppError>;
 }
 
 /// Operações de dispositivo executadas apenas pela thread de áudio.
@@ -137,10 +143,23 @@ enum Command {
     Shutdown,
 }
 
-/// Porta de áudio nativa: uma thread proprietária dos dispositivos.
-pub struct NativeAudio {
+/// Construtor do adaptador: a porta guarda-o para poder reabrir a thread.
+type BackendFactory = Arc<dyn Fn() -> Box<dyn AudioBackend> + Send + Sync>;
+
+/// Estado da thread de áudio corrente.
+struct AudioThread {
     commands: Sender<Command>,
     handle: Option<JoinHandle<()>>,
+    /// Um comando excedeu o prazo: só `reopen` volta a aceitar comandos.
+    failed: bool,
+}
+
+/// Porta de áudio nativa: uma thread proprietária dos dispositivos.
+pub struct NativeAudio {
+    inner: Mutex<AudioThread>,
+    factory: BackendFactory,
+    events: EventSink,
+    timeout: Duration,
 }
 
 impl NativeAudio {
@@ -152,45 +171,102 @@ impl NativeAudio {
     /// Cria a porta sobre um adaptador controlado.
     ///
     /// O adaptador é construído dentro da thread de áudio, que passa a ser a
-    /// sua única proprietária.
+    /// sua única proprietária. O construtor é repetido por `reopen`, pelo que
+    /// tem de poder ser chamado mais de uma vez.
     pub fn with_backend<F>(
         factory: F,
         events: impl Fn(AudioEvent) + Send + Sync + 'static,
     ) -> Result<Self, AppError>
     where
-        F: FnOnce() -> Box<dyn AudioBackend> + Send + 'static,
+        F: Fn() -> Box<dyn AudioBackend> + Send + Sync + 'static,
     {
-        let (commands, receiver) = mpsc::channel();
+        Self::with_timeout(factory, events, COMMAND_TIMEOUT)
+    }
+
+    /// Variante com prazo explícito, usada pelos testes da porta.
+    pub fn with_timeout<F>(
+        factory: F,
+        events: impl Fn(AudioEvent) + Send + Sync + 'static,
+        timeout: Duration,
+    ) -> Result<Self, AppError>
+    where
+        F: Fn() -> Box<dyn AudioBackend> + Send + Sync + 'static,
+    {
+        let factory: BackendFactory = Arc::new(factory);
         let events: EventSink = Arc::new(events);
-        let handle = thread::Builder::new()
-            .name("audio".to_owned())
-            .spawn(move || {
-                let backend = factory();
-                audio_loop(backend, events, receiver);
-            })
-            .map_err(|error| {
-                AppError::new(
-                    error_code::DEVICE_UNAVAILABLE,
-                    format!("Não foi possível iniciar a thread de áudio: {error}."),
-                    true,
-                )
-            })?;
+        let inner = Mutex::new(spawn_audio_thread(&factory, &events)?);
         Ok(Self {
-            commands,
-            handle: Some(handle),
+            inner,
+            factory,
+            events,
+            timeout,
         })
     }
 
-    /// Envia um comando e espera a resposta, sem bloquear indefinidamente.
-    fn request<T>(&self, build: impl FnOnce(Sender<T>) -> Command) -> Result<T, AppError> {
-        let (reply, response) = mpsc::channel();
-        self.commands
-            .send(build(reply))
-            .map_err(|_| device_unavailable("A thread de áudio terminou inesperadamente."))?;
-        response
-            .recv_timeout(COMMAND_TIMEOUT)
-            .map_err(|_| device_unavailable("A thread de áudio não respondeu a tempo."))
+    fn lock_inner(&self) -> std::sync::MutexGuard<'_, AudioThread> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
+
+    /// Envia um comando e espera a resposta, sem bloquear indefinidamente.
+    ///
+    /// Um prazo excedido marca a porta como falhada: a thread pode concluir a
+    /// operação mais tarde, e nesse caso o microfone ou o ficheiro deixariam de
+    /// corresponder ao estado do serviço. Em vez de continuar às cegas, todos
+    /// os comandos passam a devolver `AUDIO_TIMEOUT` até [`AudioPort::reopen`].
+    fn request<T>(&self, build: impl FnOnce(Sender<T>) -> Command) -> Result<T, AppError> {
+        let mut inner = self.lock_inner();
+        if inner.failed {
+            return Err(audio_timeout(
+                "A operação de áudio anterior não terminou dentro do prazo. Use «Reiniciar áudio local» antes de continuar.",
+            ));
+        }
+        let (reply, response) = mpsc::channel();
+        if inner.commands.send(build(reply)).is_err() {
+            inner.failed = true;
+            return Err(device_unavailable(
+                "A thread de áudio terminou inesperadamente.",
+            ));
+        }
+        match response.recv_timeout(self.timeout) {
+            Ok(value) => Ok(value),
+            Err(_) => {
+                inner.failed = true;
+                Err(audio_timeout(
+                    "A thread de áudio não respondeu a tempo e a operação ficou em estado desconhecido. Use «Reiniciar áudio local» para reabrir o áudio.",
+                ))
+            }
+        }
+    }
+}
+
+/// Arranca uma thread de áudio com um adaptador novo.
+fn spawn_audio_thread(
+    factory: &BackendFactory,
+    events: &EventSink,
+) -> Result<AudioThread, AppError> {
+    let (commands, receiver) = mpsc::channel();
+    let factory = Arc::clone(factory);
+    let events = Arc::clone(events);
+    let handle = thread::Builder::new()
+        .name("audio".to_owned())
+        .spawn(move || {
+            let backend = factory();
+            audio_loop(backend, events, receiver);
+        })
+        .map_err(|error| {
+            AppError::new(
+                error_code::DEVICE_UNAVAILABLE,
+                format!("Não foi possível iniciar a thread de áudio: {error}."),
+                true,
+            )
+        })?;
+    Ok(AudioThread {
+        commands,
+        handle: Some(handle),
+        failed: false,
+    })
 }
 
 impl AudioPort for NativeAudio {
@@ -223,6 +299,20 @@ impl AudioPort for NativeAudio {
     fn stop_playback(&self) -> Result<(), AppError> {
         self.request(Command::StopPlayback)?
     }
+
+    fn reopen(&self) -> Result<(), AppError> {
+        // A thread antiga pode estar presa no dispositivo. A thread nova usa
+        // dispositivos novos; a antiga termina quando o comando pendente
+        // acabar, porque o canal de comandos é fechado ao substituir o
+        // remetente. Não se faz `join` para não esperar por esse comando.
+        let replacement = spawn_audio_thread(&self.factory, &self.events)?;
+        let previous = {
+            let mut inner = self.lock_inner();
+            std::mem::replace(&mut *inner, replacement)
+        };
+        drop(previous);
+        Ok(())
+    }
 }
 
 impl Drop for NativeAudio {
@@ -231,8 +321,9 @@ impl Drop for NativeAudio {
     /// O `join` é curto: a thread só tem de fechar o WAV provisório que já
     /// estava a ser escrito.
     fn drop(&mut self) {
-        let _ = self.commands.send(Command::Shutdown);
-        if let Some(handle) = self.handle.take() {
+        let mut inner = self.lock_inner();
+        let _ = inner.commands.send(Command::Shutdown);
+        if let Some(handle) = inner.handle.take() {
             let _ = handle.join();
         }
     }
@@ -435,6 +526,11 @@ impl AudioBackend for NativeDevices {
 /// Falha ao abrir ou usar um dispositivo de áudio.
 fn device_unavailable(message: impl Into<String>) -> AppError {
     AppError::new(error_code::DEVICE_UNAVAILABLE, message, true)
+}
+
+/// Comando de áudio que excedeu o prazo; a porta tem de ser reaberta.
+fn audio_timeout(message: impl Into<String>) -> AppError {
+    AppError::new(error_code::AUDIO_TIMEOUT, message, true)
 }
 
 /// Captura interrompida por falha de escrita, capacidade ou dispositivo.

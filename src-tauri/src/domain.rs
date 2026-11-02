@@ -18,6 +18,8 @@ pub mod error_code {
     pub const BUSY: &str = "BUSY";
     pub const DEVICE_UNAVAILABLE: &str = "DEVICE_UNAVAILABLE";
     pub const DEVICE_FORMAT_UNSUPPORTED: &str = "DEVICE_FORMAT_UNSUPPORTED";
+    /// Um comando de áudio excedeu o prazo; a porta tem de ser reaberta.
+    pub const AUDIO_TIMEOUT: &str = "AUDIO_TIMEOUT";
     pub const CAPTURE_INTERRUPTED: &str = "CAPTURE_INTERRUPTED";
     pub const STORAGE_WRITE_FAILED: &str = "STORAGE_WRITE_FAILED";
     pub const ARTIFACT_MISSING: &str = "ARTIFACT_MISSING";
@@ -315,7 +317,9 @@ impl AppState {
     /// Verifica ocupação antes de gravar.
     ///
     /// A captura não depende do processo auxiliar nem dos modelos; só uma
-    /// gravação, um trabalho de modelo ou a reprodução impedem começar.
+    /// gravação ou um trabalho de modelo impedem começar. Uma reprodução em
+    /// curso não é uma recusa: a spec exige que começar a gravar a termine, e
+    /// é o chamador (o serviço) que pára a saída antes de abrir a entrada.
     pub fn can_start_recording(&self) -> Result<(), AppError> {
         if self.recording_id.is_some() {
             return Err(AppError::busy("Já está uma gravação em curso."));
@@ -325,8 +329,25 @@ impl AppState {
                 "Há uma transcrição ou síntese em curso. Aguarde que termine.",
             ));
         }
-        if self.playback.is_some() {
-            return Err(AppError::busy("A reprodução de áudio está ativa."));
+        Ok(())
+    }
+
+    /// Verifica ocupação antes de pedir um trabalho de modelo.
+    ///
+    /// Uma reprodução em curso não é fatal: ouvir áudio guardado durante uma
+    /// transcrição é permitido pela spec, e uma síntese que vá reproduzir a
+    /// pergunta pára a saída antes de começar. Só a captura e outro trabalho de
+    /// modelo impedem o pedido.
+    pub fn can_start_model_job(&self) -> Result<(), AppError> {
+        if self.recording_id.is_some() {
+            return Err(AppError::busy(
+                "Termine a gravação antes de pedir uma transcrição ou síntese.",
+            ));
+        }
+        if self.model_job.is_some() {
+            return Err(AppError::busy(
+                "Há uma transcrição ou síntese em curso. Aguarde que termine.",
+            ));
         }
         Ok(())
     }
@@ -354,7 +375,7 @@ impl AppState {
         job: ModelJob,
         request_id: impl Into<String>,
     ) -> Result<(), AppError> {
-        self.can_start_recording()?;
+        self.can_start_model_job()?;
         self.active_request = Some(request_id.into());
         self.model_job = Some(job);
         Ok(())

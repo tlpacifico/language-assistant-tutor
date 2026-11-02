@@ -59,11 +59,11 @@
         "bytes": 9072000,
         "incomplete": false
       },
-      "originalFile": "attempts/8a1f4c78-2a4b-4f0e-9b6b-1e6b0f2e4d11/original.wav",
-      "normalizedFile": "attempts/8a1f4c78-2a4b-4f0e-9b6b-1e6b0f2e4d11/normalized.wav",
+      "originalFile": "original.wav",
+      "normalizedFile": "normalized.wav",
       "transcripts": [
         {
-          "id": "req-3",
+          "id": "2f0f5e5e-6a4e-4b1e-8f6a-0e0f0b5c9d21",
           "status": "completed",
           "text": "Last year I reorganised our release checklist because deploys kept failing on Fridays.",
           "segments": [
@@ -86,12 +86,12 @@
         }
       ],
       "review": {
-        "sourceTranscriptId": "req-3",
+        "sourceTranscriptId": "2f0f5e5e-6a4e-4b1e-8f6a-0e0f0b5c9d21",
         "text": "Last year I reorganised our release checklist because deploys kept failing on Fridays.",
         "savedAt": "2026-11-01T09:33:00Z"
       },
       "lastOperation": {
-        "id": "req-3",
+        "id": "2f0f5e5e-6a4e-4b1e-8f6a-0e0f0b5c9d21",
         "kind": "transcribe",
         "state": "completed",
         "error": null

@@ -50,11 +50,11 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::audio::{normalize_wav, AudioEvent, AudioPort, CapturedAudio};
 use crate::domain::{
-    error_code, Action, AppError, AppSnapshot, AppState, Attempt, ComponentState, ComponentStatus,
-    JobStage, ModelJob, OperationKind, OperationRecord, OperationState, PlaybackTarget,
-    RestoreResult, Transcript, TranscriptStatus,
+    error_code, Action, AppError, AppSnapshot, AppState, Attempt, CaptureMeta, ComponentState,
+    ComponentStatus, JobStage, ModelJob, OperationKind, OperationRecord, OperationState,
+    PlaybackTarget, RestoreResult, Transcript, TranscriptStatus,
 };
-use crate::storage::{AttemptStore, NORMALIZED_FILE};
+use crate::storage::{AttemptStore, NORMALIZED_FILE, ORIGINAL_FILE};
 use crate::worker::protocol::SynthesizeParams;
 use crate::worker::protocol::TranscribeParams;
 use crate::worker::{
@@ -297,9 +297,14 @@ impl AppService {
         }
     }
 
-    /// Reinicia o auxiliar; uma falha fica visível sem perder a resposta ativa.
+    /// Reinicia o auxiliar e reabre o áudio quando está livre.
+    ///
+    /// Reiniciar volta a amostrar a disponibilidade do microfone e da saída
+    /// (secção 5.1) e reabre uma porta de áudio que tenha ficado presa num
+    /// comando expirado. Uma falha fica visível sem perder a resposta ativa.
     pub async fn restart_worker(self: &Arc<Self>) -> Result<AppSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
+        self.reopen_idle_audio().await;
         if self.lock_state().model_job.is_some() {
             let error = AppError::busy(
                 "Há uma transcrição ou síntese em curso. Aguarde que termine antes de reiniciar.",
@@ -352,8 +357,9 @@ impl AppService {
     /// Reserva a pasta da gravação e abre o microfone.
     ///
     /// A captura não depende do auxiliar nem dos modelos; só uma gravação, um
-    /// trabalho de modelo, a reprodução ou uma publicação pendente impedem
-    /// começar.
+    /// trabalho de modelo ou uma publicação pendente impedem começar. Uma
+    /// reprodução em curso não impede gravar: é parada aqui, como a spec exige
+    /// (secção 4).
     pub async fn start_recording(&self) -> Result<AppSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
 
@@ -382,6 +388,11 @@ impl AppService {
         if let Err(error) = audio_task(move || audio.stop_playback()).await {
             self.record_error(&error);
             return Err(error);
+        }
+        // A reprodução terminou antes de abrir a entrada; o estado acompanha a
+        // paragem mesmo que a reserva da pasta falhe de seguida.
+        if self.lock_state().playback.is_some() {
+            self.commit(|state| state.playback = None);
         }
 
         let store = self.store.clone();
@@ -412,6 +423,9 @@ impl AppService {
                     state.playback = None;
                     state.last_error = Some(error.clone());
                 });
+                // Um microfone que desapareceu tem de aparecer no painel de
+                // disponibilidade, que é a instrução do que preparar (5.1).
+                self.resample_after_device_error(&error).await;
                 Err(error)
             }
         }
@@ -432,11 +446,22 @@ impl AppService {
             Err(error) => {
                 // A thread de áudio pode recuperar o parcial e entregá-lo como
                 // `CaptureInterrupted`; a resposta anterior mantém-se ativa até lá.
+                let recording_id = self.lock_state().recording_id.clone();
                 let snapshot = self.commit(|state| {
                     state.recording_id = None;
                     state.last_error = Some(error.clone());
                 });
                 let _ = snapshot;
+                self.resample_after_device_error(&error).await;
+                if error.code == error_code::AUDIO_TIMEOUT {
+                    // Um pedido que expirou não produz evento de interrupção:
+                    // a recuperação tem de acontecer aqui, senão `current_capture`
+                    // bloqueava gravar e fechar para sempre.
+                    if let Some(recording_id) = recording_id {
+                        self.recover_timed_out_capture(&recording_id, error.clone())
+                            .await;
+                    }
+                }
                 Err(error)
             }
         }
@@ -721,6 +746,10 @@ impl AppService {
     // -- reprodução ---------------------------------------------------------
 
     /// Reproduz a pergunta ou o original da resposta ativa.
+    ///
+    /// Só a captura e uma síntese em curso impedem reproduzir. Uma transcrição
+    /// pode demorar minutos em CPU e ouvir uma resposta já guardada é
+    /// exatamente o que a spec permite nesse intervalo (secções 4 e 8).
     pub async fn play_audio(&self, target: PlaybackTarget) -> Result<AppSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
         {
@@ -731,12 +760,15 @@ impl AppService {
                 self.record_error(&error);
                 return Err(error);
             }
-            if state.model_job.is_some() {
-                let error =
-                    AppError::busy("Há uma transcrição ou síntese em curso. Aguarde que termine.");
-                drop(state);
-                self.record_error(&error);
-                return Err(error);
+            if let Some(job) = &state.model_job {
+                if job.kind == OperationKind::Synthesize {
+                    let error = AppError::busy(
+                        "A voz da pergunta está a ser preparada. Aguarde que termine antes de reproduzir áudio.",
+                    );
+                    drop(state);
+                    self.record_error(&error);
+                    return Err(error);
+                }
             }
         }
 
@@ -929,11 +961,19 @@ impl AppService {
                     self.finish_capture(capture, false).await?;
                 }
                 Err(error) => {
+                    let recording_id = self.lock_state().recording_id.clone();
                     let snapshot = self.commit(|state| {
                         state.recording_id = None;
                         state.last_error = Some(error.clone());
                     });
                     let _ = snapshot;
+                    self.resample_after_device_error(&error).await;
+                    if error.code == error_code::AUDIO_TIMEOUT {
+                        if let Some(recording_id) = recording_id {
+                            self.recover_timed_out_capture(&recording_id, error.clone())
+                                .await;
+                        }
+                    }
                     return Err(error);
                 }
             }
@@ -1224,6 +1264,22 @@ impl AppService {
             return;
         }
 
+        // A síntese pode terminar enquanto uma resposta está a ser ouvida; a
+        // reprodução automática da pergunta substitui a reprodução em curso em
+        // vez de colidir com ela (a captura já está terminada aqui).
+        if self.lock_state().playback.is_some() {
+            let audio = Arc::clone(&self.audio);
+            if let Err(error) = audio_task(move || audio.stop_playback()).await {
+                let snapshot = self.commit(|state| {
+                    state.finish_model_job();
+                    state.playback = None;
+                    state.last_error = Some(error);
+                });
+                let _ = snapshot;
+                return;
+            }
+        }
+
         let audio = Arc::clone(&self.audio);
         match audio_task(move || audio.play(expected)).await {
             Ok(()) => {
@@ -1467,6 +1523,76 @@ impl AppService {
                     state.availability.playback = error_state(&error);
                 });
                 let _ = snapshot;
+            }
+        }
+    }
+
+    /// Reabre a porta de áudio quando nada a está a usar e volta a amostrar a
+    /// disponibilidade.
+    ///
+    /// É a recuperação explícita de um comando que excedeu o prazo: a porta
+    /// antiga fica presa e o serviço não pode voltar a confiar no dispositivo
+    /// até ser reaberta.
+    async fn reopen_idle_audio(&self) {
+        let idle = {
+            let state = self.lock_state();
+            state.recording_id.is_none() && state.playback.is_none()
+        };
+        if idle && self.lock_capture().is_none() {
+            let audio = Arc::clone(&self.audio);
+            if let Err(error) = audio_task(move || audio.reopen()).await {
+                self.record_error(&error);
+            }
+        }
+        self.refresh_audio_availability().await;
+    }
+
+    /// Volta a amostrar o áudio depois de uma falha de dispositivo.
+    ///
+    /// O painel de disponibilidade é a instrução do que preparar (secção 5.1):
+    /// um microfone removido não pode continuar a aparecer como «Disponível»,
+    /// nem o contrário depois de restaurado.
+    async fn resample_after_device_error(&self, error: &AppError) {
+        let device_failure = error.code == error_code::DEVICE_UNAVAILABLE
+            || error.code == error_code::DEVICE_FORMAT_UNSUPPORTED
+            || error.code == error_code::AUDIO_TIMEOUT;
+        if device_failure {
+            self.refresh_audio_availability().await;
+        }
+    }
+
+    /// Recupera uma captura cuja paragem excedeu o prazo.
+    ///
+    /// A thread de áudio pode ter finalizado `original.wav` depois de o pedido
+    /// expirar. Se existir um WAV legível, é publicado como recuperável e
+    /// marcado `incomplete`; sem ficheiro, a reserva é libertada para permitir
+    /// gravar de novo. Em ambos os casos `current_capture` é limpo, para o
+    /// serviço não ficar à espera de um evento que já não chega.
+    async fn recover_timed_out_capture(&self, recording_id: &str, error: AppError) {
+        *self.lock_capture() = None;
+        let directory = match self.attempt_directory(recording_id) {
+            Ok(directory) => directory,
+            Err(_) => return,
+        };
+        let id = recording_id.to_owned();
+        let original = directory.join(ORIGINAL_FILE);
+        match storage_task(move || read_recovered_capture(&id, &original)).await {
+            Ok(Some(capture)) => {
+                // A publicação limpa o erro; o timeout continua a ser o que
+                // explica porque é que a resposta foi recuperada. Se a
+                // publicação falhar, `finish_capture` já deixou a captura
+                // pendente para repetir.
+                if self.finish_capture(capture, false).await.is_ok() {
+                    self.record_error(&error);
+                }
+            }
+            Ok(None) => {
+                // Nunca foi finalizado áudio: a pasta reservada vazia não fica.
+                let _ = fs::remove_dir(&directory);
+                self.record_error(&error);
+            }
+            Err(storage_error) => {
+                self.record_error(&storage_error);
             }
         }
     }
@@ -1762,11 +1888,52 @@ fn validate_synthesis_wav(path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Reconstrói a captura a partir do original que a thread de áudio conseguiu
+/// fechar depois de o pedido de paragem ter expirado.
+///
+/// Só um ficheiro já finalizado e legível é recuperável; o resultado é marcado
+/// `incomplete` porque não houve confirmação de que a captura terminou bem.
+fn read_recovered_capture(id: &str, original: &Path) -> Result<Option<CapturedAudio>, AppError> {
+    if !original.is_file() {
+        return Ok(None);
+    }
+    let reader = match hound::WavReader::open(original) {
+        Ok(reader) => reader,
+        Err(_) => return Ok(None),
+    };
+    let spec = reader.spec();
+    let bytes = fs::metadata(original)
+        .map_err(|error| {
+            storage_error(format!(
+                "Não foi possível ler o áudio recuperado em «{}»: {error}.",
+                original.display()
+            ))
+        })?
+        .len();
+    let frames = u64::from(reader.len());
+    let duration_ms = if spec.sample_rate > 0 && spec.channels > 0 {
+        frames.saturating_mul(1000) / (u64::from(spec.sample_rate) * u64::from(spec.channels))
+    } else {
+        0
+    };
+    Ok(Some(CapturedAudio {
+        id: id.to_owned(),
+        original: original.to_path_buf(),
+        meta: CaptureMeta {
+            sample_rate: spec.sample_rate,
+            channels: spec.channels,
+            duration_ms,
+            bytes,
+            incomplete: true,
+        },
+    }))
+}
+
 /// Resolve uma referência relativa dentro da pasta de uma resposta.
 ///
 /// Espelha a regra da persistência: referências absolutas, `..` e prefixos são
 /// recusados, e o ficheiro tem de existir. A interface nunca fornece caminhos.
-fn resolve_attempt_file(
+pub fn resolve_attempt_file(
     root: &Path,
     attempt_id: &str,
     reference: &str,
