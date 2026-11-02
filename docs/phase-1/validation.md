@@ -37,7 +37,7 @@ pessoal foi criada ou guardada.
 
 | Comando | Resultado |
 | --- | --- |
-| `.\scripts\verify.ps1` | 8/8 checks com saída 0 (typecheck, 14 testes Vitest, build Vite, `cargo fmt --check`, `clippy -D warnings`, 74 testes Rust, 36 testes pytest sem `models`, `pip check`) |
+| `.\scripts\verify.ps1` | 8/8 checks com saída 0 (typecheck, 15 testes Vitest, build Vite, `cargo fmt --check`, `clippy -D warnings`, 77 testes Rust, 36 testes pytest sem `models`, `pip check`) |
 | `.\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_offline_models.py -m models -q` | `2 passed` em 12,18 s (síntese da pergunta + transcrição; silêncio → `no_speech`); **não foi skip** |
 | Reconstrução do lock numa `.venv` descartável em `%TEMP%` | todos os passos com exit 0 em 356,8 s: `torch==2.15.0` do índice CPU, `-r requirements.lock.txt --extra-index-url .../cpu`, editable e `pip check` (`No broken requirements found.`); versões finais `torch 2.15.0+cpu`, `faster-whisper 1.2.1`, `kokoro 0.9.4`, `spacy 3.8.18`, `transformers 5.22.1`; a `.venv` descartável foi apagada |
 | `.\.venv\Scripts\python.exe -m audio_worker.prepare --models-dir ...` | saída 0; manifesto e síntese de verificação |

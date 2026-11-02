@@ -127,7 +127,7 @@ código. Modelos, `.venv`, áudio e `.superpowers/` estão no `.gitignore`.
 ## Estado
 
 A implementação da fase 1 está completa e a verificação automática está verde
-(74 testes Rust, 14 testes React, 36 testes Python sem marca `models`, 2 testes
+(77 testes Rust, 15 testes React, 36 testes Python sem marca `models`, 2 testes
 Python reais com pesos preparados, `pip check` limpo, build release sem
 instalador). A preparação real dos modelos foi executada e o risco de
 compatibilidade entre `transformers 5.22.1` e os pesos do Kokoro 0.9.4 não se
