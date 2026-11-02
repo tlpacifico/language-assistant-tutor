@@ -33,8 +33,8 @@ use language_assistant_tutor::domain::{
 };
 use language_assistant_tutor::interview::{
     AdvanceSession, AnswerTarget, AudioSelection, Category, ConfirmAnswer, DatabaseState,
-    InterviewSnapshot, QuestionDetail, ReviewOrigin, SaveReview, SessionDetail, SessionStatus,
-    StartSession,
+    InterviewSnapshot, QuestionDetail, RecordingState, ReviewOrigin, SaveReview, SessionDetail,
+    SessionStatus, StartSession,
 };
 use language_assistant_tutor::service::{
     synthesis_cache_key, AppService, LaunchedWorker, ServicePaths, WorkerControl, WorkerLauncher,
@@ -79,6 +79,30 @@ fn write_empty_wav(path: &Path) {
     writer.finalize().expect("fechar WAV vazio");
 }
 
+/// Porta de espera que deixa o teste observar a janela de finalização.
+///
+/// A paragem da captura bloqueia até `release`, para o teste poder chamar um
+/// comando enquanto o serviço está a finalizar a gravação.
+#[derive(Debug, Default)]
+struct StopGate {
+    released: Mutex<bool>,
+    ready: std::sync::Condvar,
+}
+
+impl StopGate {
+    fn wait(&self) {
+        let mut released = self.released.lock().expect("porta da paragem");
+        while !*released {
+            released = self.ready.wait(released).expect("porta da paragem");
+        }
+    }
+
+    fn release(&self) {
+        *self.released.lock().expect("porta da paragem") = true;
+        self.ready.notify_all();
+    }
+}
+
 #[derive(Debug, Default)]
 struct AudioState {
     capture: Option<RecordingTarget>,
@@ -87,6 +111,8 @@ struct AudioState {
     stop_timeout: bool,
     /// A paragem seguinte escreve um WAV sem amostras (publicação falha).
     corrupt_stop: bool,
+    /// A paragem seguinte fica bloqueada até a porta ser libertada.
+    stop_gate: Option<Arc<StopGate>>,
     /// Falha injetada na abertura seguinte do microfone.
     fail_start: Option<AppError>,
     /// Disponibilidade amostrada; `None` significa pronto.
@@ -116,6 +142,13 @@ impl FakeAudio {
     /// A próxima paragem deixa um original inválido, para a publicação falhar.
     fn corrupt_next_stop(&self) {
         self.state.lock().expect("estado do áudio").corrupt_stop = true;
+    }
+
+    /// A próxima paragem fica bloqueada até a porta devolvida ser libertada.
+    fn block_next_stop(&self) -> Arc<StopGate> {
+        let gate = Arc::new(StopGate::default());
+        self.state.lock().expect("estado do áudio").stop_gate = Some(Arc::clone(&gate));
+        gate
     }
 
     /// A próxima abertura do microfone falha com o erro indicado.
@@ -196,6 +229,11 @@ impl AudioPort for FakeAudio {
         if state.corrupt_stop {
             state.corrupt_stop = false;
             write_empty_wav(&original);
+        }
+        let gate = state.stop_gate.take();
+        drop(state);
+        if let Some(gate) = gate {
+            gate.wait();
         }
         let bytes = fs::metadata(&original)
             .expect("a captura escreveu o original")
@@ -915,6 +953,17 @@ fn transcript_ids(current: &QuestionDetail) -> Vec<String> {
 
 fn unique_ids(values: impl IntoIterator<Item = String>) -> HashSet<String> {
     values.into_iter().collect()
+}
+
+/// Espera que o serviço entre na janela de finalização, com prazo curto.
+async fn wait_until_finalizing(service: &AppService) {
+    for _ in 0..400 {
+        if service.snapshot().finalizing {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("a finalização não começou dentro do prazo");
 }
 
 // ---------------------------------------------------------------------------
@@ -2639,6 +2688,169 @@ async fn finishing_the_last_question_completes_the_session() {
         .await
         .expect("iniciar outra entrevista");
     assert_ne!(next.active_session.expect("nova sessão").id, session_id);
+}
+
+#[tokio::test]
+async fn confirmation_and_advance_are_refused_during_capture() {
+    let harness = Harness::new().await;
+    harness.record_once().await;
+    let text = "I fixed the release process and told the team early.";
+    harness.save_manual_review(text).await;
+
+    let current = harness.current();
+    let session = harness.snapshot().active_session.expect("sessão em curso");
+    let review_version = selected_recording(&current)
+        .review
+        .as_ref()
+        .expect("revisão guardada")
+        .version;
+
+    // O utilizador volta a gravar antes de confirmar a primeira tomada.
+    harness
+        .service
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
+        .await
+        .expect("segunda captura");
+    let recording_id = harness
+        .snapshot()
+        .recording_id
+        .clone()
+        .expect("gravação em curso");
+
+    // Confirmar a meio da captura mudaria a sessão e deixaria a tomada nova
+    // publicada mas sem seleção nem transcrição.
+    let confirm = harness
+        .service
+        .confirm_answer(ConfirmAnswer {
+            request_id: new_request_id(),
+            target: harness.target_of(&current),
+            expected_review_version: review_version,
+            source_transcript_id: None,
+            origin: ReviewOrigin::ManualExplicit,
+            text: text.to_owned(),
+            expected_session_version: session.version,
+        })
+        .await
+        .expect_err("confirmar durante a captura é recusado");
+    assert_eq!(confirm.code, error_code::BUSY);
+
+    // Avançar a meio da captura mudaria a pergunta e a página.
+    let advance = harness
+        .service
+        .advance_session(AdvanceSession {
+            request_id: new_request_id(),
+            session_id: session.id.clone(),
+            session_question_id: current.question.id.clone(),
+            expected_session_version: session.version,
+        })
+        .await
+        .expect_err("avançar durante a captura é recusado");
+    assert_eq!(advance.code, error_code::BUSY);
+
+    let refused = harness.snapshot();
+    assert_eq!(
+        refused.recording_id.as_deref(),
+        Some(recording_id.as_str()),
+        "a captura em curso mantém-se intacta"
+    );
+    assert_eq!(
+        refused.last_error.expect("erro visível").code,
+        error_code::BUSY
+    );
+
+    // Nenhuma mutação chegou à base: sem confirmação, mesma versão e posição.
+    let detail = harness.load_detail(&session.id).await;
+    assert_eq!(detail.summary.version, session.version);
+    assert_eq!(detail.summary.position, 1);
+    assert!(detail.questions[0].confirmation.is_none());
+    assert_eq!(
+        detail.questions[0].recordings[0]
+            .review
+            .as_ref()
+            .expect("revisão anterior intacta")
+            .version,
+        review_version
+    );
+
+    // A captura pode terminar: a nova tomada fica publicada e selecionada.
+    let stopped = harness
+        .service
+        .stop_recording()
+        .await
+        .expect("terminar a gravação recusada não perde a tomada");
+    assert!(stopped.recording_id.is_none());
+    let current = stopped.current.expect("pergunta atual");
+    let selected = selected_recording(&current);
+    assert_eq!(selected.id, recording_id);
+    assert_eq!(selected.state, RecordingState::Ready);
+}
+
+#[tokio::test]
+async fn review_is_refused_while_the_capture_is_finalizing() {
+    let harness = Harness::new().await;
+    harness.record_once().await;
+    let current = harness.current();
+    let session_id = harness.session_id();
+    let target = harness.target_of(&current);
+
+    // Nova captura cuja paragem fica bloqueada dentro da finalização.
+    harness
+        .service
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
+        .await
+        .expect("segunda captura");
+    let recording_id = harness
+        .snapshot()
+        .recording_id
+        .clone()
+        .expect("gravação em curso");
+    let gate = harness.audio.block_next_stop();
+    let service = Arc::clone(&harness.service);
+    let stopping = tokio::spawn(async move { service.stop_recording().await });
+    wait_until_finalizing(&harness.service).await;
+
+    // Interromper a finalização (como uma janela fechada a meio) liberta o
+    // coordenador, mas o estado continua marcado como `finalizing`.
+    stopping.abort();
+    let _ = stopping.await;
+    gate.release();
+
+    let error = harness
+        .service
+        .save_review(SaveReview {
+            request_id: new_request_id(),
+            target,
+            expected_review_version: 0,
+            source_transcript_id: None,
+            origin: ReviewOrigin::ManualExplicit,
+            text: "edited during finalization".to_owned(),
+        })
+        .await
+        .expect_err("guardar durante a finalização é recusado");
+    assert_eq!(error.code, error_code::BUSY);
+
+    let refused = harness.snapshot();
+    assert_eq!(refused.recording_id.as_deref(), Some(recording_id.as_str()));
+    assert!(refused.finalizing);
+    assert_eq!(
+        refused.last_error.expect("erro visível").code,
+        error_code::BUSY
+    );
+
+    // Nenhuma revisão foi escrita: a escrita não correu com a publicação.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let detail = harness.load_detail(&session_id).await;
+    assert!(
+        detail.questions[0].recordings[0].review.is_none(),
+        "a revisão não pode correr com a publicação"
+    );
+    assert_eq!(detail.summary.version, 1);
 }
 
 #[tokio::test]

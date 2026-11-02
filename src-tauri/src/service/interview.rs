@@ -43,8 +43,19 @@ impl AppService {
     }
 
     /// Guarda uma versão nova da revisão, sem confirmar nem avançar.
+    ///
+    /// Editar durante uma captura é permitido (como na fase 1); durante a
+    /// finalização a escrita é recusada para não competir com a publicação.
     pub async fn save_review(&self, request: SaveReview) -> Result<InterviewSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
+        let finalizing = self.lock_state().finalizing;
+        if finalizing {
+            let error = AppError::busy(
+                "A gravação está a ser finalizada. Aguarde que termine antes de guardar a revisão.",
+            );
+            self.record_error(&error);
+            return Err(error);
+        }
         let database = self.database()?;
         let db = database.clone();
         match database_task(move || db.save_review(request)).await {
@@ -57,11 +68,24 @@ impl AppService {
     }
 
     /// Confirma exatamente a versão de texto que o utilizador viu.
+    ///
+    /// Recusa durante a captura e a finalização: confirmar ou avançar a meio de
+    /// uma gravação moveria a sessão e deixaria a nova tomada publicada mas sem
+    /// seleção nem transcrição.
     pub async fn confirm_answer(
         &self,
         request: ConfirmAnswer,
     ) -> Result<InterviewSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
+        let capture_busy = {
+            let state = self.lock_state();
+            state.recording_id.is_some() || state.finalizing
+        };
+        if capture_busy {
+            let error = AppError::busy("Termine a gravação antes de confirmar a resposta.");
+            self.record_error(&error);
+            return Err(error);
+        }
         let database = self.database()?;
         let db = database.clone();
         match database_task(move || db.confirm_answer(request)).await {
@@ -75,6 +99,9 @@ impl AppService {
 
     /// Avança para a pergunta seguinte ou termina a sessão, de forma explícita.
     ///
+    /// Recusa durante a captura e a finalização: a sessão e a página não podem
+    /// mudar enquanto o microfone está aberto.
+    ///
     /// A sessão concluída deixa de ser a ativa: a fotografia passa a `None` e a
     /// interface consulta o resumo por [`AppService::load_session`].
     pub async fn advance_session(
@@ -82,6 +109,15 @@ impl AppService {
         request: AdvanceSession,
     ) -> Result<InterviewSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
+        let capture_busy = {
+            let state = self.lock_state();
+            state.recording_id.is_some() || state.finalizing
+        };
+        if capture_busy {
+            let error = AppError::busy("Termine a gravação antes de avançar a entrevista.");
+            self.record_error(&error);
+            return Err(error);
+        }
         let database = self.database()?;
         let db = database.clone();
         match database_task(move || db.advance_session(request)).await {
