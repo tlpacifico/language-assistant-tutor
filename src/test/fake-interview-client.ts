@@ -302,6 +302,10 @@ export function fakeInterviewClient(options: {
     loadSession: vi.fn(async () => {
       throw appError("INVALID_INPUT", "Abrir sessão não é usado neste teste.");
     }),
+    listLegacy: vi.fn(async () => []),
+    loadLegacy: vi.fn(async () => {
+      throw appError("INVALID_INPUT", "Abrir treino não é usado neste teste.");
+    }),
     startRecording: vi.fn(async () => current),
     stopRecording: vi.fn(async () => current),
     retrySaveRecording: vi.fn(async () => current),

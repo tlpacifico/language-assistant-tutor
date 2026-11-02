@@ -45,7 +45,7 @@
 //! ficheiro diferente.
 
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -58,12 +58,13 @@ use crate::audio::{AudioEvent, AudioPort, CapturedAudio, ORIGINAL_FILE};
 use crate::db::Database;
 use crate::domain::{
     error_code, AppError, Availability, CaptureMeta, ComponentState, ComponentStatus, JobStage,
-    OperationKind, PlaybackTarget, Transcript, TranscriptStatus,
+    OperationKind, PlaybackTarget, RestoreResult, Transcript, TranscriptStatus,
 };
 use crate::interview::{
     AnswerTarget, DatabaseState, Id, InterviewSnapshot, ModelJobView, OperationTarget,
     QuestionDetail, ReviewOrigin, SaveReview, SessionDetail, SessionSummary,
 };
+use crate::legacy::LegacyStore;
 use crate::worker::protocol::SynthesizeParams;
 use crate::worker::{
     HealthResult, SynthesisResult, TranscriptionResult, WorkerClient, WorkerEvent, WorkerMessage,
@@ -1560,52 +1561,14 @@ fn read_recovered_capture(id: &str, original: &Path) -> Result<Option<CapturedAu
 ///
 /// Espelha a regra da persistência antiga: referências absolutas, `..` e
 /// prefixos são recusados, e o ficheiro tem de existir. A interface nunca
-/// fornece caminhos. A consulta é apenas de leitura.
+/// fornece caminhos. A consulta é apenas de leitura e delega na fachada dos
+/// treinos antigos.
 pub fn resolve_attempt_file(
     root: &Path,
     attempt_id: &str,
     reference: &str,
 ) -> Result<PathBuf, AppError> {
-    if !is_safe_id(attempt_id) {
-        return Err(artifact_missing(
-            "O identificador indicado não corresponde a uma resposta guardada.",
-        ));
-    }
-    let reference = Path::new(reference);
-    if reference.is_absolute() {
-        return Err(artifact_missing(
-            "A referência do ficheiro da resposta não é válida.",
-        ));
-    }
-    let mut resolved = root.join("attempts").join(attempt_id);
-    let mut components = 0;
-    for component in reference.components() {
-        match component {
-            Component::Normal(part) => {
-                resolved.push(part);
-                components += 1;
-            }
-            _ => {
-                return Err(artifact_missing(
-                    "A referência do ficheiro da resposta não é válida.",
-                ))
-            }
-        }
-    }
-    if components == 0 || !resolved.is_file() {
-        return Err(artifact_missing(
-            "O ficheiro da resposta não foi encontrado; os restantes dados foram conservados.",
-        ));
-    }
-    Ok(resolved)
-}
-
-fn is_safe_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 64
-        && id.chars().all(|character| {
-            character.is_ascii_alphanumeric() || character == '-' || character == '_'
-        })
+    LegacyStore::new(root.to_path_buf()).resolve_reference(attempt_id, reference)
 }
 
 fn error_state(error: &AppError) -> ComponentState {

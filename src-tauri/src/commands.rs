@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::domain::AppError;
+use crate::domain::{AppError, RestoreResult};
 use crate::interview::{
     AdvanceSession, AnswerTarget, AudioSelection, Category, ConfirmAnswer, Id, InterviewSnapshot,
     Question, QuestionInput, SaveReview, SessionDetail, SessionSummary, StartSession, Version,
@@ -81,6 +81,23 @@ pub async fn interview_load_session(
     service: State<'_, Arc<AppService>>,
 ) -> Result<SessionDetail, AppError> {
     service.load_session(session_id).await
+}
+
+/// Lista os treinos da fase 1, em modo de consulta.
+#[tauri::command]
+pub async fn interview_list_legacy(
+    service: State<'_, Arc<AppService>>,
+) -> Result<Vec<RestoreResult>, AppError> {
+    service.list_legacy().await
+}
+
+/// Lê um treino da fase 1 pelo identificador, sem alterar o formato antigo.
+#[tauri::command]
+pub async fn interview_load_legacy(
+    attempt_id: Id,
+    service: State<'_, Arc<AppService>>,
+) -> Result<RestoreResult, AppError> {
+    service.load_legacy(attempt_id).await
 }
 
 /// Reserva a gravação e abre o microfone na pergunta atual.

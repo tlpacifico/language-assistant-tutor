@@ -178,6 +178,21 @@ impl AppService {
         .await
     }
 
+    /// Lista os treinos da fase 1 a partir das pastas, apenas de leitura.
+    ///
+    /// Não depende de `last-attempt.json` nem copia nada para SQLite; uma pasta
+    /// inválida fica visível com os seus avisos sem esconder as restantes.
+    pub async fn list_legacy(&self) -> Result<Vec<RestoreResult>, AppError> {
+        let store = LegacyStore::new(self.legacy_root.clone());
+        storage_task(move || store.list()).await
+    }
+
+    /// Lê um treino da fase 1 pelo identificador, sem alterar o formato antigo.
+    pub async fn load_legacy(&self, attempt_id: Id) -> Result<RestoreResult, AppError> {
+        let store = LegacyStore::new(self.legacy_root.clone());
+        storage_task(move || store.load(&attempt_id)).await
+    }
+
     // -- captura ------------------------------------------------------------
 
     /// Reserva a gravação na base e a pasta, e só então abre o microfone.
@@ -1113,17 +1128,14 @@ impl AppService {
 
     /// Reproduz o original de um treino da fase 1, apenas em leitura.
     async fn play_legacy(&self, attempt_id: Id) -> Result<InterviewSnapshot, AppError> {
-        let root = self.legacy_root.clone();
-        let path =
-            match storage_task(move || resolve_attempt_file(&root, &attempt_id, ORIGINAL_FILE))
-                .await
-            {
-                Ok(path) => path,
-                Err(error) => {
-                    self.record_error(&error);
-                    return Err(error);
-                }
-            };
+        let store = LegacyStore::new(self.legacy_root.clone());
+        let path = match storage_task(move || store.resolve_original(&attempt_id)).await {
+            Ok(path) => path,
+            Err(error) => {
+                self.record_error(&error);
+                return Err(error);
+            }
+        };
         self.play_path(PlaybackTarget::Response, path).await
     }
 }

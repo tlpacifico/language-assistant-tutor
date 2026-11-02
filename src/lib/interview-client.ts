@@ -27,6 +27,7 @@ import type {
   StartSession,
   Version,
 } from "./interview-contracts";
+import type { RestoreResult } from "./contracts";
 
 /** Evento com a fotografia da entrevista, publicado depois de cada alteração. */
 export const INTERVIEW_SNAPSHOT_EVENT = "interview://snapshot";
@@ -54,6 +55,10 @@ export interface InterviewClient {
   listSessions(): Promise<SessionSummary[]>;
   /** Abre uma sessão completa para consulta ou retoma. */
   loadSession(sessionId: Id): Promise<SessionDetail>;
+  /** Lista os treinos da fase 1, apenas de leitura. */
+  listLegacy(): Promise<RestoreResult[]>;
+  /** Lê um treino da fase 1 pelo identificador, sem alterar o formato antigo. */
+  loadLegacy(attemptId: Id): Promise<RestoreResult>;
   /** Reserva a gravação e abre o microfone na pergunta atual. */
   startRecording(
     sessionQuestionId: Id,
@@ -108,6 +113,9 @@ export function createInterviewClient(): InterviewClient {
     listSessions: () => invoke<SessionSummary[]>("interview_list_sessions"),
     loadSession: (sessionId) =>
       invoke<SessionDetail>("interview_load_session", { sessionId }),
+    listLegacy: () => invoke<RestoreResult[]>("interview_list_legacy"),
+    loadLegacy: (attemptId) =>
+      invoke<RestoreResult>("interview_load_legacy", { attemptId }),
     startRecording: (sessionQuestionId, expectedSelection) =>
       invoke<InterviewSnapshot>("interview_start_recording", {
         sessionQuestionId,

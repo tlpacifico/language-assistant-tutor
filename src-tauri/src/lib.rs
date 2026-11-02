@@ -2,10 +2,11 @@
 //!
 //! `domain` reúne os contratos partilhados, `audio` os tipos da captura e da
 //! reprodução, `storage` os artefactos JSON da fase 1 (apenas leitura na
-//! aplicação nova), `worker` a supervisão do auxiliar Python, `interview` os
-//! DTOs e a validação das entrevistas guiadas, `db` a ligação SQLite
-//! recuperável, `artifacts` os ficheiros de áudio geridos, `service` a
-//! coordenação do fluxo e `commands` os comandos Tauri.
+//! aplicação nova), `legacy` a consulta dos treinos anteriores, `worker` a
+//! supervisão do auxiliar Python, `interview` os DTOs e a validação das
+//! entrevistas guiadas, `db` a ligação SQLite recuperável, `artifacts` os
+//! ficheiros de áudio geridos, `service` a coordenação do fluxo e `commands` os
+//! comandos Tauri.
 //!
 //! O arranque liga os adaptadores reais: a pasta de dados é `app_data_dir()`,
 //! com `tutor.sqlite3`, `sessions/` (artefactos de áudio) e `phase1/`
@@ -21,6 +22,7 @@ pub mod commands;
 pub mod db;
 pub mod domain;
 pub mod interview;
+pub mod legacy;
 pub mod service;
 pub mod storage;
 pub mod worker;
@@ -133,6 +135,8 @@ pub fn run() {
             commands::interview_start_session,
             commands::interview_list_sessions,
             commands::interview_load_session,
+            commands::interview_list_legacy,
+            commands::interview_load_legacy,
             commands::interview_start_recording,
             commands::interview_stop_recording,
             commands::interview_retry_save_recording,

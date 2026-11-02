@@ -7,6 +7,7 @@ import type { AppError } from "./lib/contracts";
 import { createInterviewClient } from "./lib/interview-client";
 import type { InterviewClient } from "./lib/interview-client";
 import type { InterviewSnapshot } from "./lib/interview-contracts";
+import History from "./features/history/History";
 import Interview from "./features/interview/Interview";
 import { useInterview } from "./features/interview/useInterview";
 import NavigationGuard from "./features/navigation/NavigationGuard";
@@ -82,19 +83,6 @@ function tauriWindow(): AppWindow | null {
   } catch {
     return null;
   }
-}
-
-/** Página de histórico: o espaço reservado até a consulta estar disponível. */
-function HistoryPage() {
-  return (
-    <section className="practice__page" aria-labelledby="history-title">
-      <h2 id="history-title">Histórico — fase 2</h2>
-      <p className="practice__hint">
-        A lista de sessões, a retoma e a consulta dos treinos anteriores ficam
-        disponíveis numa fase seguinte. Nada é apagado nem convertido.
-      </p>
-    </section>
-  );
 }
 
 /**
@@ -216,6 +204,30 @@ export default function App({
     }
     setNavigationBlocked(false);
     requestDecision("navigate", () => setPage(next));
+  }
+
+  /**
+   * Abre a entrevista na etapa persistida da sessão escolhida no histórico.
+   *
+   * O histórico já releu o núcleo e confirmou que a sessão continua em curso;
+   * aqui só se muda de página, sem avançar nem confirmar nenhuma pergunta.
+   */
+  function resumeSession(sessionId: string): void {
+    if (busy) {
+      setNavigationBlocked(true);
+      return;
+    }
+    if (snapshot?.activeSession?.id !== sessionId) {
+      setActionError({
+        code: "STALE_SOURCE",
+        message:
+          "A sessão indicada já não está em curso. Atualize o histórico antes de retomar.",
+        retryable: false,
+      });
+      return;
+    }
+    setNavigationBlocked(false);
+    requestDecision("navigate", () => setPage("interview"));
   }
 
   async function closeNow(): Promise<void> {
@@ -345,7 +357,7 @@ export default function App({
 
   let content: ReactNode;
   if (page === "history") {
-    content = <HistoryPage />;
+    content = <History client={activeClient} onResume={resumeSession} />;
   } else if (!snapshot) {
     content = (
       <p className="practice__hint">A carregar o estado da aplicação…</p>
