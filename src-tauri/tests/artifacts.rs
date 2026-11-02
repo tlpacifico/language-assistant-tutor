@@ -166,6 +166,39 @@ fn count(database: &Database, sql: &str) -> i64 {
         .expect("contar as linhas de teste")
 }
 
+/// Cria uma ligação de diretório: símbolo quando permitido pelo sistema, junção
+/// caso contrário (que não exige privilégios). Devolve o motivo da falha.
+#[cfg(windows)]
+fn create_directory_link(target: &Path, link: &Path) -> Result<(), String> {
+    use std::os::windows::fs::symlink_dir;
+
+    if symlink_dir(target, link).is_ok() {
+        return Ok(());
+    }
+    let output = std::process::Command::new("cmd")
+        .arg("/C")
+        .arg("mklink")
+        .arg("/J")
+        .arg(link)
+        .arg(target)
+        .output()
+        .map_err(|error| format!("não foi possível executar mklink: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "mklink /J falhou ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+#[cfg(not(windows))]
+fn create_directory_link(target: &Path, link: &Path) -> Result<(), String> {
+    std::os::unix::fs::symlink(target, link).map_err(|error| error.to_string())
+}
+
 /// Gravação `ready` de uma pergunta, pela ordem guardada.
 fn recordings(detail: &language_assistant_tutor::interview::SessionDetail) -> &[RecordingView] {
     &detail.questions[0].recordings
@@ -361,6 +394,82 @@ fn reopen_reconciles_once() {
     );
     assert_eq!(
         count(&reopened, "SELECT count(*) FROM operations WHERE state = 'interrupted' AND finished_at IS NOT NULL"),
+        1
+    );
+}
+
+/// No Windows, um ficheiro aberto sem partilha de leitura reproduz o indexador
+/// ou o antivírus a segurar o WAV finalizado. O alvo da fase 2 é Windows; noutro
+/// sistema o teste não é compilado (não passa em silêncio, simplesmente não
+/// existe, porque o bloqueio de partilha também não existe).
+#[test]
+#[cfg(windows)]
+fn locked_original_stays_publishable_for_the_next_start() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let harness = harness();
+    let (session, question) = harness.session();
+    let (target, recording_id) = harness.reserve(&session, &question, 0);
+    write_wav(&target.directory.join("original.wav"));
+
+    // `share_mode(0)` recusa qualquer outra abertura do ficheiro.
+    let locked = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(target.directory.join("original.wav"))
+        .expect("bloquear o WAV de teste");
+
+    let report =
+        reconcile(&harness.database, &harness.artifacts).expect("reconciliar com bloqueio");
+    assert!(
+        report.published.is_empty(),
+        "um ficheiro bloqueado não é publicado"
+    );
+    assert!(
+        !report.warnings.is_empty(),
+        "o bloqueio produz um aviso recuperável"
+    );
+    assert!(
+        report.warnings.iter().all(|warning| warning.retryable),
+        "só avisos repetíveis: {:?}",
+        report.warnings
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.code == error_code::STORAGE_WRITE_FAILED),
+        "o bloqueio é reportado como falha de acesso repetível: {:?}",
+        report.warnings
+    );
+
+    let detail = harness.detail(&session);
+    let recording = &recordings(&detail)[0];
+    assert_eq!(
+        recording.state,
+        RecordingState::Reserved,
+        "a reserva continua pendente para o próximo arranque"
+    );
+    assert!(recording.original_file.is_none());
+    assert!(
+        target.directory.join("original.wav").is_file(),
+        "o ficheiro bloqueado nunca é eliminado"
+    );
+
+    // Libertar o bloqueio (o antivírus termina) permite publicar sem nova captura.
+    drop(locked);
+    let report =
+        reconcile(&harness.database, &harness.artifacts).expect("reconciliar sem bloqueio");
+    assert_eq!(report.published, vec![recording_id.clone()]);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+
+    let detail = harness.detail(&session);
+    let stored = recordings(&detail);
+    assert_eq!(stored.len(), 1, "uma só gravação, uma só publicação");
+    assert_eq!(stored[0].state, RecordingState::Ready);
+    assert!(stored[0].original_file.is_some());
+    assert_eq!(
+        count(&harness.database, "SELECT count(*) FROM recordings"),
         1
     );
 }
@@ -844,6 +953,59 @@ fn paths_cannot_escape_artifact_root() {
             .code,
         error_code::INVALID_INPUT
     );
+
+    // Uma ligação (símbolo ou junção) com nomes válidos mas a apontar para fora
+    // da raiz é recusada, apesar de os componentes lexicais estarem corretos.
+    let link = harness
+        .directory
+        .path()
+        .join("sessions")
+        .join("linked-session")
+        .join("linked-question")
+        .join("linked-recording");
+    fs::create_dir_all(link.parent().expect("pasta pai da ligação"))
+        .expect("criar as pastas da ligação");
+    match create_directory_link(outside.path(), &link) {
+        Ok(()) => {
+            let linked = RecordingTarget {
+                id: "linked-recording".to_owned(),
+                directory: link.clone(),
+            };
+            assert_eq!(
+                store.inspect(&linked).unwrap_err().code,
+                error_code::INVALID_INPUT,
+                "uma ligação que sai da raiz nunca é inspecionada"
+            );
+            assert_eq!(
+                store
+                    .resolve("linked-session/linked-question/linked-recording/original.wav")
+                    .unwrap_err()
+                    .code,
+                error_code::INVALID_INPUT
+            );
+            assert_eq!(
+                store
+                    .reserve("linked-session", "linked-question", "linked-recording")
+                    .unwrap_err()
+                    .code,
+                error_code::INVALID_INPUT,
+                "uma ligação nunca recebe uma captura"
+            );
+            assert!(
+                outside.path().join("original.wav").is_file(),
+                "o alvo da ligação não é lido nem alterado"
+            );
+            fs::remove_dir(&link).expect("remover a ligação sem seguir o alvo");
+            assert!(outside.path().join("original.wav").is_file());
+        }
+        Err(reason) => {
+            eprintln!(
+                "SKIP do caso de ligação em paths_cannot_escape_artifact_root: {reason}. \
+                 A recusa lexical de `..` e caminhos absolutos continua verificada; \
+                 esta máquina não permitiu criar a ligação."
+            );
+        }
+    }
 
     let (_session, question) = harness.session();
     let view = harness

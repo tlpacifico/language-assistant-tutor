@@ -64,6 +64,8 @@ impl ArtifactStore {
         recording_id: &str,
     ) -> Result<RecordingTarget> {
         let directory = self.directory(session_id, session_question_id, recording_id)?;
+        // Recusa uma ligação já existente no caminho antes de escrever através dela.
+        self.ensure_no_links(&directory)?;
         fs::create_dir_all(&directory).map_err(|error| {
             AppError::new(
                 error_code::STORAGE_WRITE_FAILED,
@@ -84,6 +86,7 @@ impl ArtifactStore {
     pub fn inspect(&self, target: &RecordingTarget) -> Result<CapturedAudio> {
         let directory = self.managed_directory(target)?;
         let original = directory.join(ORIGINAL_FILE);
+        self.ensure_no_links(&original)?;
         let meta = inspect_file(&original)?;
         Ok(CapturedAudio {
             id: target.id.clone(),
@@ -100,6 +103,9 @@ impl ArtifactStore {
     pub fn normalize(&self, target: &RecordingTarget) -> Result<CaptureMeta> {
         let directory = self.managed_directory(target)?;
         let original = directory.join(ORIGINAL_FILE);
+        let normalized = directory.join(NORMALIZED_FILE);
+        self.ensure_no_links(&original)?;
+        self.ensure_no_links(&normalized)?;
         if !original.is_file() {
             return Err(artifact_missing(format!(
                 "O áudio original da gravação {} não foi encontrado para normalizar; \
@@ -107,13 +113,15 @@ impl ArtifactStore {
                 target.id
             )));
         }
-        normalize_wav(&original, &directory.join(NORMALIZED_FILE))
+        normalize_wav(&original, &normalized)
     }
 
     /// Resolve uma referência relativa guardada na base, sem sair da raiz.
     pub fn resolve(&self, reference: &str) -> Result<PathBuf> {
         validate_reference(reference)?;
-        Ok(self.root.join(reference))
+        let path = self.root.join(reference);
+        self.ensure_no_links(&path)?;
+        Ok(path)
     }
 
     /// Avisos por artefacto de uma gravação guardada.
@@ -182,7 +190,34 @@ impl ArtifactStore {
         if !managed || parts[DEPTH - 1].as_os_str() != OsStr::new(&target.id) {
             return Err(outside_root(&target.directory));
         }
+        self.ensure_no_links(&target.directory)?;
         Ok(target.directory.clone())
+    }
+
+    /// Recusa ligações (símbolos ou junções) abaixo da raiz gerida.
+    ///
+    /// Uma ligação criada em `<raiz>/<sessão>/<pergunta>/<gravação>` passaria a
+    /// verificação lexical e faria ler ou escrever fora da pasta gerida. Cada
+    /// componente existente é verificado; uma componente inexistente não pode
+    /// redirecionar nada. Nunca segue a ligação para a inspecionar.
+    fn ensure_no_links(&self, path: &Path) -> Result<()> {
+        let relative = path
+            .strip_prefix(&self.root)
+            .map_err(|_| outside_root(path))?;
+        let mut current = self.root.clone();
+        for component in relative.components() {
+            let Component::Normal(_) = component else {
+                return Err(outside_root(path));
+            };
+            current.push(component);
+            match fs::symlink_metadata(&current) {
+                Ok(metadata) if is_link(&metadata) => return Err(outside_root(path)),
+                Ok(_) => {}
+                // Nada existe neste nível (nem abaixo): não há ligação a seguir.
+                Err(_) => return Ok(()),
+            }
+        }
+        Ok(())
     }
 
     /// Verifica um ficheiro referenciado e acumula o aviso em vez de falhar.
@@ -283,11 +318,7 @@ pub fn inspect_file(path: &Path) -> Result<CaptureMeta> {
                 path.display()
             ))
         } else {
-            AppError::new(
-                error_code::STORAGE_WRITE_FAILED,
-                format!("Não foi possível ler o áudio original: {error}."),
-                true,
-            )
+            io_failure(format!("Não foi possível ler o áudio original: {error}."))
         }
     })?;
     if !metadata.is_file() {
@@ -297,8 +328,13 @@ pub fn inspect_file(path: &Path) -> Result<CaptureMeta> {
         )));
     }
 
-    let mut reader = WavReader::open(path).map_err(|error| {
-        invalid_audio(format!("O áudio original não é um WAV legível: {error}."))
+    let mut reader = WavReader::open(path).map_err(|error| match error {
+        // Um bloqueio de partilha (32), acesso negado (5) ou bloqueio (33) do
+        // Windows é transitório: o ficheiro pode ser publicado mais tarde.
+        hound::Error::IoError(error) => io_failure(format!(
+            "Não foi possível abrir o áudio original neste momento: {error}."
+        )),
+        error => invalid_audio(format!("O áudio original não é um WAV legível: {error}.")),
     })?;
     let spec = reader.spec();
     if spec.channels == 0 || spec.sample_rate == 0 {
@@ -367,18 +403,27 @@ pub fn reconcile(database: &Database, artifacts: &ArtifactStore) -> Result<Recov
             }
         };
 
-        let original = target.directory.join(ORIGINAL_FILE);
-        if !original.is_file() {
-            database.mark_interrupted(&reservation.id)?;
-            report.warnings.push(interrupted_capture(&reservation.id));
-            continue;
-        }
         let capture = match artifacts.inspect(&target) {
             Ok(capture) => capture,
-            Err(error) => {
-                // Um WAV ilegível conserva-se no disco, mas não é publicado.
-                database.mark_interrupted(&reservation.id)?;
+            // Um bloqueio ou uma falha de acesso é transitório: a reserva fica
+            // pendente e o próximo arranque (ou uma repetição do serviço) volta
+            // a publicar o mesmo ficheiro, sem nova captura.
+            Err(error) if error.retryable => {
                 report.warnings.push(error);
+                continue;
+            }
+            // Só uma condição permanente (original em falta, WAV inválido ou sem
+            // amostras) torna a captura irrecuperável. O ficheiro nunca é
+            // eliminado, mesmo neste caso.
+            Err(error) => {
+                database.mark_interrupted(&reservation.id)?;
+                report
+                    .warnings
+                    .push(if error.code == error_code::ARTIFACT_MISSING {
+                        interrupted_capture(&reservation.id)
+                    } else {
+                        error
+                    });
                 continue;
             }
         };
@@ -486,6 +531,25 @@ fn outside_root(directory: &Path) -> AppError {
 
 fn invalid_audio(message: impl Into<String>) -> AppError {
     AppError::new(error_code::INVALID_AUDIO, message, false)
+}
+
+/// Falha de acesso ao ficheiro que pode desaparecer numa nova tentativa.
+fn io_failure(message: impl Into<String>) -> AppError {
+    AppError::new(error_code::STORAGE_WRITE_FAILED, message, true)
+}
+
+/// Ligações simbólicas e junções do Windows (reparse points).
+fn is_link(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // `FILE_ATTRIBUTE_REPARSE_POINT`: cobre junções, além dos símbolos.
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    metadata.file_type().is_symlink()
 }
 
 fn artifact_missing(message: impl Into<String>) -> AppError {
