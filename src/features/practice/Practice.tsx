@@ -266,8 +266,11 @@ export default function Practice({ client }: { client: PracticeClient }) {
   }, []);
 
   async function saveAndStart(): Promise<void> {
-    const saved = await practice.saveReview();
-    if (!saved) {
+    const outcome = await practice.saveReview();
+    // `pending` significa que a escrita teve êxito mas o texto mudou durante o
+    // pedido: a versão mais recente continua por guardar e a decisão repete-se
+    // em vez de a perder.
+    if (outcome !== "saved") {
       return;
     }
     setDecision(null);
@@ -281,8 +284,10 @@ export default function Practice({ client }: { client: PracticeClient }) {
   }
 
   async function saveAndClose(): Promise<void> {
-    const saved = await practice.saveReview();
-    if (!saved) {
+    const outcome = await practice.saveReview();
+    // Fechar só quando a versão mais recente está guardada. Se a escrita ficou
+    // `pending` (ou falhou), a janela mantém-se e o texto continua editável.
+    if (outcome !== "saved") {
       return;
     }
     await closeNow();

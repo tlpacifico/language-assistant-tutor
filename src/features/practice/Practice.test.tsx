@@ -607,6 +607,57 @@ describe("Practice", () => {
     );
   });
 
+  it("close_waits_for_edits_made_during_the_save", async () => {
+    const active = attempt();
+    const { client, mocks, user } = await renderPractice(
+      snapshot({ revision: 2, attempt: active }),
+    );
+
+    await user.clear(reviewEditor());
+    await user.type(reviewEditor(), "my edited words");
+    await waitFor(() => expect(windowMock.handler).not.toBeNull());
+
+    // A escrita fica pendente até o teste a libertar, para o utilizador poder
+    // continuar a editar enquanto `saveReview` não regressou.
+    let release: (value: AppSnapshot) => void = () => {};
+    mocks.saveReview.mockImplementationOnce(
+      () =>
+        new Promise<AppSnapshot>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    const closeEvent = { preventDefault: vi.fn() };
+    act(() => {
+      windowMock.handler?.(closeEvent);
+    });
+    await user.click(screen.getByRole("button", { name: "Guardar e fechar" }));
+
+    await user.type(reviewEditor(), " plus a late correction");
+    release(
+      snapshot({
+        revision: 3,
+        attempt: {
+          ...active,
+          review: {
+            sourceTranscriptId: "transcript-1",
+            text: "my edited words",
+            savedAt: "2026-11-01T10:06:00Z",
+          },
+        },
+      }),
+    );
+
+    await waitFor(() =>
+      expect(reviewEditor()).toHaveValue(
+        "my edited words plus a late correction",
+      ),
+    );
+    expect(client.prepareClose).not.toHaveBeenCalled();
+    expect(windowMock.destroy).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
   it("older_snapshot_is_ignored", async () => {
     const active = attempt({
       transcripts: [transcript({ text: "first transcript" })],

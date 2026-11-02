@@ -263,6 +263,8 @@ function reducer(state: PracticeState, action: Action): PracticeState {
   }
 }
 
+export type SaveOutcome = "saved" | "pending" | "failed";
+
 export interface UsePractice {
   snapshot: AppSnapshot | null;
   loading: boolean;
@@ -273,7 +275,12 @@ export interface UsePractice {
     error: AppError | null;
   };
   setReviewText: (text: string) => void;
-  saveReview: () => Promise<boolean>;
+  /**
+   * Guarda a revisão. `pending` significa que a escrita teve êxito mas o texto
+   * mudou durante o pedido: a versão mais recente continua por guardar e quem
+   * fecha ou grava de novo não pode avançar sem a guardar outra vez.
+   */
+  saveReview: () => Promise<SaveOutcome>;
   discardReview: () => void;
   acceptSnapshot: (snapshot: AppSnapshot) => void;
   reload: () => Promise<void>;
@@ -330,12 +337,12 @@ export function usePractice(client: PracticeClient): UsePractice {
     dispatch({ type: "edit", text });
   }, []);
 
-  const saveReview = useCallback(async (): Promise<boolean> => {
+  const saveReview = useCallback(async (): Promise<SaveOutcome> => {
     const active = snapshotRef.current?.attempt ?? null;
     const review = reviewRef.current;
 
     if (!active) {
-      return false;
+      return "failed";
     }
 
     // Uma edição pertence à resposta em que foi escrita. Quando outra resposta
@@ -350,7 +357,7 @@ export function usePractice(client: PracticeClient): UsePractice {
           retryable: false,
         },
       });
-      return false;
+      return "failed";
     }
 
     const latest = latestTranscript(active);
@@ -359,7 +366,7 @@ export function usePractice(client: PracticeClient): UsePractice {
     const sourceId = review.sourceId ?? latest?.id ?? null;
 
     if (!sourceId) {
-      return false;
+      return "failed";
     }
 
     const savedText = review.text;
@@ -373,10 +380,13 @@ export function usePractice(client: PracticeClient): UsePractice {
         attemptId: active.id,
         sourceId,
       });
-      return true;
+      // O ref já reflete o que o utilizador escreveu durante a escrita; o
+      // estado do React só muda no render seguinte. Se o texto mudou, a versão
+      // mais recente continua por guardar.
+      return reviewRef.current.text === savedText ? "saved" : "pending";
     } catch (error) {
       dispatch({ type: "save-failure", error: toAppError(error) });
-      return false;
+      return "failed";
     }
   }, [client]);
 
