@@ -53,7 +53,7 @@ const PAGES: Array<{ id: Page; label: string }> = [
 
 /** Motivo apresentado quando uma página é pedida durante captura/finalização. */
 const NAVIGATION_BLOCKED_MESSAGE =
-  "Não é possível mudar de página enquanto a gravação está a ser capturada ou finalizada.";
+  "Não é possível mudar de página enquanto a gravação está a começar, a ser capturada ou a finalizar.";
 
 /**
  * Janela do sistema, injetável para os testes.
@@ -117,6 +117,7 @@ export default function App({
   const [guardRequest, setGuardRequest] = useState<GuardRequest | null>(null);
   const [bankGuard, setBankGuard] = useState<GuardSource | null>(null);
   const bankGuardRef = useRef<GuardSource | null>(null);
+  const [recordPending, setRecordPending] = useState(false);
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
 
@@ -166,9 +167,12 @@ export default function App({
     };
   }, [activeClient, applySnapshot]);
 
+  // Durante o pedido de início a fotografia ainda não tem `recordingId`:
+  // `recordPending` cobre essa janela e mantém a navegação bloqueada.
   const busy =
-    snapshot !== null &&
-    (snapshot.recordingId !== null || snapshot.finalizing);
+    recordPending ||
+    (snapshot !== null &&
+      (snapshot.recordingId !== null || snapshot.finalizing));
 
   useEffect(() => {
     if (!busy) {
@@ -226,7 +230,10 @@ export default function App({
     if (next === page) {
       return;
     }
-    if (busy) {
+    // A entrevista é sempre um destino seguro: é onde vivem a captura e o
+    // botão de terminar. Sem esta exceção, ficar noutra página durante uma
+    // captura tornaria o botão inacessível.
+    if (busy && next !== "interview") {
       // A captura e a finalização não podem ser interrompidas por navegação.
       setNavigationBlocked(true);
       return;
@@ -301,6 +308,15 @@ export default function App({
 
   function requestClose(): void {
     if (closingRef.current) {
+      return;
+    }
+    if (recordPending) {
+      setActionError({
+        code: "BUSY",
+        message:
+          "A gravação está a começar. Tente fechar novamente quando a captura estiver em curso ou tiver terminado.",
+        retryable: true,
+      });
       return;
     }
     if (review.saving) {
@@ -433,6 +449,7 @@ export default function App({
         review={review}
         requestDecision={requestDecision}
         closing={closing}
+        onRecordingPending={setRecordPending}
       />
     );
   } else {

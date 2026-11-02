@@ -115,7 +115,7 @@ export default function NavigationGuard({
     if (busy && request.intention !== "close") {
       return;
     }
-    if (!dirty) {
+    if (!dirty && request.intention !== "close") {
       handled.current = request;
       void request.proceed();
     }

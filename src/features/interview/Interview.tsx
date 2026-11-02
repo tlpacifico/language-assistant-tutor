@@ -45,6 +45,14 @@ export interface InterviewProps {
   ) => void;
   /** A aplicação está a preparar o fecho: o ecrã fica bloqueado. */
   closing?: boolean;
+  /**
+   * Informa a aplicação de que o pedido de início de captura está em curso.
+   *
+   * Enquanto o microfone arranca, a fotografia ainda não tem `recordingId`;
+   * sem este aviso a navegação era permitida e o botão de terminar ficava
+   * inacessível quando a captura começasse.
+   */
+  onRecordingPending?: (pending: boolean) => void;
 }
 
 const RECORDING_STATE_LABELS: Record<RecordingState, string> = {
@@ -124,6 +132,7 @@ export default function Interview({
   review,
   requestDecision,
   closing = false,
+  onRecordingPending,
 }: InterviewProps) {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState<AppError | null>(null);
@@ -173,6 +182,7 @@ export default function Interview({
     }
     setBusyAction("record");
     setActionError(null);
+    onRecordingPending?.(true);
     try {
       const next = await client.startRecording(
         question.id,
@@ -182,6 +192,7 @@ export default function Interview({
     } catch (error) {
       setActionError(toAppError(error));
     } finally {
+      onRecordingPending?.(false);
       setBusyAction(null);
     }
   }

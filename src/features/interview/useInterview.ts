@@ -165,11 +165,28 @@ function reconcileDraft(
   if (!draft) {
     return fresh;
   }
-  // Uma escrita em curso ou uma edição local nunca são substituídas.
-  if (busy || draft.text !== draft.baseline) {
+  // Uma escrita em curso nunca é substituída por uma fotografia.
+  if (busy) {
     return draft;
   }
   const saved = recording.review;
+  // O núcleo pode criar uma revisão sozinho (por exemplo, ao terminar a
+  // transcrição). Se o rascunho continuar na versão antiga, todos os pedidos
+  // seguintes são recusados por versão desatualizada: adota-se a versão
+  // guardada e conserva-se o texto editado como alteração por guardar.
+  if (saved && saved.version > draft.version) {
+    return {
+      ...draft,
+      baseline: saved.text,
+      version: saved.version,
+      savedAt: saved.savedAt,
+      sourceTranscriptId: draft.sourceTranscriptId ?? saved.sourceTranscriptId,
+    };
+  }
+  // Uma edição local nunca é substituída.
+  if (draft.text !== draft.baseline) {
+    return draft;
+  }
   if (saved && saved.version !== draft.version) {
     return { ...fresh, text: saved.text, baseline: saved.text };
   }
@@ -296,18 +313,16 @@ function reducer(state: InterviewState, action: Action): InterviewState {
     case "save-failure":
       return { ...state, saving: false, error: action.error };
     case "discard": {
-      const answer = selectedAnswer(state.snapshot);
-      const draft = answer ? state.drafts[answer.recording.id] : undefined;
-      if (!answer || !draft) {
-        return { ...state, error: null };
+      // Descartar resolve todas as edições por guardar, não só a da resposta
+      // visível: um rascunho de outra tomada não pode ficar inacessível.
+      const drafts: Record<Id, Draft> = {};
+      for (const [id, entry] of Object.entries(state.drafts)) {
+        drafts[id] =
+          entry.text === entry.baseline
+            ? entry
+            : { ...entry, text: entry.baseline };
       }
-      return {
-        ...withDraft(state, answer.recording.id, {
-          ...draft,
-          text: draft.baseline,
-        }),
-        error: null,
-      };
+      return { ...state, drafts, error: null };
     }
     case "confirm-start":
       return { ...state, confirming: true, error: null };
@@ -381,11 +396,13 @@ export function useInterview(
   const lockedRef = useRef(locked);
   const textRef = useRef("");
   const baselineRef = useRef("");
+  const draftsRef = useRef<Record<Id, Draft>>(state.drafts);
   const intentionRef = useRef<{ key: string; requestId: string } | null>(null);
   const saveInFlight = useRef<Promise<SaveOutcome> | null>(null);
 
   stateRef.current = state;
   lockedRef.current = locked;
+  draftsRef.current = state.drafts;
 
   const answer = selectedAnswer(state.snapshot);
   const draft = answer ? state.drafts[answer.recording.id] : undefined;
@@ -400,7 +417,15 @@ export function useInterview(
     baselineRef.current = draft.baseline;
   }
   const latest = latestTranscript(answer?.recording ?? null);
-  const canEdit = answer !== null && !confirmed && !state.confirming && !locked;
+  // Enquanto decorre uma captura ou a finalização, a seleção pode mudar para
+  // uma gravação nova. Um texto editado na tomada anterior deixaria de poder
+  // ser guardado (o núcleo só guarda a selecionada) e sairia do alcance da
+  // guarda: o editor fica por isso bloqueado durante a captura.
+  const captureBusy =
+    (state.snapshot?.recordingId ?? null) !== null ||
+    (state.snapshot?.finalizing ?? false);
+  const canEdit =
+    answer !== null && !confirmed && !state.confirming && !captureBusy && !locked;
 
   // O rascunho é alinhado antes de a página ser apresentada: a revisão começa
   // preenchida, sem um instante com o editor vazio.
@@ -431,7 +456,10 @@ export function useInterview(
     const currentDraft = selected
       ? current.drafts[selected.recording.id]
       : undefined;
-    if (!selected || !currentDraft || current.confirming) {
+    const capturing =
+      (current.snapshot?.recordingId ?? null) !== null ||
+      (current.snapshot?.finalizing ?? false);
+    if (!selected || !currentDraft || current.confirming || capturing) {
       return;
     }
     if (current.snapshot?.current?.confirmation) {
@@ -625,10 +653,20 @@ export function useInterview(
 
   const automatic = latest?.status === "completed" ? latest.text : "";
 
-  const isDirty = useCallback(
-    () => textRef.current !== baselineRef.current,
-    [],
-  );
+  const isDirty = useCallback(() => {
+    // O rascunho visível é lido pelos refs, que já refletem a escrita
+    // terminada; os restantes vêm do estado, para uma edição antiga não ficar
+    // inacessível.
+    const selected = selectedAnswer(stateRef.current.snapshot);
+    const selectedId = selected?.recording.id ?? null;
+    for (const [id, entry] of Object.entries(draftsRef.current)) {
+      if (entry.text === entry.baseline || id === selectedId) {
+        continue;
+      }
+      return true;
+    }
+    return textRef.current !== baselineRef.current;
+  }, []);
 
   return {
     recordingId: answer?.recording.id ?? null,
@@ -636,7 +674,9 @@ export function useInterview(
     origin: draft?.origin ?? "automatic",
     version: draft?.version ?? 0,
     savedAt: draft?.savedAt ?? null,
-    dirty: draft ? draft.text !== draft.baseline : false,
+    dirty: Object.values(state.drafts).some(
+      (entry) => entry.text !== entry.baseline,
+    ),
     saving: state.saving,
     confirming: state.confirming,
     confirmed,

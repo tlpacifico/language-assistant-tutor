@@ -621,4 +621,66 @@ describe("Interview", () => {
       "recording-2",
     );
   });
+
+  it("review_is_read_only_while_a_new_take_is_recording", async () => {
+    const user = userEvent.setup();
+    const initial = recordedSnapshot("My first automatic answer.");
+    const page = renderPage(initial);
+
+    const editor = await screen.findByLabelText("Revisão editável");
+    expect(editor).not.toHaveAttribute("readonly");
+    await user.clear(editor);
+    await user.type(editor, "edited before the new take");
+    expect(editor).toHaveValue("edited before the new take");
+
+    // A captura começou: a seleção pode passar para a tomada nova e o núcleo
+    // deixaria de conseguir guardar o texto desta. O editor fecha, para não
+    // ficar texto inacessível.
+    page.publish(
+      interviewSnapshot({
+        revision: 4,
+        recordingId: "recording-2",
+        recordings: initial.current?.recordings ?? [],
+      }),
+    );
+
+    const locked = screen.getByLabelText("Revisão editável");
+    expect(locked).toHaveAttribute("readonly");
+    expect(locked).toHaveValue("edited before the new take");
+  });
+
+  it("local_edit_adopts_the_review_version_created_by_the_core", async () => {
+    const user = userEvent.setup();
+    const initial = interviewSnapshot({
+      recordings: [
+        makeRecording({
+          id: "recording-1",
+          sessionQuestionId: "sq-2",
+          transcripts: [],
+        }),
+      ],
+    });
+    const page = renderPage(initial);
+
+    const editor = await screen.findByLabelText("Revisão editável");
+    await user.type(editor, "edited before the transcript");
+
+    // O núcleo criou sozinho a revisão 1 ao terminar a transcrição. O rascunho
+    // tem de adotar essa versão sem perder o texto editado, senão os pedidos
+    // seguintes ficam presos na versão zero.
+    page.publish(reviewedSnapshot(initial, "My automatic answer."));
+
+    expect(screen.getByLabelText("Revisão editável")).toHaveValue(
+      "edited before the transcript",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Guardar revisão" }));
+
+    await waitFor(() =>
+      expect(page.fake.client.saveReview).toHaveBeenCalledTimes(1),
+    );
+    const request = vi.mocked(page.fake.client.saveReview).mock.calls[0][0];
+    expect(request.expectedReviewVersion).toBe(1);
+    expect(request.text).toBe("edited before the transcript");
+  });
 });

@@ -628,7 +628,7 @@ describe("App", () => {
     expect(
       screen.getByRole("alert"),
     ).toHaveTextContent(
-      "Não é possível mudar de página enquanto a gravação está a ser capturada ou finalizada.",
+      "Não é possível mudar de página enquanto a gravação está a começar, a ser capturada ou a finalizar.",
     );
     expect(
       screen.getByRole("heading", { name: "Preparar entrevista" }),
@@ -1123,5 +1123,48 @@ describe("App", () => {
     );
 
     expect(fake.client.retrySaveRecording).toHaveBeenCalledWith("recording-2");
+  });
+
+  it("bloqueia a navegação enquanto a gravação está a começar", async () => {
+    const user = userEvent.setup();
+    const initial = interviewInitial();
+    const fake = renderApp(initial, QUESTIONS);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Entrevista" }),
+    );
+    expect(
+      await screen.findByText("Pergunta 2 de 3"),
+    ).toBeInTheDocument();
+
+    // O pedido de início fica pendente: a fotografia ainda não tem
+    // `recordingId`, mas a navegação já não pode afastar o utilizador do
+    // botão de terminar.
+    const pending = deferred<InterviewSnapshot>();
+    vi.mocked(fake.client.startRecording).mockReturnValueOnce(pending.promise);
+    await user.click(
+      screen.getByRole("button", { name: "Gravar novamente" }),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Banco de perguntas" }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Não é possível mudar de página enquanto a gravação está a começar, a ser capturada ou a finalizar.",
+    );
+    expect(screen.getByRole("button", { name: "Entrevista" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    // Quando a captura começa, terminar continua acessível nessa página.
+    await act(async () => {
+      pending.resolve(
+        snapshot({ ...initial, revision: initial.revision + 1, recordingId: "recording-2" }),
+      );
+    });
+    expect(
+      await screen.findByRole("button", { name: "Terminar gravação" }),
+    ).toBeEnabled();
   });
 });
