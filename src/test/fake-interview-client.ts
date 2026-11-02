@@ -45,6 +45,7 @@ export function snapshot(
     current: null,
     availability: readyAvailability(),
     recordingId: null,
+    pendingRecordingId: null,
     finalizing: false,
     modelJob: null,
     playback: null,

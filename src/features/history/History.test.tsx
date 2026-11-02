@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -89,6 +89,33 @@ function legacyAttempt(): Attempt {
     },
     lastOperation: null,
   };
+}
+
+/** Treinos da fase 1 distinguíveis pelo texto, para provar qual ficou aberto. */
+function legacyPair(): [Attempt, Attempt] {
+  const first = legacyAttempt();
+  const second: Attempt = {
+    ...legacyAttempt(),
+    id: "attempt-2",
+    question: "Tell me about a time you had competing deadlines.",
+    createdAt: "2026-10-21T10:00:00.000Z",
+    transcripts: [
+      makeTranscript({
+        id: "legacy-transcript-2",
+        text: "Second legacy automatic answer.",
+      }),
+    ],
+    review: null,
+  };
+  return [first, second];
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }
 
 describe("History", () => {
@@ -273,5 +300,51 @@ describe("History", () => {
     expect(fake.client.confirmAnswer).not.toHaveBeenCalled();
     expect(fake.client.saveReview).not.toHaveBeenCalled();
     expect(fake.client.advanceSession).not.toHaveBeenCalled();
+  });
+
+  it("legacy_ignores_a_late_response_from_the_previous_item", async () => {
+    const user = userEvent.setup();
+    const fake = fakeInterviewClient();
+    const [first, second] = legacyPair();
+    const firstLoad = deferred<RestoreResult>();
+    const secondLoad = deferred<RestoreResult>();
+    vi.mocked(fake.client.listLegacy).mockResolvedValue([
+      { attempt: first, warnings: [] },
+      { attempt: second, warnings: [] },
+    ]);
+    vi.mocked(fake.client.loadLegacy).mockImplementation((attemptId) =>
+      attemptId === first.id ? firstLoad.promise : secondLoad.promise,
+    );
+    render(<History client={fake.client} onResume={vi.fn()} />);
+
+    const legacy = await screen.findByRole("region", {
+      name: "Treinos da fase 1",
+    });
+    const openButtons = await within(legacy).findAllByRole("button", {
+      name: "Abrir detalhes",
+    });
+    expect(openButtons).toHaveLength(2);
+
+    // Abrir A e logo B: a resposta de A chega depois da de B.
+    await user.click(openButtons[0]);
+    await user.click(openButtons[1]);
+
+    await act(async () => {
+      secondLoad.resolve({ attempt: second, warnings: [] });
+      await secondLoad.promise;
+    });
+    await act(async () => {
+      firstLoad.resolve({ attempt: first, warnings: [] });
+      await firstLoad.promise;
+    });
+
+    // O detalhe visível pertence a B; a resposta tardia de A não o substitui.
+    expect(
+      within(legacy).getByText("Second legacy automatic answer."),
+    ).toBeInTheDocument();
+    expect(
+      within(legacy).queryByText("Legacy automatic answer."),
+    ).toBeNull();
+    expect(fake.client.loadLegacy).toHaveBeenCalledTimes(2);
   });
 });

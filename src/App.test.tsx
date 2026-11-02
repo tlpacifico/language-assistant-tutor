@@ -928,4 +928,200 @@ describe("App", () => {
     expect(controlled.client).not.toHaveProperty("dismissFollowUp");
     expect(controlled.client).not.toHaveProperty("requestFeedback");
   });
+
+  /** Preenche um rascunho novo no banco com valores válidos. */
+  async function fillNewQuestion(
+    user: ReturnType<typeof userEvent.setup>,
+    text: string,
+  ): Promise<void> {
+    await user.click(
+      await screen.findByRole("button", { name: "Adicionar pergunta" }),
+    );
+    await user.type(
+      screen.getByLabelText("Texto da pergunta (em inglês)"),
+      text,
+    );
+    await user.type(
+      screen.getByLabelText("Competências (uma por linha)"),
+      "Comunicação",
+    );
+    await user.type(
+      screen.getByLabelText("Critérios (uma por linha)"),
+      "Explicar a divergência e o desfecho.",
+    );
+  }
+
+  it("pede decisão antes de sair do banco com um rascunho por guardar", async () => {
+    const user = userEvent.setup();
+    const fake = renderApp();
+    await screen.findByRole("heading", { name: "Preparar entrevista" });
+
+    await user.click(
+      screen.getByRole("button", { name: "Banco de perguntas" }),
+    );
+    await fillNewQuestion(
+      user,
+      "Tell me about a time you disagreed with a colleague.",
+    );
+
+    // Mudar de página não descarta o rascunho: a decisão aparece primeiro.
+    await user.click(screen.getByRole("button", { name: "Histórico" }));
+
+    expect(
+      screen.getByRole("heading", { name: "Alterações por guardar" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/edição do banco de perguntas/),
+    ).toBeInTheDocument();
+    expect(fake.client.createQuestion).not.toHaveBeenCalled();
+
+    // Cancelar mantém o editor e o texto exatamente como estavam.
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Cancelar",
+      }),
+    );
+
+    expect(
+      screen.queryByRole("heading", { name: "Alterações por guardar" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Banco de perguntas" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Texto da pergunta (em inglês)"),
+    ).toHaveValue("Tell me about a time you disagreed with a colleague.");
+    expect(fake.client.createQuestion).not.toHaveBeenCalled();
+  });
+
+  it("guarda o rascunho do banco antes de mudar de página", async () => {
+    const user = userEvent.setup();
+    const fake = renderApp();
+    await screen.findByRole("heading", { name: "Preparar entrevista" });
+
+    await user.click(
+      screen.getByRole("button", { name: "Banco de perguntas" }),
+    );
+    await fillNewQuestion(
+      user,
+      "Tell me about a time you disagreed with a colleague.",
+    );
+    await user.click(screen.getByRole("button", { name: "Histórico" }));
+    await user.click(screen.getByRole("button", { name: "Guardar e sair" }));
+
+    expect(fake.client.createQuestion).toHaveBeenCalledTimes(1);
+    expect(fake.client.createQuestion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Tell me about a time you disagreed with a colleague.",
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Histórico" }),
+    ).toBeInTheDocument();
+  });
+
+  it("não troca de pergunta no editor sem resolver o rascunho atual", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByRole("heading", { name: "Preparar entrevista" });
+
+    await user.click(
+      screen.getByRole("button", { name: "Banco de perguntas" }),
+    );
+    await fillNewQuestion(
+      user,
+      "Tell me about a time you disagreed with a colleague.",
+    );
+
+    // Abrir outra pergunta no editor não pode descartar o rascunho em silêncio.
+    await user.click(
+      screen.getByRole("button", {
+        name: `Editar pergunta: ${QUESTIONS[0].text}`,
+      }),
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Alterações por guardar" }),
+    ).toBeInTheDocument();
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Cancelar",
+      }),
+    );
+    expect(
+      screen.getByLabelText("Texto da pergunta (em inglês)"),
+    ).toHaveValue("Tell me about a time you disagreed with a colleague.");
+  });
+
+  it("não fecha com um rascunho do banco por guardar quando a escrita falha", async () => {
+    const user = userEvent.setup();
+    const controller = fakeWindow();
+    const fake = fakeInterviewClient({
+      initial: snapshot({ revision: 1 }),
+      questions: QUESTIONS,
+    });
+    vi.mocked(fake.client.createQuestion).mockRejectedValue(
+      appError(
+        "STORAGE_WRITE_FAILED",
+        "Não foi possível guardar a pergunta; nenhuma alteração foi aplicada.",
+      ),
+    );
+    render(
+      <App client={fake.client} windowHandle={controller.windowHandle} />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Banco de perguntas" }),
+    );
+    await fillNewQuestion(
+      user,
+      "Tell me about a time you disagreed with a colleague.",
+    );
+
+    await act(async () => {
+      controller.requestClose();
+    });
+
+    // O fecho é intercetado antes de `prepareClose`: há alterações por guardar.
+    expect(
+      screen.getByRole("heading", { name: "Alterações por guardar" }),
+    ).toBeInTheDocument();
+    expect(fake.client.prepareClose).not.toHaveBeenCalled();
+    expect(controller.destroy).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Guardar e fechar" }));
+
+    const dialog = screen.getByRole("dialog");
+    await waitFor(() =>
+      expect(
+        within(dialog).getByText(
+          "Não foi possível guardar a pergunta; nenhuma alteração foi aplicada.",
+        ),
+      ).toBeInTheDocument(),
+    );
+    expect(controller.destroy).not.toHaveBeenCalled();
+    expect(
+      screen.getByLabelText("Texto da pergunta (em inglês)"),
+    ).toHaveValue("Tell me about a time you disagreed with a colleague.");
+  });
+
+  it("repete a publicação pendente a partir do aviso da aplicação", async () => {
+    const user = userEvent.setup();
+    const fake = renderApp(
+      snapshot({ revision: 2, pendingRecordingId: "recording-2" }),
+    );
+    await screen.findByRole("heading", { name: "Preparar entrevista" });
+
+    // A reserva por guardar bloqueia gravar e fechar em qualquer página: o
+    // aviso da aplicação torna a repetição alcançável fora da entrevista.
+    expect(
+      screen.getByText(/A gravação terminada ainda não foi guardada/),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Repetir guardar gravação" }),
+    );
+
+    expect(fake.client.retrySaveRecording).toHaveBeenCalledWith("recording-2");
+  });
 });

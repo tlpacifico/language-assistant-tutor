@@ -48,12 +48,16 @@ function interviewSnapshot(options: {
   recordings?: RecordingView[];
   confirmation?: QuestionDetail["confirmation"];
   revision?: number;
+  recordingId?: string | null;
+  pendingRecordingId?: string | null;
 } = {}): InterviewSnapshot {
   const recordings = options.recordings ?? [];
   const position = options.position ?? 2;
   const count = options.count ?? 3;
   return snapshot({
     revision: options.revision ?? 3,
+    recordingId: options.recordingId ?? null,
+    pendingRecordingId: options.pendingRecordingId ?? null,
     activeSession: sessionSummary({
       position,
       count,
@@ -563,5 +567,58 @@ describe("Interview", () => {
     expect(
       screen.getByRole("button", { name: "Iniciar gravação" }),
     ).toBeEnabled();
+  });
+
+  it("failed_publication_keeps_the_take_retryable", async () => {
+    const user = userEvent.setup();
+    const base = interviewSnapshot({ recordingId: "recording-2" });
+    const page = renderPage(base);
+    vi.mocked(page.fake.client.stopRecording).mockRejectedValue(
+      appError(
+        "INVALID_AUDIO",
+        "O áudio original não pôde ser guardado; nada foi publicado.",
+      ),
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Terminar gravação" }),
+    );
+    expect(
+      await screen.findByText(
+        "O áudio original não pôde ser guardado; nada foi publicado.",
+      ),
+    ).toBeInTheDocument();
+
+    // A fotografia publicada depois da falha relê a sessão: a tomada reservada
+    // aparece na pergunta atual e o identificador pendente fica exposto.
+    const reserved = makeRecording({
+      id: "recording-2",
+      sessionQuestionId: "sq-2",
+      ordinal: 2,
+      state: "reserved",
+      capture: null,
+      originalFile: null,
+    });
+    page.publish(
+      interviewSnapshot({
+        revision: 12,
+        recordingId: null,
+        pendingRecordingId: "recording-2",
+        question: { selectedRecordingId: null },
+        recordings: [reserved],
+      }),
+    );
+
+    expect(
+      await screen.findByText("Reservada"),
+    ).toBeInTheDocument();
+    const retry = screen.getByRole("button", {
+      name: "Repetir guardar gravação",
+    });
+    await user.click(retry);
+
+    expect(page.fake.client.retrySaveRecording).toHaveBeenCalledWith(
+      "recording-2",
+    );
   });
 });

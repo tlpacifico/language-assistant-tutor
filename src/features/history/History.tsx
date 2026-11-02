@@ -428,6 +428,7 @@ export default function History({ client, onResume }: HistoryProps) {
   } | null>(null);
   const [actionError, setActionError] = useState<AppError | null>(null);
   const openSessionRef = useRef<string | null>(null);
+  const openLegacyRef = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -536,21 +537,32 @@ export default function History({ client, onResume }: HistoryProps) {
 
   async function openLegacy(attemptId: string): Promise<void> {
     if (legacyDetailId === attemptId) {
+      openLegacyRef.current = null;
       setLegacyDetailId(null);
       setLegacyDetail(null);
       setLegacyDetailError(null);
       return;
     }
+    // Como em `openSession`, só a resposta do último pedido pode ser aplicada:
+    // abrir A e depois B não deixa o detalhe de A sob o cabeçalho de B.
+    openLegacyRef.current = attemptId;
     setLegacyDetailId(attemptId);
     setLegacyDetail(null);
     setLegacyDetailError(null);
     setLegacyDetailLoading(true);
     try {
-      setLegacyDetail(await client.loadLegacy(attemptId));
+      const next = await client.loadLegacy(attemptId);
+      if (openLegacyRef.current === attemptId) {
+        setLegacyDetail(next);
+      }
     } catch (error) {
-      setLegacyDetailError(toAppError(error));
+      if (openLegacyRef.current === attemptId) {
+        setLegacyDetailError(toAppError(error));
+      }
     } finally {
-      setLegacyDetailLoading(false);
+      if (openLegacyRef.current === attemptId) {
+        setLegacyDetailLoading(false);
+      }
     }
   }
 

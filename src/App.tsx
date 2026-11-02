@@ -14,6 +14,7 @@ import NavigationGuard from "./features/navigation/NavigationGuard";
 import type {
   GuardIntention,
   GuardRequest,
+  GuardSource,
 } from "./features/navigation/NavigationGuard";
 import QuestionBank from "./features/questions/QuestionBank";
 import SessionSetup from "./features/sessions/SessionSetup";
@@ -114,8 +115,16 @@ export default function App({
   const [page, setPage] = useState<Page>("setup");
   const [navigationBlocked, setNavigationBlocked] = useState(false);
   const [guardRequest, setGuardRequest] = useState<GuardRequest | null>(null);
+  const [bankGuard, setBankGuard] = useState<GuardSource | null>(null);
+  const bankGuardRef = useRef<GuardSource | null>(null);
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
+
+  /** Registra o estado do editor do banco na decisão única desta janela. */
+  const reportBankGuard = useCallback((guard: GuardSource | null) => {
+    bankGuardRef.current = guard;
+    setBankGuard(guard);
+  }, []);
 
   // Uma fotografia com revisão inferior à conhecida é ignorada; nenhuma
   // fotografia apaga o rascunho local (o hook trata da revisão).
@@ -167,6 +176,24 @@ export default function App({
     }
   }, [busy]);
 
+  // A mesma decisão cobre todos os editores com alterações por guardar: a
+  // revisão da resposta e o rascunho do banco de perguntas.
+  const guardSources: GuardSource[] = [
+    {
+      key: "review",
+      label: "revisão da resposta",
+      dirty: review.dirty,
+      saving: review.saving,
+      error: review.error,
+      save: review.saveReview,
+      discard: review.discardReview,
+    },
+  ];
+  if (bankGuard) {
+    guardSources.push(bankGuard);
+  }
+  const dirty = guardSources.some((source) => source.dirty);
+
   function requestDecision(
     intention: GuardIntention,
     proceed: () => void | Promise<void>,
@@ -180,7 +207,9 @@ export default function App({
       });
       return;
     }
-    if (!review.dirty) {
+    const anyDirty =
+      review.dirty || (bankGuardRef.current?.dirty ?? false);
+    if (!anyDirty) {
       void proceed();
       return;
     }
@@ -241,7 +270,12 @@ export default function App({
       // Finaliza uma captura ativa e recusa o fecho com uma publicação
       // pendente: nada fecha em silêncio.
       applySnapshot(await activeClient.prepareClose());
-      if (reviewRef.current.isDirty()) {
+      // Lido no momento do fecho: uma edição feita durante a escrita conta pela
+      // versão mais recente do rascunho, não pela fotografia anterior.
+      const stillDirty =
+        reviewRef.current.isDirty() ||
+        (bankGuardRef.current?.dirty ?? false);
+      if (stillDirty) {
         // Uma edição que tenha escapado ao bloqueio do editor não pode ser
         // perdida em `destroy`: a janela fica e a decisão reaparece.
         closingRef.current = false;
@@ -278,6 +312,15 @@ export default function App({
       });
       return;
     }
+    if (bankGuard?.saving) {
+      setActionError({
+        code: "BUSY",
+        message:
+          "A alteração do banco está a ser guardada. Tente fechar novamente quando a escrita terminar.",
+        retryable: true,
+      });
+      return;
+    }
     if (review.confirming) {
       setActionError({
         code: "BUSY",
@@ -287,7 +330,7 @@ export default function App({
       });
       return;
     }
-    if (review.dirty) {
+    if (dirty) {
       setGuardRequest({
         intention: "close",
         proceed: async () => {
@@ -354,6 +397,7 @@ export default function App({
 
   const database = snapshot?.database ?? "opening";
   const databaseMessage = snapshot?.lastError?.message ?? null;
+  const pendingRecordingId = snapshot?.pendingRecordingId ?? null;
 
   let content: ReactNode;
   if (page === "history") {
@@ -373,7 +417,13 @@ export default function App({
       </section>
     );
   } else if (page === "bank") {
-    content = <QuestionBank client={activeClient} />;
+    content = (
+      <QuestionBank
+        client={activeClient}
+        reportGuard={reportBankGuard}
+        onReplaceDraft={(proceed) => requestDecision("switch", proceed)}
+      />
+    );
   } else if (page === "interview") {
     content = (
       <Interview
@@ -438,6 +488,28 @@ export default function App({
       {closing ? (
         <div className="practice__notice" role="status">
           <p>A preparar o fecho da aplicação…</p>
+        </div>
+      ) : null}
+
+      {pendingRecordingId ? (
+        <div className="practice__notice practice__notice--error" role="alert">
+          <p>
+            A gravação terminada ainda não foi guardada. Repita o guardar antes
+            de gravar outra resposta ou fechar a aplicação.
+          </p>
+          <div className="practice__actions">
+            <button
+              type="button"
+              onClick={() =>
+                void run(() =>
+                  activeClient.retrySaveRecording(pendingRecordingId),
+                )
+              }
+              disabled={retrying}
+            >
+              Repetir guardar gravação
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -524,11 +596,7 @@ export default function App({
       <NavigationGuard
         request={guardRequest}
         busy={busy}
-        dirty={review.dirty}
-        saving={review.saving}
-        saveError={review.error}
-        onSave={review.saveReview}
-        onDiscard={review.discardReview}
+        sources={guardSources}
         onCancel={() => setGuardRequest(null)}
       />
 

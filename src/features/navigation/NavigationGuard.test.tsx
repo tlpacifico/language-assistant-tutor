@@ -145,11 +145,17 @@ function GuardHarness({
       <NavigationGuard
         request={request}
         busy={busy}
-        dirty={review.dirty}
-        saving={review.saving}
-        saveError={review.error}
-        onSave={review.saveReview}
-        onDiscard={review.discardReview}
+        sources={[
+          {
+            key: "review",
+            label: "revisão da resposta",
+            dirty: review.dirty,
+            saving: review.saving,
+            error: review.error,
+            save: review.saveReview,
+            discard: review.discardReview,
+          },
+        ]}
         onCancel={() => setRequest(null)}
       />
     </div>

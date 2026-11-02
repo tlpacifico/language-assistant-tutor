@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { AppError } from "../../lib/contracts";
 import { toAppError } from "../../lib/app-error";
@@ -9,6 +9,8 @@ import {
   type Question,
   type QuestionInput,
 } from "../../lib/interview-contracts";
+import type { GuardSource } from "../navigation/NavigationGuard";
+import type { SaveOutcome } from "../interview/useInterview";
 
 /** Filtro da lista: todas as categorias ou uma delas. */
 type Filter = Category | "all";
@@ -66,14 +68,29 @@ function questionsLabel(total: number): string {
  * importação em lote e gestão de categorias ou de um catálogo de competências
  * ficam fora deste incremento: competências e critérios editam-se na própria
  * pergunta.
+ *
+ * O rascunho é local, mas o facto de estar por guardar sobe para a aplicação
+ * pela mesma decisão que protege a revisão: mudar de página, fechar a janela ou
+ * trocar de pergunta no editor nunca descarta uma edição em silêncio.
  */
-export default function QuestionBank({ client }: { client: InterviewClient }) {
+export default function QuestionBank({
+  client,
+  reportGuard,
+  onReplaceDraft,
+}: {
+  client: InterviewClient;
+  /** Entrega o estado do editor à decisão única da aplicação. */
+  reportGuard?: (guard: GuardSource | null) => void;
+  /** Pede a decisão guardar/descartar/cancelar antes de trocar de rascunho. */
+  onReplaceDraft?: (proceed: () => void) => void;
+}) {
   const [filter, setFilter] = useState<Filter>("all");
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loadError, setLoadError] = useState<AppError | null>(null);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [draftDirty, setDraftDirty] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const [saveError, setSaveError] = useState<AppError | null>(null);
   const [saving, setSaving] = useState(false);
@@ -103,26 +120,43 @@ export default function QuestionBank({ client }: { client: InterviewClient }) {
   }, [client, filter, reloadKey]);
 
   function beginNew(): void {
-    setDraft(emptyDraft());
-    setErrors([]);
-    setSaveError(null);
+    requestDraft(() => emptyDraft());
   }
 
   function beginEdit(question: Question): void {
-    setDraft(draftFrom(question));
+    requestDraft(() => draftFrom(question));
+  }
+
+  /** Abre o rascunho, pedindo a decisão se já houver alterações por guardar. */
+  function requestDraft(next: () => Draft): void {
+    if (draftDirty && onReplaceDraft) {
+      onReplaceDraft(() => openDraft(next));
+      return;
+    }
+    openDraft(next);
+  }
+
+  function openDraft(next: () => Draft): void {
+    setDraft(next());
+    setDraftDirty(false);
     setErrors([]);
     setSaveError(null);
   }
 
   function cancel(): void {
     setDraft(null);
+    setDraftDirty(false);
     setErrors([]);
     setSaveError(null);
   }
 
-  async function save(): Promise<void> {
+  /** Descarte explícito pedido pela decisão partilhada. */
+  const discardRef = useRef(cancel);
+  discardRef.current = cancel;
+
+  async function save(): Promise<SaveOutcome> {
     if (!draft || saving) {
-      return;
+      return "pending";
     }
     const text = draft.text.trim();
     const competencies = lines(draft.competencies);
@@ -139,7 +173,7 @@ export default function QuestionBank({ client }: { client: InterviewClient }) {
     }
     setErrors(problems);
     if (problems.length > 0) {
-      return;
+      return "failed";
     }
 
     const input: QuestionInput = {
@@ -157,16 +191,41 @@ export default function QuestionBank({ client }: { client: InterviewClient }) {
         await client.createQuestion(input);
       }
       setDraft(null);
+      setDraftDirty(false);
       setErrors([]);
       // Reler o banco confirma o que ficou guardado e evita divergir da versão.
       setReloadKey((value) => value + 1);
+      return "saved";
     } catch (error) {
       // O editor mantém o texto e a versão vistos pelo utilizador.
       setSaveError(toAppError(error));
+      return "failed";
     } finally {
       setSaving(false);
     }
   }
+
+  const saveRef = useRef(save);
+  saveRef.current = save;
+
+  // A decisão partilhada recebe o estado mais recente do editor; as ações leem
+  // sempre o último render, para uma escrita não usar um rascunho antigo.
+  const dirty = draft !== null && draftDirty;
+  useEffect(() => {
+    if (!reportGuard) {
+      return;
+    }
+    reportGuard({
+      key: "bank",
+      label: "edição do banco de perguntas",
+      dirty,
+      saving,
+      error: saveError,
+      save: () => saveRef.current(),
+      discard: () => discardRef.current(),
+    });
+    return () => reportGuard(null);
+  }, [reportGuard, dirty, saving, saveError]);
 
   return (
     <section className="practice__page" aria-labelledby="bank-title">
@@ -248,9 +307,10 @@ export default function QuestionBank({ client }: { client: InterviewClient }) {
               className="practice__textarea"
               rows={3}
               value={draft.text}
-              onChange={(event) =>
-                setDraft({ ...draft, text: event.target.value })
-              }
+              onChange={(event) => {
+                setDraft({ ...draft, text: event.target.value });
+                setDraftDirty(true);
+              }}
               disabled={saving}
             />
           </div>
@@ -261,9 +321,10 @@ export default function QuestionBank({ client }: { client: InterviewClient }) {
               id="question-category"
               className="practice__select"
               value={draft.category}
-              onChange={(event) =>
-                setDraft({ ...draft, category: event.target.value as Category })
-              }
+              onChange={(event) => {
+                setDraft({ ...draft, category: event.target.value as Category });
+                setDraftDirty(true);
+              }}
               disabled={saving}
             >
               {(Object.keys(CATEGORY_LABELS) as Category[]).map((value) => (
@@ -283,9 +344,10 @@ export default function QuestionBank({ client }: { client: InterviewClient }) {
               className="practice__textarea"
               rows={2}
               value={draft.competencies}
-              onChange={(event) =>
-                setDraft({ ...draft, competencies: event.target.value })
-              }
+              onChange={(event) => {
+                setDraft({ ...draft, competencies: event.target.value });
+                setDraftDirty(true);
+              }}
               disabled={saving}
               aria-describedby="question-competencies-hint"
             />
@@ -303,9 +365,10 @@ export default function QuestionBank({ client }: { client: InterviewClient }) {
               className="practice__textarea"
               rows={3}
               value={draft.criteria}
-              onChange={(event) =>
-                setDraft({ ...draft, criteria: event.target.value })
-              }
+              onChange={(event) => {
+                setDraft({ ...draft, criteria: event.target.value });
+                setDraftDirty(true);
+              }}
               disabled={saving}
               aria-describedby="question-criteria-hint"
             />

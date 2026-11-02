@@ -253,6 +253,11 @@ export interface InterviewSnapshot {
   current: QuestionDetail | null;
   availability: Availability;
   recordingId: Id | null;
+  /**
+   * Captura finalizada cuja publicação falhou. A reserva continua por guardar e
+   * `startRecording`/`prepareClose` recusam até `retrySaveRecording` a resolver.
+   */
+  pendingRecordingId: Id | null;
   finalizing: boolean;
   modelJob: ModelJobView | null;
   playback: PlaybackTarget | null;
