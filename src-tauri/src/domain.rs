@@ -29,6 +29,15 @@ pub mod error_code {
     pub const WORKER_PROTOCOL: &str = "WORKER_PROTOCOL";
     pub const WORKER_TIMEOUT: &str = "WORKER_TIMEOUT";
     pub const STALE_SOURCE: &str = "STALE_SOURCE";
+
+    // Erros da fase 2 (entrevistas guiadas e SQLite).
+    pub const INVALID_INPUT: &str = "INVALID_INPUT";
+    pub const INSUFFICIENT_QUESTIONS: &str = "INSUFFICIENT_QUESTIONS";
+    pub const ACTIVE_SESSION_EXISTS: &str = "ACTIVE_SESSION_EXISTS";
+    pub const ANSWER_CONFIRMED: &str = "ANSWER_CONFIRMED";
+    pub const ANSWER_REQUIRED: &str = "ANSWER_REQUIRED";
+    pub const DATABASE_UNAVAILABLE: &str = "DATABASE_UNAVAILABLE";
+    pub const DATABASE_VERSION_UNSUPPORTED: &str = "DATABASE_VERSION_UNSUPPORTED";
 }
 
 /// Erro com código estável, mensagem para o utilizador e indicação de repetição.

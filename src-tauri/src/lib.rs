@@ -1,9 +1,12 @@
-//! Base da aplicação desktop da fase 1.
+//! Base da aplicação desktop da fase 1, com os contratos e o esquema da fase 2.
 //!
 //! `domain` reúne os contratos e as regras independentes de hardware, `audio`
 //! os tipos partilhados com a captura e a reprodução, `storage` os artefactos
 //! locais com JSON atómico e recuperação, `worker` a supervisão do auxiliar
 //! Python, `service` a coordenação do fluxo e `commands` os comandos Tauri.
+//! `interview` reúne os DTOs e a validação das entrevistas guiadas e `db` a
+//! ligação SQLite recuperável com as migrações; nenhum deles está ainda ligado
+//! ao serviço da fase 1.
 //!
 //! O arranque liga os adaptadores reais: a pasta de dados é
 //! `app_data_dir()/phase1`, o auxiliar é configurado por `audio.json` em
@@ -14,7 +17,9 @@
 
 pub mod audio;
 pub mod commands;
+pub mod db;
 pub mod domain;
+pub mod interview;
 pub mod service;
 pub mod storage;
 pub mod worker;

@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 2,
+  "session": {
+    "id": "3f0c9d1a-5b7e-4c2a-9d31-8a6e0f4b2c11",
+    "category": null,
+    "count": 3,
+    "confirmedCount": 1,
+    "position": 2,
+    "status": "in_progress",
+    "mode": "local_v2",
+    "version": 4,
+    "createdAt": "2026-11-02T09:00:00Z",
+    "completedAt": null
+  },
+  "current": {
+    "question": {
+      "id": "b2a7c4d8-1e3f-4a5b-8c6d-7e9f0a1b2c3d",
+      "sessionId": "3f0c9d1a-5b7e-4c2a-9d31-8a6e0f4b2c11",
+      "sourceQuestionId": "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f",
+      "sourceVersion": 1,
+      "position": 2,
+      "text": "Describe a time you helped a team work together more effectively.",
+      "category": "conflict_collaboration",
+      "competencies": ["Colaboração"],
+      "criteria": [
+        "Identificar o obstáculo e a contribuição individual.",
+        "Contexto: situação e responsabilidade individual.",
+        "Ações concretas da própria pessoa.",
+        "Resultado ou aprendizagem, mesmo negativo."
+      ],
+      "selectedRecordingId": "d4e5f6a7-b8c9-4d0e-9f1a-2b3c4d5e6f70",
+      "selectionVersion": 1
+    },
+    "recordings": [
+      {
+        "id": "d4e5f6a7-b8c9-4d0e-9f1a-2b3c4d5e6f70",
+        "sessionQuestionId": "b2a7c4d8-1e3f-4a5b-8c6d-7e9f0a1b2c3d",
+        "ordinal": 1,
+        "state": "ready",
+        "capture": {
+          "sampleRate": 48000,
+          "channels": 1,
+          "durationMs": 94500,
+          "bytes": 9072000,
+          "incomplete": false
+        },
+        "originalFile": "sessions/3f0c9d1a-5b7e-4c2a-9d31-8a6e0f4b2c11/b2a7c4d8-1e3f-4a5b-8c6d-7e9f0a1b2c3d/d4e5f6a7-b8c9-4d0e-9f1a-2b3c4d5e6f70/original.wav",
+        "normalizedFile": null,
+        "transcripts": [
+          {
+            "id": "e5f6a7b8-c9d0-4e1f-8a2b-3c4d5e6f7081",
+            "status": "completed",
+            "text": "I helped the team by writing down what blocked our releases and then we split the work.",
+            "segments": [
+              {
+                "startMs": 0,
+                "endMs": 3600,
+                "text": "I helped the team by writing down what blocked our releases"
+              },
+              {
+                "startMs": 3600,
+                "endMs": 6200,
+                "text": "and then we split the work."
+              }
+            ],
+            "model": "small",
+            "language": "en",
+            "createdAt": "2026-11-02T09:13:00Z",
+            "loadMs": 4100,
+            "processingMs": 3050
+          }
+        ],
+        "review": {
+          "recordingId": "d4e5f6a7-b8c9-4d0e-9f1a-2b3c4d5e6f70",
+          "sourceTranscriptId": "e5f6a7b8-c9d0-4e1f-8a2b-3c4d5e6f7081",
+          "origin": "automatic",
+          "text": "I helped the team by writing down what blocked our releases and then we split the work.",
+          "version": 1,
+          "savedAt": "2026-11-02T09:20:00Z"
+        },
+        "warnings": []
+      }
+    ],
+    "confirmation": null
+  },
+  "confirmation": {
+    "id": "f6a7b8c9-d0e1-4f2a-9b3c-4d5e6f708192",
+    "sessionQuestionId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "recordingId": "c7d8e9f0-a1b2-4c3d-8e4f-5a6b7c8d9e0f",
+    "reviewVersion": 1,
+    "sourceTranscriptId": "b8c9d0e1-f2a3-4b4c-9d5e-6f7a8b9c0d1e",
+    "origin": "automatic",
+    "text": "I disagreed about the release checklist and we agreed on a fix.",
+    "confirmedAt": "2026-11-02T09:09:00Z"
+  },
+  "pendingOperation": {
+    "sessionId": "3f0c9d1a-5b7e-4c2a-9d31-8a6e0f4b2c11",
+    "sessionQuestionId": "b2a7c4d8-1e3f-4a5b-8c6d-7e9f0a1b2c3d",
+    "recordingId": "d4e5f6a7-b8c9-4d0e-9f1a-2b3c4d5e6f70",
+    "selectionVersion": 1,
+    "operationId": "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d",
+    "workerGeneration": 3
+  },
+  "modelJob": {
+    "id": "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d",
+    "kind": "transcribe",
+    "stage": "processing",
+    "target": {
+      "sessionId": "3f0c9d1a-5b7e-4c2a-9d31-8a6e0f4b2c11",
+      "sessionQuestionId": "b2a7c4d8-1e3f-4a5b-8c6d-7e9f0a1b2c3d",
+      "recordingId": "d4e5f6a7-b8c9-4d0e-9f1a-2b3c4d5e6f70",
+      "selectionVersion": 1,
+      "operationId": "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d",
+      "workerGeneration": 3
+    }
+  },
+  "snapshot": {
+    "revision": 0,
+    "database": "opening",
+    "activeSession": null,
+    "current": null,
+    "availability": {
+      "microphone": {
+        "status": "loading",
+        "message": "A verificar disponibilidade"
+      },
+      "playback": {
+        "status": "loading",
+        "message": "A verificar disponibilidade"
+      },
+      "transcription": {
+        "status": "loading",
+        "message": "A verificar disponibilidade"
+      },
+      "synthesis": {
+        "status": "loading",
+        "message": "A verificar disponibilidade"
+      }
+    },
+    "recordingId": null,
+    "finalizing": false,
+    "modelJob": null,
+    "playback": null,
+    "warnings": [],
+    "lastError": null
+  }
+}
