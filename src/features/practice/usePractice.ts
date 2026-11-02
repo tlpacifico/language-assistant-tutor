@@ -73,7 +73,8 @@ type Action =
       sourceId: string;
     }
   | { type: "save-failure"; error: AppError }
-  | { type: "discard" };
+  | { type: "discard" }
+  | { type: "reset"; review: ReviewState };
 
 /** Converte uma rejeição desconhecida num `AppError` apresentável. */
 export function toAppError(error: unknown): AppError {
@@ -226,18 +227,26 @@ function reducer(state: PracticeState, action: Action): PracticeState {
       // Se o utilizador editou enquanto a escrita decorria, o texto novo fica
       // e volta a contar como alteração por guardar.
       const editedDuringSave = next.review.text !== action.savedText;
+      const savedReview: ReviewState = {
+        ...next.review,
+        attemptId: action.attemptId,
+        sourceId: action.sourceId,
+        text: editedDuringSave ? next.review.text : action.savedText,
+        baseline: action.savedText,
+        hasSavedReview: true,
+      };
+      // A resposta ativa pode ter mudado enquanto a escrita terminava. Nesse
+      // caso, uma cópia já guardada não deve continuar a ser mostrada como se
+      // pertencesse à nova resposta; uma edição local continua protegida.
       return {
         ...next,
         saving: false,
         saveError: null,
-        review: {
-          ...next.review,
-          attemptId: action.attemptId,
-          sourceId: action.sourceId,
-          text: editedDuringSave ? next.review.text : action.savedText,
-          baseline: action.savedText,
-          hasSavedReview: true,
-        },
+        review: reconcileReview(
+          savedReview,
+          next.snapshot?.attempt ?? null,
+          false,
+        ),
       };
     }
     case "save-failure":
@@ -249,6 +258,8 @@ function reducer(state: PracticeState, action: Action): PracticeState {
         saveError: null,
         review: { ...state.review, text: state.review.baseline },
       };
+    case "reset":
+      return { ...state, saveError: null, review: action.review };
   }
 }
 
@@ -322,15 +333,32 @@ export function usePractice(client: PracticeClient): UsePractice {
   const saveReview = useCallback(async (): Promise<boolean> => {
     const active = snapshotRef.current?.attempt ?? null;
     const review = reviewRef.current;
+
+    if (!active) {
+      return false;
+    }
+
+    // Uma edição pertence à resposta em que foi escrita. Quando outra resposta
+    // passa a ativa, nunca a reescrever contra a transcrição da nova resposta.
+    if (review.attemptId !== null && review.attemptId !== active.id) {
+      dispatch({
+        type: "save-failure",
+        error: {
+          code: "STALE_SOURCE",
+          message:
+            "A revisão pertence a outra resposta e não pode ser guardada nesta. Descarte-a para rever a resposta atual.",
+          retryable: false,
+        },
+      });
+      return false;
+    }
+
     const latest = latestTranscript(active);
     // A revisão guardada mantém a transcrição que a originou; uma revisão nova
-    // usa a transcrição automática mais recente.
-    const sourceId =
-      review.attemptId === active?.id && review.sourceId
-        ? review.sourceId
-        : (latest?.id ?? null);
+    // usa a transcrição automática mais recente desta mesma resposta.
+    const sourceId = review.sourceId ?? latest?.id ?? null;
 
-    if (!active || !sourceId) {
+    if (!sourceId) {
       return false;
     }
 
@@ -353,6 +381,28 @@ export function usePractice(client: PracticeClient): UsePractice {
   }, [client]);
 
   const discardReview = useCallback(() => {
+    const active = snapshotRef.current?.attempt ?? null;
+    const review = reviewRef.current;
+
+    // Descartar uma revisão de outra resposta reinicia a cópia a partir da
+    // resposta ativa, em vez de conservar um texto que já não lhe pertence.
+    if (active && review.attemptId !== null && review.attemptId !== active.id) {
+      const latest = latestTranscript(active);
+      const saved = active.review;
+      const text = saved?.text ?? latest?.text ?? "";
+      dispatch({
+        type: "reset",
+        review: {
+          attemptId: active.id,
+          sourceId: saved?.sourceTranscriptId ?? latest?.id ?? null,
+          text,
+          baseline: text,
+          hasSavedReview: saved !== null,
+        },
+      });
+      return;
+    }
+
     dispatch({ type: "discard" });
   }, []);
 

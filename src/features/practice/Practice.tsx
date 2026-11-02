@@ -108,6 +108,10 @@ export default function Practice({ client }: { client: PracticeClient }) {
   const busy = busyAction !== null;
   const saving = practice.review.saving;
   const dirty = practice.review.dirty;
+  const staleReview =
+    attempt !== null &&
+    practice.review.attemptId !== null &&
+    practice.review.attemptId !== attempt.id;
 
   const canUseAudio = !recording && !job && !playback && !busy;
   const canStartRecording = !recording && !job && !playback && !busy;
@@ -115,6 +119,7 @@ export default function Practice({ client }: { client: PracticeClient }) {
   const canTranscribe = attempt !== null && !recording && !job && !playback && !busy;
   const canSaveReview =
     transcript !== null &&
+    !staleReview &&
     !saving &&
     !busy &&
     (dirty || !practice.review.hasSavedReview);
@@ -122,10 +127,12 @@ export default function Practice({ client }: { client: PracticeClient }) {
   const question = snapshot?.question ?? INITIAL_QUESTION;
 
   let reviewStatus = "Revisão em falta";
-  if (transcript) {
-    if (saving) {
-      reviewStatus = "A guardar revisão…";
-    } else if (dirty) {
+  if (saving) {
+    reviewStatus = "A guardar revisão…";
+  } else if (staleReview) {
+    reviewStatus = "Revisão de outra resposta por guardar";
+  } else if (transcript) {
+    if (dirty) {
       reviewStatus = "Alterações por guardar";
     } else if (practice.review.hasSavedReview) {
       reviewStatus = "Revisão guardada";
@@ -427,6 +434,25 @@ export default function Practice({ client }: { client: PracticeClient }) {
               <p className="practice__review-status" id="review-status" role="status">
                 {reviewStatus}
               </p>
+              {staleReview ? (
+                <div
+                  className="practice__notice practice__notice--error"
+                  role="alert"
+                >
+                  <p>
+                    A revisão visível pertence a outra resposta e não será
+                    guardada nesta. Copie o texto se precisar dele antes de o
+                    descartar.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => practice.discardReview()}
+                    disabled={saving || busy}
+                  >
+                    Descartar revisão anterior
+                  </button>
+                </div>
+              ) : null}
               {!transcript ? (
                 <p className="practice__hint">
                   Transcreva a resposta para criar uma cópia editável.
@@ -582,16 +608,22 @@ export default function Practice({ client }: { client: PracticeClient }) {
             que fazer antes de continuar.
           </p>
           <p className="practice__review-status">Estado: {reviewStatus}</p>
+          {staleReview ? (
+            <p className="practice__warning">
+              A revisão pertence a uma resposta anterior; nesta resposta só pode
+              ser descartada.
+            </p>
+          ) : null}
           <div className="practice__actions">
             <button
               type="button"
-              autoFocus
+              autoFocus={!staleReview}
               onClick={() =>
                 void (decision.kind === "recording"
                   ? saveAndStart()
                   : saveAndClose())
               }
-              disabled={saving || busy}
+              disabled={saving || busy || staleReview}
             >
               {decision.kind === "recording"
                 ? "Guardar e iniciar gravação"
@@ -599,6 +631,7 @@ export default function Practice({ client }: { client: PracticeClient }) {
             </button>
             <button
               type="button"
+              autoFocus={staleReview}
               onClick={() =>
                 decision.kind === "recording"
                   ? discardAndStart()

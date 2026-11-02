@@ -377,6 +377,74 @@ describe("Practice", () => {
     expect(reviewEditor()).toHaveValue(active.transcripts[0].text);
   });
 
+  it("dirty_review_is_not_attached_to_a_new_attempt", async () => {
+    const first = attempt({
+      id: "attempt-1",
+      transcripts: [
+        transcript({ id: "transcript-1", text: "first attempt text" }),
+      ],
+    });
+    const second = attempt({
+      id: "attempt-2",
+      transcripts: [
+        transcript({ id: "transcript-2", text: "second attempt text" }),
+      ],
+    });
+    const { mocks, user } = await renderPractice(
+      snapshot({ revision: 1, attempt: first }),
+    );
+
+    mocks.startRecording.mockResolvedValueOnce(
+      snapshot({ revision: 2, attempt: first, recordingId: "recording-1" }),
+    );
+    mocks.stopRecording.mockResolvedValueOnce(
+      snapshot({ revision: 3, attempt: second }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Iniciar gravação" }));
+    await screen.findByRole("button", { name: "Terminar gravação" });
+
+    // A edição acontece durante a captura, enquanto a resposta A ainda é a
+    // ativa. A resposta B só aparece depois de terminar.
+    await user.clear(reviewEditor());
+    await user.type(reviewEditor(), "draft written during the first answer");
+
+    await user.click(screen.getByRole("button", { name: "Terminar gravação" }));
+    await screen.findByRole("button", { name: "Iniciar gravação" });
+
+    expect(screen.getByLabelText("Transcrição automática")).toHaveValue(
+      "second attempt text",
+    );
+    expect(reviewEditor()).toHaveValue("draft written during the first answer");
+    expect(
+      screen.getByText("Revisão de outra resposta por guardar"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar revisão" })).toBeDisabled();
+    expect(mocks.saveReview).not.toHaveBeenCalled();
+    expect(mocks.saveReview).not.toHaveBeenCalledWith(
+      "attempt-2",
+      "transcript-2",
+      "draft written during the first answer",
+    );
+
+    // Descartar a revisão antiga reinicia a cópia a partir da resposta B.
+    await user.click(
+      screen.getByRole("button", { name: "Descartar revisão anterior" }),
+    );
+
+    expect(reviewEditor()).toHaveValue("second attempt text");
+    expect(screen.getByText("Revisão por guardar")).toBeInTheDocument();
+    expect(mocks.saveReview).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Guardar revisão" }));
+    await waitFor(() => expect(mocks.saveReview).toHaveBeenCalledTimes(1));
+    expect(mocks.saveReview).toHaveBeenCalledWith(
+      "attempt-2",
+      "transcript-2",
+      "second attempt text",
+    );
+  });
+
   it("close_with_dirty_review", async () => {
     const active = attempt();
     const { client, mocks, user } = await renderPractice(
