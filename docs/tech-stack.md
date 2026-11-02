@@ -104,6 +104,8 @@ As escolhas de áudio da fase 1 estão especificadas no [plano técnico](superpo
 
 A [spec da fase 1](superpowers/specs/2026-11-01-phase-1-local-audio-design.md) define o comportamento da primeira integração de áudio e a persistência mínima em ficheiros, antes da introdução de SQLite na fase 2.
 
+O [plano técnico da fase 2](superpowers/plans/2026-11-02-phase-2-guided-interview-implementation.md) propõe acesso a SQLite em Rust com `rusqlite` e a funcionalidade `bundled`, mantendo o frontend sem acesso SQL direto. Prevê transações, migrações e reconciliação com os ficheiros de áudio. A dependência ainda não foi instalada nem compilada neste projeto; a confirmação de compatibilidade pertence à execução desse plano.
+
 ## Referências
 
 - [Tauri: introdução](https://v2.tauri.app/start/).

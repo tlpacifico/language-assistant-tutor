@@ -1,7 +1,7 @@
 # Plano das fases — Tutor de entrevistas STAR
 
 Data: 2026-11-01  
-Estado: divisão em fases aprovada; implementação por iniciar.
+Estado: divisão em fases aprovada; fase 1 implementada e verificada automaticamente, com aceitação manual pendente no registo de validação; spec e plano técnico da fase 2 preparados, implementação por iniciar.
 
 ## Objetivo
 
@@ -64,6 +64,10 @@ O [desenho aprovado do MVP](../specs/2026-11-01-star-interview-tutor-design.md) 
 ## Fase 2 — Entrevista guiada
 
 **Objetivo:** transformar a experiência de uma pergunta num treino com várias perguntas e dados persistentes.
+
+**Spec:** [Entrevista guiada](../specs/2026-11-02-phase-2-guided-interview-design.md). Define o fluxo, a confirmação imutável, a recuperação, a compatibilidade com os dados da fase 1 e os critérios F2-01 a F2-16.
+
+**Plano técnico:** [Implementação da fase 2](2026-11-02-phase-2-guided-interview-implementation.md), preparado a pedido do utilizador; tarefas ainda não executadas.
 
 ### Entregas
 
@@ -176,4 +180,4 @@ O [desenho aprovado do MVP](../specs/2026-11-01-star-interview-tutor-design.md) 
 
 ## Próximo passo
 
-O plano técnico da fase 1 está escrito para revisão. O próximo passo é revê-lo e executar apenas essa fase quando solicitado. Este documento não autoriza o início automático das fases seguintes nem regista qualquer uma como concluída.
+A implementação e a verificação automática da fase 1 estão registadas em [validação da fase 1](../../phase-1/validation.md); os critérios manuais aí pendentes não são considerados concluídos sem evidência. A pedido do utilizador, foram preparados a [spec da fase 2](../specs/2026-11-02-phase-2-guided-interview-design.md) e o [plano técnico](2026-11-02-phase-2-guided-interview-implementation.md). O próximo passo é rever o plano e reconciliar a validação manual da fase 1 antes da implementação seguinte. Não foi iniciada a implementação da fase 2 nem das fases posteriores.
