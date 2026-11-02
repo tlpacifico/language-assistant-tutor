@@ -480,6 +480,15 @@ impl Harness {
     }
 }
 
+fn last_health_request(harness: &Harness) -> String {
+    harness
+        .requests()
+        .into_iter()
+        .rfind(|request| request.op == WorkerOp::Health)
+        .expect("pedido de disponibilidade")
+        .id
+}
+
 /// Injeta o resultado `health` do handshake do auxiliar.
 async fn health(service: &AppService, transcription: ComponentStatus, synthesis: ComponentStatus) {
     service
@@ -1066,5 +1075,82 @@ async fn question_audio_is_synthesized_and_validated() {
     assert!(
         !expected.exists(),
         "o derivado inválido é descartado antes de uma nova síntese"
+    );
+}
+
+#[tokio::test]
+async fn failed_health_check_reports_component_error_and_recovers() {
+    let harness = Harness::new().await;
+
+    let checking = harness
+        .service
+        .refresh_availability()
+        .await
+        .expect("verificar disponibilidade");
+    assert_eq!(
+        checking.availability.transcription.status,
+        ComponentStatus::Loading
+    );
+    let first = last_health_request(&harness);
+
+    // O auxiliar bloqueia e o supervisor falha o `health` no prazo: os
+    // componentes não podem ficar em `loading` para sempre.
+    harness
+        .service
+        .on_worker_event(WorkerEvent {
+            generation: 1,
+            message: WorkerMessage::Failed {
+                request_id: first.clone(),
+                error: AppError::new(
+                    error_code::WORKER_TIMEOUT,
+                    "O auxiliar não devolveu o resultado dentro do prazo.",
+                    true,
+                ),
+            },
+        })
+        .await;
+
+    let failed = harness.service.snapshot();
+    assert_eq!(
+        failed.availability.transcription.status,
+        ComponentStatus::Error
+    );
+    assert_eq!(failed.availability.synthesis.status, ComponentStatus::Error);
+    assert_eq!(
+        failed.last_error.expect("erro visível").code,
+        error_code::WORKER_TIMEOUT
+    );
+    assert!(failed.model_job.is_none());
+
+    // Uma verificação posterior com sucesso volta a `ready`.
+    harness
+        .service
+        .refresh_availability()
+        .await
+        .expect("repetir disponibilidade");
+    let second = last_health_request(&harness);
+    assert_ne!(second, first);
+    harness
+        .service
+        .on_worker_event(WorkerEvent {
+            generation: 1,
+            message: WorkerMessage::Completed {
+                request_id: second,
+                result: WorkerResult::Health(HealthResult {
+                    transcription: ComponentState::ready(),
+                    synthesis: ComponentState::ready(),
+                }),
+            },
+        })
+        .await;
+
+    let recovered = harness.service.snapshot();
+    assert_eq!(
+        recovered.availability.transcription.status,
+        ComponentStatus::Ready
+    );
+    assert_eq!(
+        recovered.availability.synthesis.status,
+        ComponentStatus::Ready
     );
 }

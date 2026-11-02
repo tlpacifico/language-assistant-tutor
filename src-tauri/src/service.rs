@@ -155,6 +155,8 @@ pub struct AppService {
     pending_publish: Mutex<Option<CapturedAudio>>,
     /// Identificador da captura cuja interrupção ainda pode chegar.
     current_capture: Mutex<Option<String>>,
+    /// Pedido `health` em curso, para reportar uma falha de verificação.
+    health_request: Mutex<Option<String>>,
     /// Coordenador serial: uma transição de cada vez.
     transitions: tokio::sync::Mutex<()>,
     listener: Mutex<Option<SnapshotListener>>,
@@ -196,6 +198,7 @@ impl AppService {
             generation: AtomicU64::new(0),
             pending_publish: Mutex::new(None),
             current_capture: Mutex::new(None),
+            health_request: Mutex::new(None),
             transitions: tokio::sync::Mutex::new(()),
             listener: Mutex::new(None),
         }
@@ -267,15 +270,23 @@ impl AppService {
             return Ok(self.snapshot());
         }
 
-        let request = WorkerRequest::health(format!("health-{}", uuid::Uuid::new_v4()));
+        let request_id = format!("health-{}", uuid::Uuid::new_v4());
+        let request = WorkerRequest::health(request_id.clone());
+        // Uma verificação cujo resultado nunca chega tem de sair de `loading`:
+        // o identificador permite reconhecer a falha do auxiliar mais tarde.
+        *self.lock_health() = Some(request_id);
         match worker_task(move || control.submit(request)).await {
             Ok(()) => Ok(self.commit(|state| {
                 state.availability.transcription = ComponentState::loading();
                 state.availability.synthesis = ComponentState::loading();
             })),
             // Um pedido em curso não permite verificar agora; conserva o que se sabe.
-            Err(error) if error.code == error_code::BUSY => Ok(self.snapshot()),
+            Err(error) if error.code == error_code::BUSY => {
+                *self.lock_health() = None;
+                Ok(self.snapshot())
+            }
             Err(error) => {
+                *self.lock_health() = None;
                 let snapshot = self.commit(|state| {
                     state.availability.transcription = error_state(&error);
                     state.availability.synthesis = error_state(&error);
@@ -312,6 +323,7 @@ impl AppService {
         match worker_task(move || restart.restart()).await {
             Ok(()) => {
                 let generation = control.generation();
+                *self.lock_health() = None;
                 self.generation.store(generation, Ordering::SeqCst);
                 Ok(self.commit(|state| {
                     state.set_worker_generation(generation);
@@ -961,6 +973,7 @@ impl AppService {
 
         // Nenhum resultado tardio pode voltar a ser aplicado a partir daqui.
         self.generation.store(0, Ordering::SeqCst);
+        *self.lock_health() = None;
         let control = { self.lock_worker().control.take() };
         if let Some(control) = control {
             // Sem perda de dados: o processo é terminado de qualquer forma; a
@@ -1040,7 +1053,10 @@ impl AppService {
 
     async fn apply_completed(&self, request_id: &str, generation: u64, result: WorkerResult) {
         match result {
-            WorkerResult::Health(health) => self.apply_health(generation, health),
+            WorkerResult::Health(health) => {
+                self.clear_health_request(request_id);
+                self.apply_health(generation, health);
+            }
             WorkerResult::Transcription(transcription) => {
                 self.apply_transcription(request_id, generation, transcription)
                     .await;
@@ -1219,6 +1235,18 @@ impl AppService {
     }
 
     async fn apply_worker_failure(&self, request_id: &str, generation: u64, error: AppError) {
+        // Uma verificação de disponibilidade não é um `ModelJob`: sem este
+        // tratamento, a falha (por exemplo, um timeout) deixaria os componentes
+        // em `loading` para sempre e esconderia o auxiliar bloqueado.
+        if self.clear_health_request(request_id) {
+            let _ = self.commit(|state| {
+                state.availability.transcription = error_state(&error);
+                state.availability.synthesis = error_state(&error);
+                state.last_error = Some(error.clone());
+            });
+            return;
+        }
+
         let target = {
             let state = self.lock_state();
             if !state.accepts_result(request_id, generation) {
@@ -1390,6 +1418,7 @@ impl AppService {
             slot.control = Some(Arc::clone(&control));
             slot.error = None;
         }
+        *self.lock_health() = None;
         self.generation.store(generation, Ordering::SeqCst);
         self.commit(|state| {
             state.set_worker_generation(generation);
@@ -1470,6 +1499,26 @@ impl AppService {
         self.current_capture
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    fn lock_health(&self) -> std::sync::MutexGuard<'_, Option<String>> {
+        self.health_request
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// Consome o pedido `health` pendente quando o identificador coincide.
+    ///
+    /// Devolve `true` apenas para a verificação em curso; uma falha de outro
+    /// pedido, ou de uma verificação já substituída, não altera o estado.
+    fn clear_health_request(&self, request_id: &str) -> bool {
+        let mut pending = self.lock_health();
+        if pending.as_deref() == Some(request_id) {
+            *pending = None;
+            true
+        } else {
+            false
+        }
     }
 
     fn lock_listener(&self) -> std::sync::MutexGuard<'_, Option<SnapshotListener>> {
