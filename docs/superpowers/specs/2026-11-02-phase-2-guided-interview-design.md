@@ -1,10 +1,10 @@
 # Fase 2 — Entrevista guiada
 
 Data: 2026-11-02  
-Estado: spec de referência para o plano solicitado pelo utilizador; implementação por iniciar.  
+Estado: spec de referência; implementação executada e verificada automaticamente em 2026-11-02, com a validação manual do utilizador pendente.  
 Base: [plano das fases](../plans/2026-11-01-star-interview-tutor-phases.md), [desenho do MVP](2026-11-01-star-interview-tutor-design.md) e [stack técnica](../../tech-stack.md).
 
-Plano técnico: [Implementação da fase 2](../plans/2026-11-02-phase-2-guided-interview-implementation.md), preparado a pedido do utilizador em 2026-11-02, ainda não executado.
+Plano técnico: [Implementação da fase 2](../plans/2026-11-02-phase-2-guided-interview-implementation.md), com as tarefas 1 a 9 executadas e a tarefa 10 parcial. Evidência real em [docs/phase-2/validation.md](../../phase-2/validation.md).
 
 ## 1. Intenção e ponto de partida
 
@@ -324,8 +324,13 @@ e as proteções de edição na interface e a integração com os adaptadores lo
 Usar dados temporários e falhas controladas para testar interrupções entre
 publicação de áudio, confirmação e avanço. Preservar a regressão da fase 1.
 
-Os critérios seguintes estão todos pendentes. A existência da spec não é
-evidência de implementação.
+Os critérios seguintes continuam a ser os de aceitação. Em 2026-11-02 a
+implementação e a verificação automática foram registadas em
+[docs/phase-2/validation.md](../../phase-2/validation.md): F2-01, F2-02, F2-04,
+F2-06, F2-07, F2-08, F2-09, F2-10, F2-12, F2-13 e F2-15 têm evidência
+automatizada; F2-03, F2-05, F2-11, F2-14 e F2-16 têm evidência parcial e
+dependem da validação manual. As caixas abaixo só são marcadas quando o critério
+estiver demonstrado, incluindo a validação manual.
 
 - [ ] F2-01: Banco inicial contém 20 perguntas nas seis categorias; repetir o arranque não duplica nem repõe edições.
 - [ ] F2-02: Adicionar e editar texto, categoria, competências e critérios persiste após reinício, com validação dos campos obrigatórios.

@@ -2,7 +2,7 @@
 
 ## Contexto e documentos
 
-Este projeto é um tutor desktop de entrevistas comportamentais em inglês, por voz, baseado na estrutura STAR. O desenvolvimento está organizado em fases; a fase 1 está implementada e verificada automaticamente, com a validação manual do utilizador ainda pendente.
+Este projeto é um tutor desktop de entrevistas comportamentais em inglês, por voz, baseado na estrutura STAR. O desenvolvimento está organizado em fases; as fases 1 e 2 estão implementadas e verificadas automaticamente, com a validação manual do utilizador ainda pendente. A fase 3 não foi iniciada.
 
 Antes de trabalhar, consultar os documentos relevantes para a tarefa:
 
@@ -13,8 +13,10 @@ Antes de trabalhar, consultar os documentos relevantes para a tarefa:
 - [Plano técnico da fase 1](docs/superpowers/plans/2026-11-01-phase-1-local-audio-implementation.md): tarefas, contratos e verificações da primeira implementação.
 - [Preparação real no Windows](docs/phase-1/setup.md): versões observadas, comandos executados, modelos e configuração pessoal.
 - [Validação da fase 1](docs/phase-1/validation.md): matriz CA-01 a CA-15 com evidência e o que falta validar com o utilizador.
+- [Preparação e execução da fase 2](docs/phase-2/setup.md): o que mudou, SQLite, diretórios de sessão, comandos e reprodução a partir de um checkout limpo.
+- [Validação da fase 2](docs/phase-2/validation.md): matriz F2-01 a F2-16, evidência automática e validação manual pendente.
 - [Spec da fase 2](docs/superpowers/specs/2026-11-02-phase-2-guided-interview-design.md): entrevistas guiadas, banco de perguntas, confirmação, SQLite e recuperação.
-- [Plano técnico da fase 2](docs/superpowers/plans/2026-11-02-phase-2-guided-interview-implementation.md): dez tarefas, contratos, transações, recuperação e verificações; preparado, não executado.
+- [Plano técnico da fase 2](docs/superpowers/plans/2026-11-02-phase-2-guided-interview-implementation.md): dez tarefas, contratos, transações, recuperação e verificações; tarefas 1 a 9 executadas e tarefa 10 parcial (falta a validação manual).
 - [Desenho aprovado](docs/superpowers/specs/2026-11-01-star-interview-tutor-design.md): regras funcionais e técnicas detalhadas.
 
 As instruções atuais do utilizador têm prioridade. Estes documentos registam as decisões anteriores; mantê-los coerentes quando uma decisão mudar.
@@ -77,4 +79,8 @@ Consultar a [stack técnica](docs/tech-stack.md) antes de introduzir dependênci
 
 O desenho e a divisão em cinco fases foram aprovados. A fase 1 está implementada (Tauri 2 + React, áudio nativo, auxiliar faster-whisper/Kokoro, persistência e revisão) e a verificação automática está verde: `.\scripts\verify.ps1` com 8/8 checks (77 testes Rust, 15 testes React, 36 testes Python sem a marca `models`, `pip check` limpo), o teste real `-m models` com `2 passed` e os modelos preparados fora do repositório (Whisper `small` e Kokoro-82M, 776,4 MiB). Os resultados estão em [docs/phase-1/validation.md](docs/phase-1/validation.md) e a preparação em [docs/phase-1/setup.md](docs/phase-1/setup.md).
 
-A fase **não** está aceite nem concluída no registo de validação: faltam a validação do utilizador com três gravações reais (curta, com termos técnicos e problemática), a audição da voz Kokoro, o teste de remoção/restauro do microfone, a repetição do percurso offline pela janela e a decisão sobre a aceitabilidade da espera (CA-14). Não marcar a fase como concluída antes dessa validação. A pedido do utilizador, foram preparados a [spec da fase 2](docs/superpowers/specs/2026-11-02-phase-2-guided-interview-design.md) e o [plano técnico](docs/superpowers/plans/2026-11-02-phase-2-guided-interview-implementation.md), ainda não executado. A implementação da fase 2 e das seguintes não foi iniciada.
+A fase 1 **não** está aceite nem concluída no registo de validação: faltam a validação do utilizador com três gravações reais (curta, com termos técnicos e problemática), a audição da voz Kokoro, o teste de remoção/restauro do microfone, a repetição do percurso offline pela janela e a decisão sobre a aceitabilidade da espera (CA-14). Não marcar a fase como concluída antes dessa validação.
+
+A fase 2 está implementada (SQLite com `rusqlite`, banco editável de 20 perguntas, sessões com cópias fixas, artefactos e reconciliação, revisões e confirmações imutáveis, histórico e consulta de leitura dos treinos da fase 1) e a verificação automática está verde: `.\scripts\verify.ps1` com 8/8 checks em 18,5 s (147 testes Rust, 43 testes Vitest, 36 testes Python sem a marca `models`, `pip check` limpo), o teste real `-m models` com `2 passed`, o build release `--no-bundle` e o arranque/fecho do binário com código 0. Os dados estão em [docs/phase-2/validation.md](docs/phase-2/validation.md) e [docs/phase-2/setup.md](docs/phase-2/setup.md).
+
+A fase 2 **não** está concluída nem aceite: falta a validação manual descrita na spec §10 e em [docs/phase-2/validation.md](docs/phase-2/validation.md) — sessão real de três perguntas (uma com termos técnicos), audição de perguntas e originais, revisão/confirmação, sair e retomar, histórico, sessão de uma pergunta e outra quantidade, insuficiência numa categoria, edição do banco sem alterar a cópia da sessão, percurso offline pela janela, revisão manual com transcrição indisponível e recuperação de uma falha de escrita. Não marcar a fase como concluída antes dessa validação. A fase 3 (tutor com IA) **não** foi iniciada, e as fases posteriores continuam por planear.
