@@ -101,6 +101,9 @@ secrets/
 *.p12
 *.jks
 *.keystore
+# Configuração pessoal do auxiliar (o exemplo versionado é audio.example.json)
+audio.json
+config/audio.json
 
 # --- Registos e temporários ----------------------------------------------
 *.log

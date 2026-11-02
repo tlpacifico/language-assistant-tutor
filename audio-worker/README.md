@@ -26,8 +26,8 @@ O conjunto resolvido (incluindo `torch==2.15.0+cpu`, `ctranslate2`, `spacy`,
 `pip check` limpo. Para reconstruir o ambiente a partir do lock:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-.\.venv\Scripts\python.exe -m pip install -r audio-worker/requirements.lock.txt
+.\.venv\Scripts\python.exe -m pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
+.\.venv\Scripts\python.exe -m pip install -r audio-worker/requirements.lock.txt --extra-index-url https://download.pytorch.org/whl/cpu
 .\.venv\Scripts\python.exe -m pip install -e "audio-worker[test]"
 ```
 

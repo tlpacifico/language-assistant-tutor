@@ -63,14 +63,26 @@ Resultado observado na criação (`audio-worker/README.md` regista o detalhe):
 build), `audio-worker-0.1.0` editável com `pytest 9.2.0`, e
 `No broken requirements found.`
 
-Para reconstruir a partir do lock versionado, depois do PyTorch CPU:
+Para reconstruir a partir do lock versionado, depois do PyTorch CPU **fixado na
+versão do lock** (`torch==2.15.0+cpu`):
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-.\.venv\Scripts\python.exe -m pip install -r audio-worker/requirements.lock.txt
+.\.venv\Scripts\python.exe -m pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
+.\.venv\Scripts\python.exe -m pip install -r audio-worker/requirements.lock.txt --extra-index-url https://download.pytorch.org/whl/cpu
 .\.venv\Scripts\python.exe -m pip install -e "audio-worker[test]"
 .\.venv\Scripts\python.exe -m pip check
 ```
+
+O `--extra-index-url` mantém o PyPI como índice principal para as restantes
+versões do lock e acrescenta o índice CPU apenas para resolver
+`torch==2.15.0+cpu` (essa roda não existe no PyPI). Sem esse parâmetro, o pip
+procuraria uma roda `+cpu` no PyPI e falharia. A sequência foi executada numa
+`.venv` descartável em `%TEMP%` (356,8 s, com descargas; todos os passos com
+saída 0, `No broken requirements found.` e `torch 2.15.0+cpu`) e o resultado
+está registado em [validation.md](validation.md); a `.venv` descartável foi
+apagada depois.
+A criação acima (sem lock) resolve as versões atuais do índice CPU; é a
+reconstrução a partir do lock que fixa o conjunto exato.
 
 O conjunto resolvido (`audio-worker/requirements.lock.txt`) inclui os extras
 ingleses de `misaki[en]` e as dependências transitivas reais: `soundfile`,
@@ -102,10 +114,13 @@ ingleses de `misaki[en]` e as dependências transitivas reais: `soundfile`,
   (revisão `f3ff3571791e39611d31c381e3a41a3af07b4987`), instala
   `en_core_web_sm 3.8.0` quando falta, valida o eSpeak-NG, escreve
   `<models-dir>\models.json` e termina com uma síntese fixa de verificação.
-- Resultado real: **34,3 s** na primeira execução (descarga completa, instalação
-  do spaCy e síntese de verificação) e **10,2 s** na repetição sobre ficheiros já
-  presentes. Tamanho final: 25 ficheiros, **814 144 526 bytes (776,4 MiB)**, dos
-  quais `faster-whisper-small\model.bin` 461,1 MiB e
+- Resultado real: **34,3 s** na primeira execução — medida com a pasta temporária
+  sem espaços `%LOCALAPPDATA%\language-assistant-tutor\models`, antes de os
+  ficheiros serem movidos para o caminho final com espaços (descarga completa,
+  instalação do spaCy e síntese de verificação) — e **10,2 s** na repetição já
+  sobre a pasta final. Tamanho final: 25 ficheiros,
+  **814 144 526 bytes (776,4 MiB)**, dos quais
+  `faster-whisper-small\model.bin` 461,1 MiB e
   `kokoro\kokoro-v1_0.pth` 312,1 MiB.
 - A síntese de verificação produziu
   `<models-dir>\smoke-test\af_heart-smoke.wav` com 3 900 ms a 24 kHz.
@@ -113,8 +128,12 @@ ingleses de `misaki[en]` e as dependências transitivas reais: `soundfile`,
   `kokoroConfig`, `kokoroWeights`, `kokoroVoice`), as duas revisões e o inventário
   de recursos (`spacyModel`, `spacyModelVersion`, `espeakLibrary`, `espeakData`,
   `espeakFallback`).
-- O comando é idempotente; repeti-lo com os ficheiros presentes não volta a
-  descarregar pesos (foi o que aconteceu na segunda execução).
+- O comando é idempotente quanto aos ficheiros: repeti-lo valida as revisões no
+  Hugging Face Hub e reutiliza a cache local (na segunda execução os 6 ficheiros
+  do Whisper foram recontados a ~200 ficheiros/s e os pesos não foram
+  transferidos de novo), mas **continua a contactar o Hub** e por isso exige
+  rede — tal como a primeira execução. Foi o que aconteceu na repetição de
+  10,2 s.
 
 O teste real opcional corre explicitamente com o manifesto preparado:
 
@@ -199,5 +218,5 @@ depender da `.venv`, do `audio.json` e dos modelos preparados nesta máquina.
 | --- | --- | --- |
 | `failed to run 'cargo metadata' ... program not found` | `cargo` fora do `PATH` ao chamar o CLI do Tauri | acrescentar `%USERPROFILE%\.cargo\bin` ao `PATH` (secção 1) |
 | `npm warn Unknown user config "python"` | configuração global do npm nesta máquina, não do projeto | aviso apenas; não afeta os comandos |
-| Síntese/síntese de verificação demora ~7 s na primeira chamada | carregamento do Kokoro em CPU | medido e registado em [validation.md](validation.md); o modelo é reutilizado nas chamadas seguintes |
+| A primeira síntese (e a síntese de verificação) demora ~7–8 s até produzir áudio | carregamento inicial do Kokoro em CPU | medido e registado em [validation.md](validation.md); nas chamadas seguintes o modelo é reutilizado (~1,2 s por síntese) |
 | Avisos `UserWarning`/`FutureWarning` do PyTorch e do Misaki | bibliotecas de terceiros durante o carregamento | não impedem a síntese nem a transcrição; ficaram registados |

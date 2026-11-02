@@ -58,8 +58,8 @@ ficheiro real:
 ```json
 {
   "schemaVersion": 1,
-  "pythonExecutable": "C:\\Repos\\Thacio\\language-assistant-tutor\\.venv\\Scripts\\python.exe",
-  "modelsManifest": "C:\\Users\\MarloGamer\\AppData\\Local\\language-assistant-tutor\\Modelos de Voz\\models.json"
+  "pythonExecutable": "C:\\Projetos\\language-assistant-tutor\\.venv\\Scripts\\python.exe",
+  "modelsManifest": "D:\\Modelos de Voz\\language-assistant-tutor\\models.json"
 }
 ```
 
