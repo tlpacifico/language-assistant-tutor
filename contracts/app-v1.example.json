@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "initialSnapshot": {
+    "revision": 0,
+    "question": "Tell me about a time you solved a difficult problem at work.",
+    "availability": {
+      "microphone": {
+        "status": "loading",
+        "message": "A verificar disponibilidade"
+      },
+      "playback": {
+        "status": "loading",
+        "message": "A verificar disponibilidade"
+      },
+      "transcription": {
+        "status": "loading",
+        "message": "A verificar disponibilidade"
+      },
+      "synthesis": {
+        "status": "loading",
+        "message": "A verificar disponibilidade"
+      }
+    },
+    "attempt": null,
+    "recordingId": null,
+    "modelJob": null,
+    "playback": null,
+    "lastError": null
+  },
+  "populatedSnapshot": {
+    "revision": 7,
+    "question": "Tell me about a time you solved a difficult problem at work.",
+    "availability": {
+      "microphone": {
+        "status": "ready",
+        "message": null
+      },
+      "playback": {
+        "status": "ready",
+        "message": null
+      },
+      "transcription": {
+        "status": "ready",
+        "message": null
+      },
+      "synthesis": {
+        "status": "missing",
+        "message": "Falta a voz af_heart na pasta de modelos."
+      }
+    },
+    "attempt": {
+      "id": "8a1f4c78-2a4b-4f0e-9b6b-1e6b0f2e4d11",
+      "question": "Tell me about a time you solved a difficult problem at work.",
+      "createdAt": "2026-11-01T09:30:00Z",
+      "capture": {
+        "sampleRate": 48000,
+        "channels": 2,
+        "durationMs": 47250,
+        "bytes": 9072000,
+        "incomplete": false
+      },
+      "originalFile": "original.wav",
+      "normalizedFile": "normalized.wav",
+      "transcripts": [
+        {
+          "id": "2f0f5e5e-6a4e-4b1e-8f6a-0e0f0b5c9d21",
+          "status": "completed",
+          "text": "Last year I reorganised our release checklist because deploys kept failing on Fridays.",
+          "segments": [
+            {
+              "startMs": 0,
+              "endMs": 2400,
+              "text": "Last year I reorganised our release checklist"
+            },
+            {
+              "startMs": 2400,
+              "endMs": 5100,
+              "text": "because deploys kept failing on Fridays."
+            }
+          ],
+          "model": "small",
+          "language": "en",
+          "createdAt": "2026-11-01T09:31:10Z",
+          "loadMs": 4200,
+          "processingMs": 3120
+        }
+      ],
+      "review": {
+        "sourceTranscriptId": "2f0f5e5e-6a4e-4b1e-8f6a-0e0f0b5c9d21",
+        "text": "Last year I reorganised our release checklist because deploys kept failing on Fridays.",
+        "savedAt": "2026-11-01T09:33:00Z"
+      },
+      "lastOperation": {
+        "id": "2f0f5e5e-6a4e-4b1e-8f6a-0e0f0b5c9d21",
+        "kind": "transcribe",
+        "state": "completed",
+        "error": null
+      }
+    },
+    "recordingId": null,
+    "modelJob": null,
+    "playback": "response",
+    "lastError": null
+  }
+}

@@ -2,7 +2,7 @@
 
 ## Contexto e documentos
 
-Este projeto é um tutor desktop de entrevistas comportamentais em inglês, por voz, baseado na estrutura STAR. O desenvolvimento está organizado em fases; a implementação ainda não começou.
+Este projeto é um tutor desktop de entrevistas comportamentais em inglês, por voz, baseado na estrutura STAR. O desenvolvimento está organizado em fases; a fase 1 está implementada e verificada automaticamente, com a validação manual do utilizador ainda pendente.
 
 Antes de trabalhar, consultar os documentos relevantes para a tarefa:
 
@@ -11,6 +11,8 @@ Antes de trabalhar, consultar os documentos relevantes para a tarefa:
 - [Plano das fases](docs/superpowers/plans/2026-11-01-star-interview-tutor-phases.md): entregas, dependências e critérios de conclusão.
 - [Spec da fase 1](docs/superpowers/specs/2026-11-01-phase-1-local-audio-design.md): âmbito, comportamento do áudio local e critérios de aceitação.
 - [Plano técnico da fase 1](docs/superpowers/plans/2026-11-01-phase-1-local-audio-implementation.md): tarefas, contratos e verificações da primeira implementação.
+- [Preparação real no Windows](docs/phase-1/setup.md): versões observadas, comandos executados, modelos e configuração pessoal.
+- [Validação da fase 1](docs/phase-1/validation.md): matriz CA-01 a CA-15 com evidência e o que falta validar com o utilizador.
 - [Desenho aprovado](docs/superpowers/specs/2026-11-01-star-interview-tutor-design.md): regras funcionais e técnicas detalhadas.
 
 As instruções atuais do utilizador têm prioridade. Estes documentos registam as decisões anteriores; mantê-los coerentes quando uma decisão mudar.
@@ -71,4 +73,6 @@ Consultar a [stack técnica](docs/tech-stack.md) antes de introduzir dependênci
 
 ## Estado e próximos passos
 
-O desenho e a divisão em cinco fases foram aprovados. A spec da fase 1 foi aceite como referência para o planeamento e o respetivo plano técnico está escrito para revisão. A fase valida uma pergunta fixa com voz, gravação e transcrição local; a implementação ainda não começou. Atualizar este estado à medida que o trabalho avançar.
+O desenho e a divisão em cinco fases foram aprovados. A fase 1 está implementada (Tauri 2 + React, áudio nativo, auxiliar faster-whisper/Kokoro, persistência e revisão) e a verificação automática está verde: `.\scripts\verify.ps1` com 8/8 checks (77 testes Rust, 15 testes React, 36 testes Python sem a marca `models`, `pip check` limpo), o teste real `-m models` com `2 passed` e os modelos preparados fora do repositório (Whisper `small` e Kokoro-82M, 776,4 MiB). Os resultados estão em [docs/phase-1/validation.md](docs/phase-1/validation.md) e a preparação em [docs/phase-1/setup.md](docs/phase-1/setup.md).
+
+A fase **não** está aceite nem concluída: faltam a validação do utilizador com três gravações reais (curta, com termos técnicos e problemática), a audição da voz Kokoro, o teste de remoção/restauro do microfone, a repetição do percurso offline pela janela e a decisão sobre a aceitabilidade da espera (CA-14). Não marcar a fase como concluída antes dessa validação. As fases seguintes não foram iniciadas.

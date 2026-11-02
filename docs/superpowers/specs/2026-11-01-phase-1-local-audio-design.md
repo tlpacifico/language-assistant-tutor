@@ -1,7 +1,7 @@
 # Spec da fase 1 — Validar áudio local
 
 Data: 2026-11-01  
-Estado: aceite como referência para o plano técnico; implementação por iniciar.
+Estado: aceite como referência para o plano técnico; fase 1 implementada e verificada automaticamente, com a validação manual do utilizador pendente.
 
 Referências: [plano das fases](../plans/2026-11-01-star-interview-tutor-phases.md), [desenho aprovado do MVP](2026-11-01-star-interview-tutor-design.md) e [stack técnica](../../tech-stack.md).
 

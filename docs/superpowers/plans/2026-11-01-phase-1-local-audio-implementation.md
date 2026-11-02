@@ -10,7 +10,7 @@
 
 **Spec:** [Spec da fase 1](../specs/2026-11-01-phase-1-local-audio-design.md). Ler também o [AGENTS.md](../../../AGENTS.md) e respeitar o [plano das fases](2026-11-01-star-interview-tutor-phases.md).
 
-**Estado:** plano técnico escrito; tarefas e verificações ainda não executadas. O pedido de avançar para este plano permite tratar a spec da fase 1 como referência aceite para o planeamento. Não regista aprovação da implementação nem inicia a fase 2.
+**Estado:** implementação da fase 1 executada da tarefa 1 à 8. Verificação automática verde (`.\scripts\verify.ps1`, 8/8 checks; teste real `-m models` com `2 passed`) e modelos preparados fora do repositório. A fase **não** está aceite: a validação manual com gravações reais, audição da voz, remoção do microfone e aceitabilidade da espera continua pendente em [docs/phase-1/validation.md](../../phase-1/validation.md). Não regista aprovação da fase nem inicia a fase 2.
 
 ## Global Constraints
 
@@ -127,7 +127,7 @@ Definir em `src-tauri/src/domain.rs`; duplicar apenas os tipos serializados em `
 | `AppSnapshot` | `revision: u64`, `question`, `availability: Availability`, `attempt: Option<Attempt>`, `recordingId: Option<String>`, `modelJob: Option<ModelJob>`, `playback: Option<PlaybackTarget>`, `lastError: Option<AppError>`. |
 | `RestoreResult` | `attempt: Option<Attempt>`, `warnings: Vec<AppError>`; permite recuperar texto/revisão mesmo se faltar um áudio ou derivado. |
 
-Erros mínimos: `BUSY`, `DEVICE_UNAVAILABLE`, `DEVICE_FORMAT_UNSUPPORTED`, `CAPTURE_INTERRUPTED`, `STORAGE_WRITE_FAILED`, `ARTIFACT_MISSING`, `INVALID_AUDIO`, `MODEL_MISSING`, `WORKER_UNAVAILABLE`, `WORKER_PROTOCOL`, `WORKER_TIMEOUT`, `STALE_SOURCE`. Ausência de fala é um resultado `no_speech`, não um erro de pronúncia.
+Erros mínimos: `BUSY`, `DEVICE_UNAVAILABLE`, `DEVICE_FORMAT_UNSUPPORTED`, `AUDIO_TIMEOUT`, `CAPTURE_INTERRUPTED`, `STORAGE_WRITE_FAILED`, `ARTIFACT_MISSING`, `INVALID_AUDIO`, `MODEL_MISSING`, `WORKER_UNAVAILABLE`, `WORKER_PROTOCOL`, `WORKER_TIMEOUT`, `STALE_SOURCE`. Ausência de fala é um resultado `no_speech`, não um erro de pronúncia.
 
 `AppState` e `Action` ficam também em `domain.rs`. `AppState::can_start_recording(&self) -> Result<(), AppError>` verifica ocupação, mas não exige modelos prontos; `AppState::accepts_result(&self, request_id: &str, generation: u64) -> bool` protege resultados. A geração do auxiliar é interna e não vai para a interface.
 
@@ -149,7 +149,7 @@ O tipo interno `AttemptManifest` contém os campos de `Attempt` exceto `transcri
 
 Gravar metadados antes de atualizar `last-attempt.json`; só então publicar a nova resposta ativa. Se a atualização do apontador falhar, preservar a anterior e manter a nova gravação disponível para repetir a publicação. Nunca usar remove-then-rename para substituir JSON em Windows.
 
-`AttemptStore` em `storage.rs`: `new(root: PathBuf) -> Self`, `allocate() -> Result<RecordingTarget, AppError>`, `publish(capture: CapturedAudio) -> Result<Attempt, AppError>`, `restore_last() -> Result<RestoreResult, AppError>`, `append_transcript(attempt_id: &str, transcript: Transcript) -> Result<Attempt, AppError>`, `save_review(attempt_id: &str, source_id: &str, text: &str) -> Result<Review, AppError>`, `set_operation(attempt_id: &str, operation: OperationRecord) -> Result<(), AppError>`. Publicação e escrita mantêm referências antigas em caso de falha; `restore_last` recupera artefactos válidos e devolve avisos se um componente faltar. Um manifesto/apontador ilegível dá erro recuperável, sem eliminar ficheiros nem impedir nova captura.
+`AttemptStore` em `storage.rs`: `new(root: PathBuf) -> Self`, `allocate() -> Result<RecordingTarget, AppError>`, `publish(capture: CapturedAudio) -> Result<Attempt, AppError>`, `restore_last() -> Result<RestoreResult, AppError>`, `append_transcript(attempt_id: &str, transcript: Transcript) -> Result<Attempt, AppError>`, `save_review(attempt_id: &str, source_id: &str, text: &str) -> Result<Review, AppError>`, `set_operation(attempt_id: &str, operation: OperationRecord) -> Result<(), AppError>`, `set_normalized(attempt_id: &str, reference: &str) -> Result<Attempt, AppError>` (ruling R8: extensão pública usada pelo serviço para registar `normalized.wav` depois da conversão). Publicação e escrita mantêm referências antigas em caso de falha; `restore_last` recupera artefactos válidos e devolve avisos se um componente faltar. Um manifesto/apontador ilegível dá erro recuperável, sem eliminar ficheiros nem impedir nova captura.
 
 ### Áudio
 
@@ -363,14 +363,14 @@ expect(client.startRecording).not.toHaveBeenCalled(); // enquanto a decisão sob
 
 **Interfaces:** consome a aplicação integrada e o CLI `python -m audio_worker.prepare --models-dir <caminho absoluto>`. Produz instruções verificadas, medições e a matriz CA-01 a CA-15; não produz funcionalidades da fase 2.
 
-- [ ] Implementar `scripts/verify.ps1` executando, com controlo de exit codes e interrupção na primeira falha: typecheck, testes React, build Vite, cargo fmt --check, cargo clippy --all-targets -- -D warnings, testes Rust, pytest sem a marca `models` e pip check. As mensagens de sucesso dependem de todos os comandos terem terminado com saída 0.
-- [ ] Documentar preparação: `.venv` Python 3.11, dependências bloqueadas, recursos ingleses necessários, preparação explícita dos modelos, configuração pessoal fora do Git e execução `npm.cmd run tauri -- dev`. Usar caminhos com espaços no exemplo e não exigir execução a partir de um diretório implícito para resolver modelos.
-- [ ] Executar `.\scripts\verify.ps1`. Esperado: todos os checks com saída 0. Executar separadamente `.\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_offline_models.py -m models -q` com modelos preparados; um skip aqui não satisfaz o percurso real.
-- [ ] Abrir a aplicação e validar com o utilizador pelo menos três gravações: curta, com termos técnicos e problemática. Testar ouvir Kokoro real, guardar/recuperar revisão, repetir transcrição sem nova captura, remover/restaurar o dispositivo e parar/reiniciar o auxiliar. Captura pessoal acontece por ação manual do utilizador, não por um teste automático.
-- [ ] Repetir o percurso sem rede, depois da preparação, e com um recurso de voz em falta. Esperado: funcionamento offline quando preparado, erro explícito quando incompleto, sem tentativa de descarregar durante a prática. Verificar que iniciar outra gravação ou fechar não perde uma revisão.
-- [ ] Registar em `validation.md` hardware, versões, IDs/revisões dos modelos, duração do áudio, carregamento inicial, síntese e transcrição a frio e em repetição. Não incluir áudios pessoais no Git. Marcar cada CA como verificado, falhado ou pendente, com evidência; a aceitabilidade da espera depende do utilizador.
-- [ ] Opcionalmente verificar `npm.cmd run tauri -- build --no-bundle` para antecipar problemas de compilação release; não apresentar esse binário como instalador autónomo com Python incluído. O pacote final é da fase 5.
-- [ ] Atualizar a documentação de estado apenas se todos os critérios estiverem verificados, ou registar os bloqueios concretos. Commit: `docs: record phase one setup and local audio validation`.
+- [x] Implementar `scripts/verify.ps1` executando, com controlo de exit codes e interrupção na primeira falha: typecheck, testes React, build Vite, cargo fmt --check, cargo clippy --all-targets -- -D warnings, testes Rust, pytest sem a marca `models` e pip check. As mensagens de sucesso dependem de todos os comandos terem terminado com saída 0.
+- [x] Documentar preparação: `.venv` Python 3.11, dependências bloqueadas, recursos ingleses necessários, preparação explícita dos modelos, configuração pessoal fora do Git e execução `npm.cmd run tauri -- dev`. Usar caminhos com espaços no exemplo e não exigir execução a partir de um diretório implícito para resolver modelos.
+- [x] Executar `.\scripts\verify.ps1`. Esperado: todos os checks com saída 0. Executar separadamente `.\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_offline_models.py -m models -q` com modelos preparados; um skip aqui não satisfaz o percurso real.
+- [ ] Abrir a aplicação e validar com o utilizador pelo menos três gravações: curta, com termos técnicos e problemática. Testar ouvir Kokoro real, guardar/recuperar revisão, repetir transcrição sem nova captura, remover/restaurar o dispositivo e parar/reiniciar o auxiliar. Captura pessoal acontece por ação manual do utilizador, não por um teste automático. **Pendente de validação do utilizador** (a janela e a pergunta foram verificadas; as gravações reais não).
+- [ ] Repetir o percurso sem rede, depois da preparação, e com um recurso de voz em falta. Esperado: funcionamento offline quando preparado, erro explícito quando incompleto, sem tentativa de descarregar durante a prática. Verificar que iniciar outra gravação ou fechar não perde uma revisão. **Pendente na janela**; os motores e o erro de voz em falta já foram verificados por automação.
+- [x] Registar em `validation.md` hardware, versões, IDs/revisões dos modelos, duração do áudio, carregamento inicial, síntese e transcrição a frio e em repetição. Não incluir áudios pessoais no Git. Marcar cada CA como verificado, falhado ou pendente, com evidência; a aceitabilidade da espera depende do utilizador.
+- [x] Opcionalmente verificar `npm.cmd run tauri -- build --no-bundle` para antecipar problemas de compilação release; não apresentar esse binário como instalador autónomo com Python incluído. O pacote final é da fase 5.
+- [x] Atualizar a documentação de estado apenas se todos os critérios estiverem verificados, ou registar os bloqueios concretos. Commit: `docs: record phase one setup and local audio validation`.
 
 ## 5. Cobertura da spec
 

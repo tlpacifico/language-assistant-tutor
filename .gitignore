@@ -37,7 +37,7 @@ lerna-debug.log*
 # --- Rust / Cargo / Tauri -------------------------------------------------
 # O Cargo.lock é versionado: é uma aplicação, não uma biblioteca.
 target/
-gen/schemas/
+**/gen/schemas/
 *.rs.bk
 
 # --- Python auxiliar (faster-whisper, Kokoro) -----------------------------
@@ -101,6 +101,9 @@ secrets/
 *.p12
 *.jks
 *.keystore
+# Configuração pessoal do auxiliar (o exemplo versionado é audio.example.json)
+audio.json
+config/audio.json
 
 # --- Registos e temporários ----------------------------------------------
 *.log
@@ -111,4 +114,5 @@ temp/
 
 # --- Ferramentas de agentes / estado local de desenvolvimento -------------
 .opencode/
+.superpowers/
 .claude/settings.local.json

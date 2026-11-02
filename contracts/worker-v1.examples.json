@@ -1,0 +1,203 @@
+{
+  "protocolVersion": 1,
+  "description": "Exemplos verificados do protocolo linha-a-linha entre a app Tauri e o auxiliar Python (stdin/stdout). Uma mensagem JSON por linha, sem texto fora do protocolo.",
+  "requests": {
+    "health": {
+      "protocolVersion": 1,
+      "id": "req-health-1",
+      "op": "health",
+      "params": {}
+    },
+    "transcribe": {
+      "protocolVersion": 1,
+      "id": "req-transcribe-1",
+      "op": "transcribe",
+      "params": {
+        "audioPath": "C:\\Users\\Thacio Silva\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\phase1\\attempts\\8a1f4c78-2a4b-4f0e-9b6b-1e6b0f2e4d11\\normalized.wav",
+        "modelPath": "D:\\Modelos de Voz\\faster-whisper-small",
+        "device": "cpu",
+        "computeType": "int8",
+        "language": "en"
+      }
+    },
+    "synthesize": {
+      "protocolVersion": 1,
+      "id": "req-synthesize-1",
+      "op": "synthesize",
+      "params": {
+        "text": "Tell me about a time you solved a difficult problem at work.",
+        "outputPath": "C:\\Users\\Thacio Silva\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\phase1\\question-cache\\3c1f6cd1b9a2e4d7f08c5b6a4e7d9f10a2b3c4d5e6f708192a3b4c5d6e7f809.wav",
+        "voice": "af_heart",
+        "speed": 1.0
+      }
+    },
+    "shutdown": {
+      "protocolVersion": 1,
+      "id": "req-shutdown-1",
+      "op": "shutdown",
+      "params": {}
+    }
+  },
+  "responses": {
+    "healthResult": {
+      "protocolVersion": 1,
+      "id": "req-health-1",
+      "event": "result",
+      "ok": true,
+      "result": {
+        "transcription": {
+          "status": "ready",
+          "message": null
+        },
+        "synthesis": {
+          "status": "missing",
+          "message": "Falta a voz af_heart; execute a preparação offline dos modelos."
+        }
+      }
+    },
+    "progressLoading": {
+      "protocolVersion": 1,
+      "id": "req-transcribe-1",
+      "event": "progress",
+      "stage": "loading"
+    },
+    "progressProcessing": {
+      "protocolVersion": 1,
+      "id": "req-transcribe-1",
+      "event": "progress",
+      "stage": "processing"
+    },
+    "transcribeResult": {
+      "protocolVersion": 1,
+      "id": "req-transcribe-1",
+      "event": "result",
+      "ok": true,
+      "result": {
+        "status": "completed",
+        "text": "Last year I reorganised our release checklist because deploys kept failing on Fridays.",
+        "segments": [
+          {
+            "startMs": 0,
+            "endMs": 2400,
+            "text": " Last year I reorganised our release checklist"
+          },
+          {
+            "startMs": 2400,
+            "endMs": 5100,
+            "text": " because deploys kept failing on Fridays."
+          }
+        ],
+        "model": "small",
+        "language": "en",
+        "loadMs": 4200,
+        "processingMs": 3120
+      }
+    },
+    "transcribeNoSpeech": {
+      "protocolVersion": 1,
+      "id": "req-transcribe-2",
+      "event": "result",
+      "ok": true,
+      "result": {
+        "status": "no_speech",
+        "text": "",
+        "segments": [],
+        "model": "small",
+        "language": "en",
+        "loadMs": 4100,
+        "processingMs": 240
+      }
+    },
+    "synthesizeResult": {
+      "protocolVersion": 1,
+      "id": "req-synthesize-1",
+      "event": "result",
+      "ok": true,
+      "result": {
+        "audioPath": "C:\\Users\\Thacio Silva\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\phase1\\question-cache\\3c1f6cd1b9a2e4d7f08c5b6a4e7d9f10a2b3c4d5e6f708192a3b4c5d6e7f809.wav",
+        "sampleRate": 24000,
+        "durationMs": 3120,
+        "loadMs": 2400,
+        "processingMs": 1450
+      }
+    },
+    "shutdownResult": {
+      "protocolVersion": 1,
+      "id": "req-shutdown-1",
+      "event": "result",
+      "ok": true,
+      "result": {
+        "stopped": true
+      }
+    },
+    "protocolError": {
+      "protocolVersion": 1,
+      "id": "",
+      "event": "result",
+      "ok": false,
+      "error": {
+        "code": "WORKER_PROTOCOL",
+        "message": "A linha recebida não é um pedido válido do protocolo v1.",
+        "retryable": false
+      }
+    },
+    "modelMissing": {
+      "protocolVersion": 1,
+      "id": "req-transcribe-1",
+      "event": "result",
+      "ok": false,
+      "error": {
+        "code": "MODEL_MISSING",
+        "message": "Falta a pasta do modelo de transcrição em «D:\\Modelos de Voz\\faster-whisper-small». Execute a preparação offline.",
+        "retryable": false
+      }
+    }
+  },
+  "invalidRequests": [
+    {
+      "description": "Linha que não é JSON.",
+      "line": "isto não é um pedido",
+      "errorCode": "WORKER_PROTOCOL"
+    },
+    {
+      "description": "Versão de protocolo diferente de 1.",
+      "line": "{\"protocolVersion\": 2, \"id\": \"req-9\", \"op\": \"health\", \"params\": {}}",
+      "errorCode": "WORKER_PROTOCOL"
+    },
+    {
+      "description": "Identificador ausente.",
+      "line": "{\"protocolVersion\": 1, \"op\": \"health\", \"params\": {}}",
+      "errorCode": "WORKER_PROTOCOL"
+    },
+    {
+      "description": "Operação desconhecida.",
+      "line": "{\"protocolVersion\": 1, \"id\": \"req-9\", \"op\": \"translate\", \"params\": {}}",
+      "errorCode": "WORKER_PROTOCOL"
+    },
+    {
+      "description": "Parâmetros que não são um objeto.",
+      "line": "{\"protocolVersion\": 1, \"id\": \"req-9\", \"op\": \"health\", \"params\": []}",
+      "errorCode": "WORKER_PROTOCOL"
+    }
+  ],
+  "modelsManifest": {
+    "schemaVersion": 1,
+    "preparedAt": "2026-11-01T10:00:00Z",
+    "whisperDir": "D:\\Modelos de Voz\\faster-whisper-small",
+    "whisperModel": "small",
+    "kokoroConfig": "D:\\Modelos de Voz\\kokoro\\config.json",
+    "kokoroWeights": "D:\\Modelos de Voz\\kokoro\\kokoro-v1_0.pth",
+    "kokoroVoice": "D:\\Modelos de Voz\\kokoro\\voices\\af_heart.pt",
+    "revisions": {
+      "fasterWhisperSmall": "5f4b6a1cbd1a2b9a4b0b8b0f6d1e0d1e0f0a1b2c",
+      "kokoro82m": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567"
+    },
+    "resources": {
+      "spacyModel": "en_core_web_sm",
+      "spacyModelVersion": "3.8.0",
+      "espeakLibrary": "C:\\Repos\\Thacio\\language-assistant-tutor\\.venv\\Lib\\site-packages\\espeakng_loader\\espeak-ng.dll",
+      "espeakData": "C:\\Repos\\Thacio\\language-assistant-tutor\\.venv\\Lib\\site-packages\\espeakng_loader\\espeak-ng-data",
+      "espeakFallback": "misaki.espeak.EspeakFallback(en-us)"
+    }
+  }
+}
