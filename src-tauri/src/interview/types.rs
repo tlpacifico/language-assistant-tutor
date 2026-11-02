@@ -399,17 +399,23 @@ pub fn validate_question(input: QuestionInput) -> Result<QuestionInput> {
 
 /// Valida a quantidade pedida contra o total elegível.
 ///
-/// Não reduz o total nem repete perguntas: uma quantidade acima do elegível é
-/// recusada para o utilizador a ajustar.
+/// A quantidade tem de ficar entre uma e o total elegível. Não reduz o total
+/// nem repete perguntas: zero ou mais do que as elegíveis é recusado para o
+/// utilizador ajustar a quantidade, e a mensagem indica as disponíveis.
 pub fn validate_count(count: u32, eligible: usize) -> Result<()> {
-    if count == 0 {
-        return Err(invalid_input("Escolha pelo menos uma pergunta."));
+    if eligible == 0 {
+        return Err(AppError::new(
+            error_code::INSUFFICIENT_QUESTIONS,
+            "Não existem perguntas elegíveis para esta escolha. Adicione perguntas \
+             ao banco antes de iniciar a entrevista.",
+            false,
+        ));
     }
-    if count as usize > eligible {
+    if count == 0 || count as usize > eligible {
         return Err(AppError::new(
             error_code::INSUFFICIENT_QUESTIONS,
             format!(
-                "Só existem {eligible} perguntas elegíveis para as {count} pedidas. Ajuste a quantidade."
+                "Só existem {eligible} perguntas elegíveis. Escolha uma quantidade entre 1 e {eligible}."
             ),
             false,
         ));

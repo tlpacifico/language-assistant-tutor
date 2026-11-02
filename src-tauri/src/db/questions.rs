@@ -294,13 +294,13 @@ fn question_from_row(row: &Row<'_>) -> Result<Question> {
     })
 }
 
-fn parse_category(value: &str) -> Option<Category> {
+pub(super) fn parse_category(value: &str) -> Option<Category> {
     Category::ALL
         .into_iter()
         .find(|category| category.as_str() == value)
 }
 
-fn json_array(values: &[String]) -> Result<String> {
+pub(super) fn json_array(values: &[String]) -> Result<String> {
     serde_json::to_string(values).map_err(|error| {
         AppError::new(
             error_code::STORAGE_WRITE_FAILED,
@@ -310,7 +310,7 @@ fn json_array(values: &[String]) -> Result<String> {
     })
 }
 
-fn json_list(value: &str, what: &str) -> Result<Vec<String>> {
+pub(super) fn json_list(value: &str, what: &str) -> Result<Vec<String>> {
     serde_json::from_str(value)
         .map_err(|error| read_corrupt(&format!("as {what} guardadas não são válidas ({error})")))
 }
@@ -393,7 +393,7 @@ fn parse_seed(json: &str) -> Result<Vec<SeedQuestion>> {
 /// A fase 1 não traz uma biblioteca de datas; esta é a mesma conversão civil
 /// privada de `service::utc_now`, que este módulo não pode reutilizar sem
 /// depender do serviço.
-fn utc_now() -> String {
+pub(super) fn utc_now() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();

@@ -171,7 +171,13 @@ fn count_validation_rejects_zero_and_more_than_eligible() {
     assert!(validate_count(20, 20).is_ok());
 
     let zero = validate_count(0, 20).expect_err("zero perguntas não é aceite");
-    assert_eq!(zero.code, error_code::INVALID_INPUT);
+    assert_eq!(zero.code, error_code::INSUFFICIENT_QUESTIONS);
+    assert!(!zero.retryable);
+    assert!(
+        zero.message.contains("20"),
+        "a mensagem deve indicar as perguntas disponíveis: {}",
+        zero.message
+    );
 
     let excess = validate_count(4, 3).expect_err("não pode exceder as elegíveis");
     assert_eq!(excess.code, error_code::INSUFFICIENT_QUESTIONS);
@@ -179,5 +185,13 @@ fn count_validation_rejects_zero_and_more_than_eligible() {
         excess.message.contains('3'),
         "a mensagem deve indicar as perguntas disponíveis: {}",
         excess.message
+    );
+
+    let empty = validate_count(1, 0).expect_err("sem perguntas elegíveis nada inicia");
+    assert_eq!(empty.code, error_code::INSUFFICIENT_QUESTIONS);
+    assert!(
+        empty.message.contains("Não existem"),
+        "a mensagem deve explicar a ausência de perguntas: {}",
+        empty.message
     );
 }
