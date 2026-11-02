@@ -107,7 +107,7 @@ de cada caminho.
 `.\scripts\verify.ps1` executa typecheck, testes React, build Vite,
 `cargo fmt --check`, `clippy -D warnings`, testes Rust, pytest sem a marca
 `models` e `pip check`. Resultado real da verificação da fase 2: 8/8 checks com
-saída 0 (151 testes Rust, 50 Vitest, 36 pytest sem `models`); a duração depende
+saída 0 (151 testes Rust, 53 Vitest, 36 pytest sem `models`); a duração depende
 da cache de compilação e do Vitest a frio. O teste com a marca
 `models` é executado à parte, porque exige pesos preparados e um manifesto
 indicado por `LANGUAGE_TUTOR_MODELS_MANIFEST`; nesta máquina deu `2 passed`,
@@ -163,7 +163,7 @@ sobre a espera (CA-14). Ver a matriz honesta em
 
 A implementação da **fase 2** (entrevista guiada) está completa e a verificação
 automática está verde: `.\scripts\verify.ps1` com 8/8 checks, 151 testes Rust,
-50 testes Vitest e 36 testes Python sem a marca `models`, mais 2 testes reais
+53 testes Vitest e 36 testes Python sem a marca `models`, mais 2 testes reais
 dos motores com pesos preparados; build release sem instalador, arranque e
 fecho do binário com código 0. A fase 2 **não** está concluída nem aceite: falta
 a validação manual do utilizador (sessão real de três perguntas, audição,

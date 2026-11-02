@@ -147,7 +147,7 @@ Executa, pela ordem, e pára no primeiro erro: `npm.cmd run typecheck`,
 `npm.cmd test`, `npm.cmd run build`, `cargo fmt --check`,
 `cargo clippy --all-targets -- -D warnings`, `cargo test`, `pytest` sem a marca
 `models` e `pip check`. Resultado real desta verificação: **8/8 checks com saída
-0** (151 testes Rust, 50 testes Vitest em 6 ficheiros, 36 testes
+0** (151 testes Rust, 53 testes Vitest em 6 ficheiros, 36 testes
 Python com 2 deselecionados, `pip check` limpo). O detalhe e a saída estão em
 [validation.md](validation.md).
 
