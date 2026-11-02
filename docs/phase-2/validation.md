@@ -145,6 +145,35 @@ seed: [('questions-v1',)]
 Repetir o arranque manteve 20 perguntas e uma única marca de seed — o banco
 inicial não foi duplicado nem reposto por cima de alterações.
 
+### 2.5 Reexecução após a correção dos achados da revisão do ramo
+
+A revisão final do ramo encontrou três problemas importantes e duas
+inconsistências documentais; esta secção registra a reexecução depois das
+correções. Saída real (excertos):
+
+```text
+[1/8] TypeScript (tsc --noEmit)                 OK (1,3 s)
+[2/8] Testes React (Vitest)                     OK (19,3 s)
+      Tests  50 passed (50)
+[3/8] Build do frontend (typecheck + Vite)      OK (4,7 s)
+[4/8] Formatação Rust (cargo fmt --check)       OK (1,5 s)
+[5/8] Lint Rust (cargo clippy -D warnings)      OK (5,9 s)
+[6/8] Testes Rust (cargo test)                  OK (8,6 s)
+[7/8] Testes Python (pytest sem a marca models) OK (3,2 s)
+[8/8] Dependências Python (pip check)           OK (1,5 s)
+
+Verificação concluída: 8/8 checks com saída 0 em 46,1 s.
+```
+
+Suítes Rust desta reexecução (151 testes, 0 falhas): `lib` 20, `answers` 18,
+`artifacts` 10, `audio` 11, `database` 7, `domain` 8, `interview_contracts` 4,
+`legacy` 4, `questions` 6, `service` 36, `sessions` 8, `storage` 12, `worker` 7.
+Os dois testes novos de `answers` cobrem a operação registada em `running` e
+encerrada com tempos/erro; os dois novos de `service` cobrem a recuperação de
+uma operação interrompida no arranque e o encerramento de uma transcrição com os
+seus tempos. As tabelas da secção 2 descrevem a execução anterior; esta
+reexecução é a evidência mais recente.
+
 ## 3. Matriz de critérios
 
 Ligação às tarefas do [plano técnico](../superpowers/plans/2026-11-02-phase-2-guided-interview-implementation.md)
@@ -162,11 +191,11 @@ e aos testes realmente executados. Os nomes de teste são os das suítes Rust
 | F2-07 | Guardar não confirma; confirmar fixa exatamente o texto visto; falha, versão antiga ou pedido repetido não cria confirmação indevida. | 5, 8 | **verificado** (automação) | `answers::save_does_not_confirm`, `confirmation_freezes_exact_seen_text`, `stale_review_cannot_confirm`, `same_request_with_other_text_is_rejected`, `confirmation_failure_rolls_back_review_and_receipt`; Vitest `confirmation_locks_exact_editor_text`, `confirm_failure_preserves_text`, `save_does_not_enable_next_until_confirmation`. |
 | F2-08 | Não é possível avançar sem confirmar, saltar por duplo clique ou terminar antes de todas as confirmações; repetir avanço é seguro. | 5, 8 | **verificado** (automação) | `answers::advance_requires_confirmation`, `replayed_advance_does_not_skip`, `last_advance_completes_only_full_session`; `service::confirmation_and_advance_are_refused_during_capture`, `finishing_the_last_question_completes_the_session`; Vitest `double_next_click_sends_one_request`, `last_question_uses_finish_label`. |
 | F2-09 | Nova captura antes da confirmação preserva anteriores; falha da nova captura não perde a seleção válida. Resposta confirmada não é reaberta. | 4, 6, 8 | **verificado** (automação) | `artifacts::new_capture_failure_keeps_previous_selection`, `older_publication_cannot_replace_newer_selection`; `answers::confirmed_question_keeps_selection_and_refuses_new_captures`; `service::failed_stop_keeps_previous_recording`, `confirmed_question_rejects_capture_and_transcription`; Vitest `prior_recordings_remain_readable`. |
-| F2-10 | Fecho e navegação com alterações resolvem guardar/descartar/cancelar e não perdem edição feita durante uma escrita. | 8 | **verificado** (automação) | `NavigationGuard.test.tsx`: `save_and_leave_keeps_newer_edit`, `failed_save_does_not_destroy_window`, `cancel_keeps_editor`, `discard_requires_explicit_choice`, `capture_blocks_navigation`; `App.test.tsx`: resolução da revisão antes de fechar, finalização da captura antes de destruir, janela mantida quando o fecho falha, texto escrito durante a preparação do fecho, bloqueio de mudança de página durante captura/finalização. A experiência real de fecho com uma revisão por guardar continua na secção 4, item 10. |
-| F2-11 | Reiniciar durante transcrição, após guardar revisão, após confirmar e após avançar recupera a etapa persistida, sem duplicações. | 4, 5, 6, 9 | **parcial** | Reabertura real da base em testes: `answers::advance_after_reopen_keeps_the_confirmation_pending_to_advance`, `sessions::old_start_replay_after_completion_does_not_create_session`, `artifacts::reopen_reconciles_once`, `finalized_audio_survives_database_failure`, `storage::restore_interrupted_job`; Vitest `resume_keeps_confirmed_question_awaiting_next` e o percurso integrado `three_question_session_can_resume_and_finish`. Falta reiniciar a aplicação real a meio de uma sessão (secção 4, item 4). |
-| F2-12 | Falhas de escrita/publicação permitem recuperar sem nova gravação; referências em falta não apagam textos nem bloqueiam outros itens. | 4 | **verificado** (automação) | `artifacts::finalized_audio_survives_database_failure`, `part_file_is_not_a_saved_answer`, `missing_audio_keeps_text`, `locked_original_stays_publishable_for_the_next_start`, `corrupt_original_is_interrupted_not_retried`, `paths_cannot_escape_artifact_root`; `service::save_publication_can_retry`; `storage::failed_publish_preserves_last`; Vitest `missing_audio_keeps_confirmed_text`. |
+| F2-10 | Fecho e navegação com alterações resolvem guardar/descartar/cancelar e não perdem edição feita durante uma escrita. | 8 | **parcial** | A decisão cobre a revisão da resposta e o rascunho do banco de perguntas, incluindo `beginEdit`/`beginNew`. `NavigationGuard.test.tsx`: `save_and_leave_keeps_newer_edit`, `failed_save_does_not_destroy_window`, `cancel_keeps_editor`, `discard_requires_explicit_choice`, `capture_blocks_navigation`; `App.test.tsx`: resolução da revisão antes de fechar, finalização da captura antes de destruir, janela mantida quando o fecho falha, texto escrito durante a preparação do fecho, bloqueio de mudança de página durante captura/finalização, `pede decisão antes de sair do banco com um rascunho por guardar`, `guarda o rascunho do banco antes de mudar de página`, `não troca de pergunta no editor sem resolver o rascunho atual`, `não fecha com um rascunho do banco por guardar quando a escrita falha`. Falta a experiência real de fecho e navegação com alterações por guardar, incluindo uma escrita falhada que mantenha a janela aberta (secção 4, item 10). |
+| F2-11 | Reiniciar durante transcrição, após guardar revisão, após confirmar e após avançar recupera a etapa persistida, sem duplicações. | 4, 5, 6, 9 | **parcial** | Reabertura real da base em testes: `answers::advance_after_reopen_keeps_the_confirmation_pending_to_advance`, `sessions::old_start_replay_after_completion_does_not_create_session`, `artifacts::reopen_reconciles_once`, `finalized_audio_survives_database_failure`, `storage::restore_interrupted_job`; `service::interrupted_operation_is_recovered_on_the_next_start` (uma operação deixada em `running` pelo processo anterior fica `interrupted` e é reportada); Vitest `resume_keeps_confirmed_question_awaiting_next` e o percurso integrado `three_question_session_can_resume_and_finish`. Falta reiniciar a aplicação real a meio de uma sessão (secção 4, item 4). |
+| F2-12 | Falhas de escrita/publicação permitem recuperar sem nova gravação; referências em falta não apagam textos nem bloqueiam outros itens. | 4 | **verificado** (automação) | `artifacts::finalized_audio_survives_database_failure`, `part_file_is_not_a_saved_answer`, `missing_audio_keeps_text`, `locked_original_stays_publishable_for_the_next_start`, `corrupt_original_is_interrupted_not_retried`, `paths_cannot_escape_artifact_root`; `service::save_publication_can_retry` (a fotografia expõe `pendingRecordingId` e a reserva na pergunta atual, com a repetição alcançável); `storage::failed_publish_preserves_last`; Vitest `failed_publication_keeps_the_take_retryable`, `missing_audio_keeps_confirmed_text`. |
 | F2-13 | Pedidos repetidos não bloqueiam o serviço; eventos e resultados antigos não afetam gravações novas ou confirmações. | 5, 6 | **verificado** (automação) | `service::repeated_start_returns_busy_instead_of_blocking`, `late_interruption_from_an_older_capture_is_ignored`, `timed_out_stop_recovers_capture`, `late_worker_result_cannot_target_next_question`, `history_read_does_not_retarget_model_job`, `playback_is_allowed_while_transcribing`, `close_finalizes_capture_and_ignores_late_results`; `answers::late_transcript_cannot_change_confirmation`; Vitest `old_snapshot_does_not_erase_draft`. |
-| F2-14 | Histórico permite consultar sessões e ouvir originais; treinos da fase 1 continuam consultáveis sem alteração dos seus ficheiros. | 9, 10 | **parcial** | Leitura e preservação: `legacy::legacy_list_ignores_last_pointer`, `corrupt_legacy_item_does_not_hide_valid_items`, `legacy_read_changes_no_bytes`, `legacy_rejects_path_escape`; `service::legacy_attempt_audio_is_read_only`; `sessions::list_sessions_reports_completed_sessions_and_order`; Vitest `History.test.tsx` (4 testes) e `history_separates_raw_review_and_confirmed`. Falta ouvir os originais pela janela com hardware real (secção 4, itens 2 e 5); a reprodução de áudio real continua também pendente na fase 1 (CA-02/CA-05). |
+| F2-14 | Histórico permite consultar sessões e ouvir originais; treinos da fase 1 continuam consultáveis sem alteração dos seus ficheiros. | 9, 10 | **parcial** | Leitura e preservação: `legacy::legacy_list_ignores_last_pointer`, `corrupt_legacy_item_does_not_hide_valid_items`, `legacy_read_changes_no_bytes`, `legacy_rejects_path_escape`; `service::legacy_attempt_audio_is_read_only`; `sessions::list_sessions_reports_completed_sessions_and_order`; Vitest `History.test.tsx` (5 testes) e `history_separates_raw_review_and_confirmed`. Falta ouvir os originais pela janela com hardware real (secção 4, itens 2 e 5); a reprodução de áudio real continua também pendente na fase 1 (CA-02/CA-05). |
 | F2-15 | Migração falhada preserva a base; versão futura não é escrita; apenas uma sessão permanece em curso. | 1, 3 | **verificado** (automação) | `database::failed_migration_rolls_back`, `future_version_is_not_modified`, `fresh_database_has_version_one`, `only_one_session_can_be_in_progress`; `sessions::only_one_session_can_be_active`, `insufficient_category_creates_nothing`; índice parcial `one_active_session` no esquema. |
 | F2-16 | Com modelos preparados, a sessão completa funciona offline, sem chamadas à IA, dispensas fictícias ou feedback inventado. | 6, 9, 10 | **parcial** | Código sem chamadas de IA: 0 ocorrências de `opencode`, `openai`, `api.deepseek`, `https://api` em Rust/TS/Python; o cliente só usa comandos `interview_*` e o evento `interview://snapshot`; `last_advance_completes_only_full_session` fixa `mode = local_v2` sem feedback pendente; o histórico mostra um resumo sem avaliação. Os motores foram reexecutados com os pesos preparados (2 passed). Falta repetir uma sessão completa pela janela com a rede desligada (secção 4, item 8); essa repetição também continua pendente para a fase 1 (CA-13). |
 
@@ -254,6 +283,17 @@ humanas nem audição, e não alteram nenhum destes estados.
    interrompida, em vez de a repetirem indefinidamente. Um ficheiro bloqueado
    por antivírus continua publicável no arranque seguinte
    (`locked_original_stays_publishable_for_the_next_start`).
+6. **R8: a única escrita em `phase1/` é a cache de síntese**
+   (`phase1/question-cache/`), prevista no plano técnico. Os treinos da fase 1
+   continuam a ser apenas de leitura; a cache é partilhada porque a chave inclui
+   o texto, a voz e a velocidade. «No writes to `phase1/`» significa, portanto,
+   «nenhuma escrita nos treinos», não «nenhuma escrita em toda a árvore».
+7. **As operações do auxiliar são registadas em `running` antes do pedido e
+   encerradas com o resultado.** Uma transcrição fecha a linha na mesma
+   transação do texto; uma síntese fecha-a como `completed`; uma falha guarda o
+   erro; um fecho ou encerramento abrupto deixa a linha para a reconciliação
+   marcar `interrupted`. Assim `RecoveryReport.interruptedOperations` deixa de
+   ser sempre vazio.
 
 ## 7. Limites e riscos registados
 

@@ -10,7 +10,7 @@
 
 **Spec:** [Fase 2 — Entrevista guiada](../specs/2026-11-02-phase-2-guided-interview-design.md). Ler também [AGENTS.md](../../../AGENTS.md), [stack](../../tech-stack.md), [fases](2026-11-01-star-interview-tutor-phases.md) e [validação da fase 1](../../phase-1/validation.md).
 
-**Estado:** tarefas 1 a 9 executadas nesta máquina (2026-11-02), com um commit por tarefa; a tarefa 10 está parcialmente executada — matriz, documentação e verificações automáticas feitas, validação manual do utilizador pendente. As caixas das tarefas 1 a 9 registam a execução efetiva e os commits correspondentes; a evidência final é a suíte atual (147 testes Rust, 43 Vitest, 36 pytest sem `models`). As observações intermédias de «confirmar a falha» não foram repetidas na tarefa 10. A fase 2 **não** está concluída: os resultados reais desta execução estão em [docs/phase-2/validation.md](../../phase-2/validation.md).
+**Estado:** tarefas 1 a 9 executadas nesta máquina (2026-11-02), com um commit por tarefa; a tarefa 10 está parcialmente executada — matriz, documentação e verificações automáticas feitas, validação manual do utilizador pendente. As caixas das tarefas 1 a 9 registam a execução efetiva e os commits correspondentes; a evidência final é a suíte atual (151 testes Rust, 50 Vitest, 36 pytest sem `models`), reexecutada após a correção dos três achados importantes da revisão do ramo. As observações intermédias de «confirmar a falha» não foram repetidas na tarefa 10. A fase 2 **não** está concluída: os resultados reais desta execução estão em [docs/phase-2/validation.md](../../phase-2/validation.md).
 
 ## Global Constraints
 
@@ -73,6 +73,14 @@ recusar versão superior a 1. Ativar `foreign_keys=ON`, `busy_timeout=3000` ms e
 `synchronous=FULL`; manter journal `DELETE` nesta fase. Migrar versão 0→1 e
 inserir o banco inicial numa transação; atualizar `user_version` apenas no fim.
 Uma exceção implica rollback. Não recuperar erros por apagar/recriar a base.
+
+**Derrogação registada (R1).** A implementação separa a migração 001 — na sua
+própria transação, que só grava `user_version = 1` no fim — do banco inicial,
+que corre depois numa segunda transação idempotente em `ensure_question_seed`
+(marca `questions-v1` em `content_seeds`). A separação evita repetir a migração
+quando o seed falha e mantém cada falha reversível na sua transação; o banco
+inicial nunca é reposto sobre edições porque a marca existe. `docs/phase-2/setup.md`
+regista este comportamento e não o descreve como uma única transação.
 
 ### Ficheiros locais
 

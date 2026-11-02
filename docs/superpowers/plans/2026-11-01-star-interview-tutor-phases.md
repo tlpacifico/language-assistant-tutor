@@ -69,7 +69,7 @@ O [desenho aprovado do MVP](../specs/2026-11-01-star-interview-tutor-design.md) 
 
 **Plano técnico:** [Implementação da fase 2](2026-11-02-phase-2-guided-interview-implementation.md), com as tarefas 1 a 9 executadas e a tarefa 10 parcial (falta a validação manual).
 
-**Estado:** implementação completa e verificada automaticamente em 2026-11-02. `.\scripts\verify.ps1` deu 8/8 checks (147 testes Rust, 43 Vitest, 36 pytest sem `models`), o teste real `-m models` deu `2 passed`, o build release `--no-bundle` e o arranque/fecho do binário terminaram com código 0. A matriz F2-01 a F2-16 e a evidência estão em [docs/phase-2/validation.md](../../phase-2/validation.md); os critérios manuais continuam pendentes e não são dados como concluídos. A fase 3 **não** foi iniciada.
+**Estado:** implementação completa e verificada automaticamente em 2026-11-02. `.\scripts\verify.ps1` deu 8/8 checks (151 testes Rust, 50 Vitest, 36 pytest sem `models`), o teste real `-m models` deu `2 passed`, o build release `--no-bundle` e o arranque/fecho do binário terminaram com código 0. A matriz F2-01 a F2-16 e a evidência estão em [docs/phase-2/validation.md](../../phase-2/validation.md); os critérios manuais continuam pendentes e não são dados como concluídos. A fase 3 **não** foi iniciada.
 
 ### Entregas
 

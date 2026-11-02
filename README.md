@@ -107,8 +107,8 @@ de cada caminho.
 `.\scripts\verify.ps1` executa typecheck, testes React, build Vite,
 `cargo fmt --check`, `clippy -D warnings`, testes Rust, pytest sem a marca
 `models` e `pip check`. Resultado real da verificação da fase 2: 8/8 checks com
-saída 0 em 18,5 s (147 testes Rust, 43 Vitest, 36 pytest sem `models`); a
-duração depende da cache de compilação e do Vitest a frio. O teste com a marca
+saída 0 (151 testes Rust, 50 Vitest, 36 pytest sem `models`); a duração depende
+da cache de compilação e do Vitest a frio. O teste com a marca
 `models` é executado à parte, porque exige pesos preparados e um manifesto
 indicado por `LANGUAGE_TUTOR_MODELS_MANIFEST`; nesta máquina deu `2 passed`,
 não skip.
@@ -131,7 +131,7 @@ src/features/navigation/      Decisão guardar/descartar/cancelar (navegar e fec
 src/features/history/         Histórico de sessões e treinos da fase 1
 src/features/practice/        practice.css partilhado pela interface nova
 src-tauri/src/                Domínio, SQLite, artefactos, áudio, worker, serviço, comandos
-src-tauri/tests/              147 testes de domínio, base, artefactos, áudio, worker, sessões, serviço
+src-tauri/tests/              151 testes de domínio, base, artefactos, áudio, worker, sessões, serviço
 contracts/                    Exemplos partilhados dos contratos v1 e v2
 config/audio.example.json     Configuração pessoal documentada (não versionar a real)
 audio-worker/                 Auxiliar Python (faster-whisper + Kokoro)
@@ -162,8 +162,8 @@ sobre a espera (CA-14). Ver a matriz honesta em
 [`docs/phase-1/validation.md`](docs/phase-1/validation.md).
 
 A implementação da **fase 2** (entrevista guiada) está completa e a verificação
-automática está verde: `.\scripts\verify.ps1` com 8/8 checks, 147 testes Rust,
-43 testes Vitest e 36 testes Python sem a marca `models`, mais 2 testes reais
+automática está verde: `.\scripts\verify.ps1` com 8/8 checks, 151 testes Rust,
+50 testes Vitest e 36 testes Python sem a marca `models`, mais 2 testes reais
 dos motores com pesos preparados; build release sem instalador, arranque e
 fecho do binário com código 0. A fase 2 **não** está concluída nem aceite: falta
 a validação manual do utilizador (sessão real de três perguntas, audição,

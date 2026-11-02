@@ -327,10 +327,10 @@ publicação de áudio, confirmação e avanço. Preservar a regressão da fase 
 Os critérios seguintes continuam a ser os de aceitação. Em 2026-11-02 a
 implementação e a verificação automática foram registadas em
 [docs/phase-2/validation.md](../../phase-2/validation.md): F2-01, F2-02, F2-04,
-F2-06, F2-07, F2-08, F2-09, F2-10, F2-12, F2-13 e F2-15 têm evidência
-automatizada; F2-03, F2-05, F2-11, F2-14 e F2-16 têm evidência parcial e
-dependem da validação manual. As caixas abaixo só são marcadas quando o critério
-estiver demonstrado, incluindo a validação manual.
+F2-06, F2-07, F2-08, F2-09, F2-12, F2-13 e F2-15 têm evidência automatizada;
+F2-03, F2-05, F2-10, F2-11, F2-14 e F2-16 têm evidência parcial e dependem da
+validação manual. As caixas abaixo só são marcadas quando o critério estiver
+demonstrado, incluindo a validação manual.
 
 - [ ] F2-01: Banco inicial contém 20 perguntas nas seis categorias; repetir o arranque não duplica nem repõe edições.
 - [ ] F2-02: Adicionar e editar texto, categoria, competências e critérios persiste após reinício, com validação dos campos obrigatórios.

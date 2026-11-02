@@ -47,9 +47,9 @@ para a mesma pasta em `%APPDATA%`:
       original.partial.wav   # captura ainda não finalizada
       original.wav           # WAV finalizado; nunca sobrescrito
       normalized.wav         # derivado de 16 kHz, quando necessário
-  phase1\                    # preservado, apenas leitura na aplicação nova
+  phase1\                    # treinos preservados; só leitura, exceto a cache
       attempts\...           # treinos e revisões da fase 1
-      question-cache\...     # cache de síntese partilhada
+      question-cache\...     # cache de síntese partilhada (escrita prevista, R8)
 ```
 
 - **`tutor.sqlite3`** guarda o banco de perguntas, as cópias fixas de cada
@@ -61,10 +61,13 @@ para a mesma pasta em `%APPDATA%`:
   identificadores gerados no núcleo; a interface nunca envia caminhos. Só
   `original.wav` finalizado é publicado como resposta; `original.partial.wav`
   nunca é apresentado como uma resposta válida.
-- **`phase1\`** mantém o formato JSON anterior. A aplicação nova só lê: lista
-  treinos a partir das pastas de tentativas (não só de `last-attempt.json`),
-  abre originais, transcrições e revisões, e não cria sessões, confirmações ou
-  categorias para esses dados.
+- **`phase1\`** mantém o formato JSON anterior. A aplicação nova só lê os
+  treinos: lista-os a partir das pastas de tentativas (não só de
+  `last-attempt.json`), abre originais, transcrições e revisões, e não cria
+  sessões, confirmações ou categorias para esses dados. A única escrita em
+  `phase1\` é a cache de síntese partilhada em `phase1\question-cache\`, prevista
+  no plano técnico (derrogação R8): a chave inclui texto, voz e velocidade, pelo
+  que a cache não reutiliza áudio de outra pergunta.
 - **Modelos e `.venv`** continuam fora da pasta de dados e fora do repositório
   (ver [fase 1](../phase-1/setup.md), secções 2 e 3).
 - **Nada disto é versionado.** `.gitignore` continua a excluir `.venv/`,
@@ -73,10 +76,14 @@ para a mesma pasta em `%APPDATA%`:
 
 No primeiro arranque a aplicação cria `phase1\` e `tutor.sqlite3` (migração 001
 mais o banco inicial). A pasta `sessions\` só aparece na primeira gravação, ao
-reservar o diretório do original. A migração e o seed correm numa única
-transação; uma falha não apaga nem recria a base existente. Nesta máquina, o
-primeiro arranque da versão da fase 2 criou `tutor.sqlite3` com 135 168 bytes,
-`user_version = 1` e 20 perguntas (distribuição 4/3/3/4/3/3), sem sessões.
+reservar o diretório do original. A migração 001 (com o `user_version = 1`)
+corre na sua própria transação e o banco inicial de perguntas corre depois numa
+segunda transação idempotente, marcada por `questions-v1`: não são uma única
+transação (ver a derrogação registada no plano técnico). Uma falha em qualquer
+das duas reverte apenas a sua transação e não apaga nem recria a base
+existente. Nesta máquina, o primeiro arranque da versão da fase 2 criou
+`tutor.sqlite3` com 135 168 bytes, `user_version = 1` e 20 perguntas
+(distribuição 4/3/3/4/3/3), sem sessões.
 
 ## 3. Instalar a partir de um checkout limpo
 
@@ -140,7 +147,7 @@ Executa, pela ordem, e pára no primeiro erro: `npm.cmd run typecheck`,
 `npm.cmd test`, `npm.cmd run build`, `cargo fmt --check`,
 `cargo clippy --all-targets -- -D warnings`, `cargo test`, `pytest` sem a marca
 `models` e `pip check`. Resultado real desta verificação: **8/8 checks com saída
-0 em 18,5 s** (147 testes Rust, 43 testes Vitest em 6 ficheiros, 36 testes
+0** (151 testes Rust, 50 testes Vitest em 6 ficheiros, 36 testes
 Python com 2 deselecionados, `pip check` limpo). O detalhe e a saída estão em
 [validation.md](validation.md).
 
