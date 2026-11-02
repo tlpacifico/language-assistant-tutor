@@ -1,9 +1,15 @@
-//! Contratos de domínio da fase 1.
+//! Contratos de domínio partilhados.
 //!
 //! Este módulo não depende de hardware, de ficheiros ou do processo auxiliar.
 //! Os tipos serializados espelham `src/lib/contracts.ts`: JSON em camelCase,
 //! enums em snake_case, identificadores UUID em texto, datas UTC em RFC3339 e
 //! durações inteiras em milissegundos.
+//!
+//! `Attempt`, `Review`, `Transcript` e `RestoreResult` descrevem os treinos da
+//! fase 1, cuja árvore `phase1/` continua a ser lida em modo de consulta.
+//! `AppState`, `AppSnapshot` e `ModelJob` são a fotografia da fase 1, conservada
+//! para os testes do protocolo do auxiliar; a entrevista guiada observa
+//! `interview::InterviewSnapshot`.
 
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +35,15 @@ pub mod error_code {
     pub const WORKER_PROTOCOL: &str = "WORKER_PROTOCOL";
     pub const WORKER_TIMEOUT: &str = "WORKER_TIMEOUT";
     pub const STALE_SOURCE: &str = "STALE_SOURCE";
+
+    // Erros da fase 2 (entrevistas guiadas e SQLite).
+    pub const INVALID_INPUT: &str = "INVALID_INPUT";
+    pub const INSUFFICIENT_QUESTIONS: &str = "INSUFFICIENT_QUESTIONS";
+    pub const ACTIVE_SESSION_EXISTS: &str = "ACTIVE_SESSION_EXISTS";
+    pub const ANSWER_CONFIRMED: &str = "ANSWER_CONFIRMED";
+    pub const ANSWER_REQUIRED: &str = "ANSWER_REQUIRED";
+    pub const DATABASE_UNAVAILABLE: &str = "DATABASE_UNAVAILABLE";
+    pub const DATABASE_VERSION_UNSUPPORTED: &str = "DATABASE_VERSION_UNSUPPORTED";
 }
 
 /// Erro com código estável, mensagem para o utilizador e indicação de repetição.
@@ -254,32 +269,6 @@ pub struct AppSnapshot {
 pub struct RestoreResult {
     pub attempt: Option<Attempt>,
     pub warnings: Vec<AppError>,
-}
-
-/// Intenção aplicada pela coordenação serial.
-///
-/// Espelha os comandos da secção 3 do plano; a tarefa 6 liga cada variante ao
-/// serviço correspondente.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Action {
-    RefreshAvailability,
-    StartRecording,
-    StopRecording,
-    RetrySaveRecording,
-    TranscribeResponse {
-        attempt_id: String,
-    },
-    PlayAudio {
-        target: PlaybackTarget,
-    },
-    StopAudio,
-    SaveReview {
-        attempt_id: String,
-        source_id: String,
-        text: String,
-    },
-    RestartWorker,
-    PrepareClose,
 }
 
 /// Estado da entrevista. A geração do auxiliar é interna e não serializa.

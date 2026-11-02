@@ -17,7 +17,7 @@ O objetivo desta divisão é manter uma interface web, concentrar a lógica e os
 | Transcrição | faster-whisper | Local, num processo Python auxiliar. |
 | Síntese de voz | Kokoro-82M | Local, no processo Python auxiliar. |
 | Seguimentos e avaliação | DeepSeek Flash via OpenCode | Nuvem; recebe texto confirmado e critérios. |
-| Dados estruturados | SQLite | Local; perguntas, histórias, sessões, respostas e avaliações. |
+| Dados estruturados | SQLite (`rusqlite`, SQLite incluído) | Local; banco de perguntas, cópias das sessões, respostas, revisões e confirmações das fases novas. |
 | Gravações e derivados | Ficheiros de áudio | Pasta de dados local gerida pela aplicação. |
 | Chave da API | Armazenamento protegido do sistema operativo | Acesso pelo núcleo, fora do conteúdo do SQLite e do frontend. |
 
@@ -84,7 +84,9 @@ O registo de consumo inclui pedidos de seguimento, relatório, reformulação e 
 
 ## Persistência e recuperação
 
-- SQLite guarda conteúdos, relações, estados de operações e referências aos áudios.
+- SQLite é a autoridade dos dados das sessões novas da fase 2 (banco de perguntas, cópias fixas das perguntas, posição e estado da sessão, gravações, transcrições automáticas, revisões append-only, confirmações imutáveis, operações e recibos de comandos). A ligação é feita em Rust com `rusqlite` e a funcionalidade `bundled`, que compila o SQLite incluído na biblioteca e não exige SQLite instalado no sistema. Uma única `Connection` protegida por `Arc<Mutex<…>>`; as operações síncronas correm em `spawn_blocking`, fora da thread da interface, e o guard nunca atravessa um `await`. Não há ORM, pool nem acesso SQL a partir do frontend.
+- Os ficheiros JSON da fase 1 (`phase1/attempts/…`) deixam de ser escritos pela aplicação nova e são conservados apenas para leitura e consulta dos treinos anteriores. Não há duas autoridades para as mesmas sessões: os dados novos vivem exclusivamente em `tutor.sqlite3` e nos ficheiros de áudio.
+- O esquema é versionado (`PRAGMA user_version`) e migrado numa transação; uma versão futura é recusada sem escrita e uma falha não apaga nem recria a base. As restrições e triggers impedem reescrever transcrições, revisões e confirmações, e um índice parcial garante no máximo uma sessão em curso.
 - A pasta de dados da aplicação guarda gravações e derivados; o caminho concreto é resolvido pelo sistema operativo.
 - Guardar áudio e texto antes de chamadas externas.
 - Não aplicar respostas atrasadas a outra versão nem duplicar transições ao repetir pedidos.
@@ -94,15 +96,16 @@ O registo de consumo inclui pedidos de seguimento, relatório, reformulação e 
 
 ## Escolhas ainda por fechar
 
-- Bibliotecas de captura, reprodução, reamostragem e acesso a SQLite em Rust.
 - Integração concreta com o armazenamento protegido de credenciais.
 - Versões finais das dependências, modelo de transcrição e voz do Kokoro.
 - Forma de empacotar o processo Python, os seus componentes nativos e os instaladores.
 - Limites de duração/texto e prazos dos pedidos, sem truncamento silencioso.
 
-As escolhas de áudio da fase 1 estão especificadas no [plano técnico](superpowers/plans/2026-11-01-phase-1-local-audio-implementation.md): CPAL, Rodio, Hound, Rubato, atomicwrites e Python 3.11 com voz `af_heart`. A compatibilidade do conjunto será validada na implementação; SQLite, credenciais e empacotamento final permanecem para as fases correspondentes. Não há ainda requisitos mínimos de hardware medidos nem comandos de instalação, build e testes implementados.
+As escolhas de áudio da fase 1 estão implementadas e verificadas: CPAL, Rodio, Hound, Rubato, atomicwrites e Python 3.11 com a voz `af_heart` (detalhe em [docs/phase-1/setup.md](phase-1/setup.md)). O acesso a SQLite foi decidido na fase 2 (`rusqlite` com `bundled`) e compila no build release desta máquina. Credenciais, empacotamento final e limites finais permanecem para as fases correspondentes.
 
-A [spec da fase 1](superpowers/specs/2026-11-01-phase-1-local-audio-design.md) define o comportamento da primeira integração de áudio e a persistência mínima em ficheiros, antes da introdução de SQLite na fase 2.
+A [spec da fase 1](superpowers/specs/2026-11-01-phase-1-local-audio-design.md) define o comportamento da primeira integração de áudio e a persistência mínima em ficheiros, anterior à introdução de SQLite na fase 2.
+
+O [plano técnico da fase 2](superpowers/plans/2026-11-02-phase-2-guided-interview-implementation.md) concretizou `rusqlite 0.41.1` com `bundled`, uma única ligação protegida e o frontend sem acesso SQL direto, com transações, migrações e reconciliação com os ficheiros de áudio. A decisão está registada em [docs/phase-2/validation.md](phase-2/validation.md), secção 6.
 
 ## Referências
 

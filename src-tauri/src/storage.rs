@@ -28,6 +28,9 @@
 //!   para repetir a publicação.
 //! - `restore_last` não escreve nem apaga nada: recupera o que é válido, avisa
 //!   por cada artefacto em falta e recalcula as operações interrompidas.
+//! - [`AttemptStore::list_saved`] enumera as pastas de `attempts/` para a
+//!   consulta do histórico: o apontador `last-attempt.json` não é um índice e
+//!   uma pasta inválida produz um resultado com avisos sem esconder as outras.
 //!
 //! Os códigos de erro são os estáveis de [`crate::domain::error_code`]:
 //! `STORAGE_WRITE_FAILED` cobre qualquer falha de leitura, escrita ou
@@ -36,6 +39,7 @@
 //! identifica um áudio, transcrição ou revisão em falta ou ilegível, que não
 //! impede recuperar o resto; `INVALID_AUDIO` recusa um áudio vazio.
 
+use std::cmp::Ordering;
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
@@ -242,6 +246,80 @@ impl AttemptStore {
         })
     }
 
+    /// Enumera as respostas guardadas para o histórico, sem escrever nada.
+    ///
+    /// A listagem vem das pastas de `attempts/`, não de `last-attempt.json`:
+    /// uma resposta antiga continua visível mesmo com o apontador apagado ou
+    /// ilegível. Uma pasta inválida produz [`RestoreResult`] com `attempt: None`
+    /// e os avisos do que falhou, sem abortar a enumeração; as respostas válidas
+    /// surgem por data decrescente.
+    pub fn list_saved(&self) -> Result<Vec<RestoreResult>, AppError> {
+        let attempts = self.root.join(ATTEMPTS_DIR);
+        let entries = match fs::read_dir(&attempts) {
+            Ok(entries) => entries,
+            // Ainda não houve nenhuma gravação: uma lista vazia não é um erro.
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(storage_failure(format!(
+                    "Não foi possível ler a pasta das respostas: {error}."
+                )))
+            }
+        };
+
+        let mut results = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                storage_failure(format!(
+                    "Não foi possível ler a pasta das respostas: {error}."
+                ))
+            })?;
+            // Só pastas com nome simples são respostas; um ficheiro solto ou um
+            // nome estranho não interrompe a listagem. A ligação simbólica não é
+            // seguida: a enumeração nunca sai da raiz.
+            let id = match entry.file_name().into_string() {
+                Ok(id) if is_safe_id(&id) => id,
+                _ => continue,
+            };
+            let file_type = entry.file_type().map_err(|error| {
+                storage_failure(format!(
+                    "Não foi possível ler a pasta das respostas: {error}."
+                ))
+            })?;
+            if !file_type.is_dir() {
+                continue;
+            }
+            results.push(self.read_saved(&id));
+        }
+
+        results.sort_by(compare_saved);
+        Ok(results)
+    }
+
+    /// Lê uma resposta guardada pelo identificador, sem escrever nada.
+    ///
+    /// Reutiliza a mesma reconstrução de [`AttemptStore::restore_last`]: uma
+    /// falha de leitura devolve o erro, com os ficheiros conservados.
+    pub fn load_saved(&self, attempt_id: &str) -> Result<RestoreResult, AppError> {
+        let directory = self.attempt_directory(attempt_id)?;
+        let manifest = self.read_manifest(&directory)?;
+        let loaded = self.load(&manifest)?;
+        Ok(RestoreResult {
+            attempt: Some(loaded.attempt),
+            warnings: loaded.warnings,
+        })
+    }
+
+    /// Lê uma resposta para a enumeração, convertendo a falha num item inválido.
+    fn read_saved(&self, attempt_id: &str) -> RestoreResult {
+        match self.load_saved(attempt_id) {
+            Ok(result) => result,
+            Err(warning) => RestoreResult {
+                attempt: None,
+                warnings: vec![warning],
+            },
+        }
+    }
+
     /// Guarda uma transcrição original e devolve a resposta atualizada.
     ///
     /// Um resultado repetido para o mesmo identificador não substitui o texto
@@ -361,7 +439,7 @@ impl AttemptStore {
     }
 
     /// Pasta de uma resposta, recusando identificadores que não sejam simples.
-    fn attempt_directory(&self, attempt_id: &str) -> Result<PathBuf, AppError> {
+    pub(crate) fn attempt_directory(&self, attempt_id: &str) -> Result<PathBuf, AppError> {
         if !is_safe_id(attempt_id) {
             return Err(invalid_identifier());
         }
@@ -369,6 +447,9 @@ impl AttemptStore {
     }
 
     /// Lê o manifesto de uma pasta.
+    ///
+    /// O caminho entra nas mensagens: um histórico com vários treinos tem de
+    /// identificar qual a pasta inválida, e o identificador é o nome da pasta.
     fn read_manifest(&self, directory: &Path) -> Result<AttemptManifest, AppError> {
         let path = directory.join(MANIFEST_FILE);
         let raw = read_text(&path)?.ok_or_else(|| {
@@ -377,10 +458,16 @@ impl AttemptStore {
                 path.display()
             ))
         })?;
-        let manifest: AttemptManifest = parse_json(&raw, MANIFEST_FILE)?;
+        let manifest: AttemptManifest = serde_json::from_str(&raw).map_err(|error| {
+            storage_failure(format!(
+                "Os metadados da resposta em «{}» estão ilegíveis: {error}. Os ficheiros foram conservados.",
+                path.display()
+            ))
+        })?;
         if manifest.schema_version != SCHEMA_VERSION {
             return Err(storage_failure(format!(
-                "Os metadados da resposta usam uma versão não suportada ({}).",
+                "Os metadados da resposta em «{}» usam uma versão não suportada ({}).",
+                path.display(),
                 manifest.schema_version
             )));
         }
@@ -451,6 +538,32 @@ impl AttemptStore {
     }
 }
 
+/// Ordena a listagem: respostas válidas por data decrescente e, no fim, os
+/// itens inválidos pela primeira mensagem (ordem estável entre leituras).
+fn compare_saved(left: &RestoreResult, right: &RestoreResult) -> Ordering {
+    fn key(result: &RestoreResult) -> Option<(String, String)> {
+        result
+            .attempt
+            .as_ref()
+            .map(|attempt| (attempt.created_at.clone(), attempt.id.clone()))
+    }
+
+    match (key(left), key(right)) {
+        (Some(left), Some(right)) => right.cmp(&left),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => warning_key(left).cmp(&warning_key(right)),
+    }
+}
+
+fn warning_key(result: &RestoreResult) -> String {
+    result
+        .warnings
+        .first()
+        .map(|warning| warning.message.clone())
+        .unwrap_or_default()
+}
+
 /// Copia o áudio finalizado para `original.wav`, validando-o primeiro.
 fn store_original(source: &Path, destination: &Path) -> Result<(), AppError> {
     let metadata = fs::metadata(source).map_err(|_| {
@@ -516,7 +629,7 @@ fn check_reference(directory: &Path, reference: &str, label: &str, warnings: &mu
 }
 
 /// Resolve uma referência relativa sem permitir sair da pasta da resposta.
-fn resolve_reference(directory: &Path, reference: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_reference(directory: &Path, reference: &str) -> Option<PathBuf> {
     let path = Path::new(reference);
     if path.is_absolute() {
         return None;
@@ -617,7 +730,7 @@ fn storage_failure(message: impl Into<String>) -> AppError {
 }
 
 /// Artefacto em falta ou ilegível; repetir não o traz de volta.
-fn artifact_missing(message: impl Into<String>) -> AppError {
+pub(crate) fn artifact_missing(message: impl Into<String>) -> AppError {
     AppError::new(error_code::ARTIFACT_MISSING, message, false)
 }
 

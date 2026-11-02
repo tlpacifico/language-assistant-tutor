@@ -1,16 +1,20 @@
 # language-assistant-tutor
 
 Tutor desktop de entrevistas comportamentais em inglês, por voz, baseado na
-estrutura STAR. Este repositório contém a implementação da **fase 1**: uma
-aplicação Tauri 2 + React/TypeScript que apresenta uma pergunta fixa, grava a
-resposta, reproduz o áudio, transcreve localmente com faster-whisper e permite
-guardar uma revisão do texto. Tudo corre no computador; nenhuma gravação ou
-transcrição é enviada para serviços externos.
+estrutura STAR. Este repositório contém a implementação das **fases 1 e 2**:
+uma aplicação Tauri 2 + React/TypeScript que prepara uma entrevista guiada com
+um banco de 20 perguntas, grava as respostas, reproduz o áudio, transcreve
+localmente com faster-whisper, permite rever e confirmar cada texto e guarda o
+histórico em SQLite. Tudo corre no computador; nenhuma gravação ou transcrição é
+enviada para serviços externos.
 
 O contexto do produto, a stack e o plano das fases estão em
 [`docs/`](docs/) e em [`AGENTS.md`](AGENTS.md). A preparação real do ambiente
 está em [`docs/phase-1/setup.md`](docs/phase-1/setup.md) e o estado dos critérios
-de aceitação em [`docs/phase-1/validation.md`](docs/phase-1/validation.md).
+de aceitação da fase 1 em [`docs/phase-1/validation.md`](docs/phase-1/validation.md).
+A fase 2 está documentada em [`docs/phase-2/setup.md`](docs/phase-2/setup.md)
+(execução e dados) e [`docs/phase-2/validation.md`](docs/phase-2/validation.md)
+(matriz F2-01 a F2-16).
 
 ## Requisitos (Windows)
 
@@ -71,7 +75,13 @@ npm.cmd run tauri -- dev
 ```
 
 Sem Python, `audio.json` ou modelos, a janela abre e indica o componente em
-falta; gravar, ouvir e guardar revisões continuam disponíveis.
+falta; preparar a sessão, editar o banco, rever texto e consultar o histórico
+continuam disponíveis.
+
+No primeiro arranque são criados `phase1\` e `tutor.sqlite3` na pasta de dados
+da aplicação; a pasta `sessions\` aparece na primeira gravação. Ver
+[`docs/phase-2/setup.md`](docs/phase-2/setup.md) para o formato e o significado
+de cada caminho.
 
 ## Comandos
 
@@ -96,10 +106,12 @@ falta; gravar, ouvir e guardar revisões continuam disponíveis.
 
 `.\scripts\verify.ps1` executa typecheck, testes React, build Vite,
 `cargo fmt --check`, `clippy -D warnings`, testes Rust, pytest sem a marca
-`models` e `pip check`. Resultado real desta máquina: 8/8 checks com saída 0
-(entre 23,4 s e 116,4 s, conforme a cache de compilação e o Vitest a frio).
-O teste com a marca `models` é executado à parte, porque exige pesos
-preparados e um manifesto indicado por `LANGUAGE_TUTOR_MODELS_MANIFEST`.
+`models` e `pip check`. Resultado real da verificação da fase 2: 8/8 checks com
+saída 0 (151 testes Rust, 53 Vitest, 36 pytest sem `models`); a duração depende
+da cache de compilação e do Vitest a frio. O teste com a marca
+`models` é executado à parte, porque exige pesos preparados e um manifesto
+indicado por `LANGUAGE_TUTOR_MODELS_MANIFEST`; nesta máquina deu `2 passed`,
+não skip.
 
 ## Estrutura atual
 
@@ -108,35 +120,56 @@ index.html, package.json, tsconfig.json, vite.config.ts
 rust-toolchain.toml
 scripts/verify.ps1            Checks automáticos com controlo de exit codes
 src/main.tsx                  Arranque React
-src/App.tsx                   Janela com a pergunta fixa
-src/lib/contracts.ts          Tipos do contrato v1 (camelCase, enums snake_case)
-src/lib/tauri.ts              Adaptador PracticeClient over Tauri
-src/features/practice/        Interface de prática e revisão
-src-tauri/src/                Domínio, armazenamento, áudio, worker, serviço, comandos
-src-tauri/tests/              Testes de domínio, storage, áudio, worker e serviço
-contracts/                    Exemplos partilhados dos contratos v1
+src/App.tsx                   Navegação: preparar, banco, entrevista, histórico
+src/lib/contracts.ts          Tipos do contrato v1 (treinos da fase 1, leitura)
+src/lib/interview-contracts.ts Contratos v2 da entrevista guiada
+src/lib/interview-client.ts   Adaptador InterviewClient over Tauri
+src/features/sessions/        Preparação e retoma da sessão
+src/features/questions/       Banco de perguntas editável
+src/features/interview/       Captura, revisão, confirmação e avanço
+src/features/navigation/      Decisão guardar/descartar/cancelar (navegar e fechar)
+src/features/history/         Histórico de sessões e treinos da fase 1
+src/features/practice/        practice.css partilhado pela interface nova
+src-tauri/src/                Domínio, SQLite, artefactos, áudio, worker, serviço, comandos
+src-tauri/tests/              151 testes de domínio, base, artefactos, áudio, worker, sessões, serviço
+contracts/                    Exemplos partilhados dos contratos v1 e v2
 config/audio.example.json     Configuração pessoal documentada (não versionar a real)
 audio-worker/                 Auxiliar Python (faster-whisper + Kokoro)
 docs/phase-1/                 setup.md e validation.md
+docs/phase-2/                 setup.md e validation.md
 ```
 
-O áudio original e as revisões ficam na pasta de dados da aplicação
-(`%APPDATA%\dev.thacio.languageassistanttutor\phase1`), nunca na árvore do
-código. Modelos, `.venv`, áudio e `.superpowers/` estão no `.gitignore`.
+Os dados das sessões novas ficam em
+`%APPDATA%\dev.thacio.languageassistanttutor\tutor.sqlite3` e os áudios em
+`sessions\<session-id>\<session-question-id>\<recording-id>\`. A árvore
+`phase1/` da pasta de dados é conservada e só é lida: os treinos anteriores
+continuam consultáveis no histórico. Nada disto está na árvore do código.
+Modelos, `.venv`, áudio, base de dados e `.superpowers/` estão no `.gitignore`.
 
 ## Estado
 
-A implementação da fase 1 está completa e a verificação automática está verde
-(77 testes Rust, 15 testes React, 36 testes Python sem marca `models`, 2 testes
-Python reais com pesos preparados, `pip check` limpo, build release sem
-instalador). A preparação real dos modelos foi executada e o risco de
-compatibilidade entre `transformers 5.22.1` e os pesos do Kokoro 0.9.4 não se
-materializou nesta máquina.
+A implementação da **fase 1** está completa e a verificação automática está
+verde (77 testes Rust, 15 testes React, 36 testes Python sem marca `models`, 2
+testes Python reais com pesos preparados, `pip check` limpo, build release sem
+instalador — contagens da altura; a suíte atual inclui os testes da fase 2). A
+preparação real dos modelos foi executada e o risco de compatibilidade entre
+`transformers 5.22.1` e os pesos do Kokoro 0.9.4 não se materializou nesta
+máquina.
 
-A fase **não** está aceite: faltam a validação do utilizador com três gravações
-reais, a audição da voz, a remoção/restauro do microfone e a decisão sobre a
-espera (CA-14). Ver a matriz honesta em
+A fase 1 **não** está aceite: faltam a validação do utilizador com três
+gravações reais, a audição da voz, a remoção/restauro do microfone e a decisão
+sobre a espera (CA-14). Ver a matriz honesta em
 [`docs/phase-1/validation.md`](docs/phase-1/validation.md).
 
-A pergunta da fase 1 é fixa:
-`Tell me about a time you solved a difficult problem at work.`
+A implementação da **fase 2** (entrevista guiada) está completa e a verificação
+automática está verde: `.\scripts\verify.ps1` com 8/8 checks, 151 testes Rust,
+53 testes Vitest e 36 testes Python sem a marca `models`, mais 2 testes reais
+dos motores com pesos preparados; build release sem instalador, arranque e
+fecho do binário com código 0. A fase 2 **não** está concluída nem aceite: falta
+a validação manual do utilizador (sessão real de três perguntas, audição,
+revisão/confirmação, sair e retomar, histórico, sessão de uma pergunta,
+insuficiência, edição do banco, percurso offline e recuperação). Ver
+[`docs/phase-2/validation.md`](docs/phase-2/validation.md).
+
+A fase 3 (tutor com IA) **não** foi iniciada. O âmbito da fase 2 está em
+[`docs/superpowers/specs/2026-11-02-phase-2-guided-interview-design.md`](docs/superpowers/specs/2026-11-02-phase-2-guided-interview-design.md).

@@ -1,30 +1,33 @@
-//! Coordenação do fluxo local da fase 1.
+//! Coordenação da entrevista guiada sobre a captura e o auxiliar existentes.
 //!
-//! O serviço liga a captura, o armazenamento e o auxiliar Python numa única
-//! máquina de estados observável pela interface:
+//! O serviço liga a base de dados SQLite, os artefactos de áudio, a captura e o
+//! auxiliar Python numa única máquina de estados observável pela interface:
 //!
-//! - [`AppService::start_recording`] reserva pasta e identificador e abre o
-//!   microfone; [`AppService::stop_recording`] fecha a captura, publica a nova
-//!   resposta e só depois a ativa, normalizando o derivado e pedindo a
-//!   transcrição quando o transcritor está pronto;
-//! - `play_audio` resolve apenas ficheiros da própria aplicação: o original da
-//!   resposta ativa ou o WAV da pergunta em `question-cache`, pedindo a síntese
-//!   ao auxiliar quando ainda não existe;
+//! - a base de dados abre no arranque em [`tokio::task::spawn_blocking`], com a
+//!   fotografia em `opening`; uma falha fica visível e recuperável por
+//!   [`AppService::retry_database`], sem fechar a janela nem apagar dados;
+//! - [`AppService::start_recording`] reserva a gravação na base e a pasta nos
+//!   artefactos e só depois abre o microfone; [`AppService::stop_recording`]
+//!   publica o original, regista o derivado e pede a transcrição de uma
+//!   pergunta ainda não confirmada;
+//! - `play_audio` resolve apenas ficheiros da própria aplicação: uma pergunta
+//!   de sessão (com a cache de voz), uma gravação guardada ou um treino antigo
+//!   da fase 1, sem aceitar caminhos da interface;
 //! - os eventos de áudio e do auxiliar entram por [`AppService::on_audio_event`]
-//!   e [`AppService::on_worker_event`] e só se aplicam ao pedido e à geração que
-//!   os originaram;
-//! - `prepare_close` finaliza a captura, assinala o trabalho pendente como
-//!   interrompido e encerra o auxiliar; uma falha que possa perder dados impede
-//!   fechar em silêncio.
+//!   e [`AppService::on_worker_event`] e só se aplicam à operação, à geração e
+//!   ao alvo que os originaram — um resultado tardio nunca muda seleções,
+//!   textos confirmados nem o progresso;
+//! - `prepare_close` finaliza uma captura válida e nunca indica sucesso quando
+//!   a publicação falhou.
 //!
 //! # Concorrência
 //!
 //! Cada transição adquire o coordenador serial (`transitions`). O estado
-//! observável é um `Mutex<AppState>` de curta duração: nunca é mantido enquanto
-//! se espera por um dispositivo, um processo ou um ficheiro. As operações que
-//! podem bloquear — captura e reprodução, escrita em disco e, sobretudo, o
-//! arranque, o reinício e o encerramento do auxiliar (até ~15 s) — correm em
-//! `tokio::task::spawn_blocking`, para nunca ocuparem uma thread do runtime.
+//! observável é um `Mutex<InterviewState>` de curta duração: nunca é mantido
+//! enquanto se espera por um dispositivo, um processo, a base de dados ou um
+//! ficheiro. Os métodos de sessão vivem em [`interview`] e partilham o mesmo
+//! coordenador; nenhum deles readquire o mutex do estado dentro de um auxiliar
+//! que já o detém.
 //!
 //! O arranque do [`WorkerClient`] precisa do contexto do runtime; a tarefa
 //! bloqueada entra explicitamente no runtime com `Handle::enter` antes de o
@@ -36,31 +39,39 @@
 //! A chave da cache reproduz exatamente `synthesis_cache_key` de
 //! `audio-worker/src/audio_worker/engines.py`:
 //! `sha256("kokoro-v1|<voz>|<velocidade com 3 casas>|<texto sem pontas>")`,
-//! guardada em `phase1/question-cache/<sha256>.wav`. Mudar a voz, a velocidade
-//! ou o texto produz um ficheiro diferente.
+//! guardada em `phase1/question-cache/<sha256>.wav`. A síntese usa o texto da
+//! cópia atual da pergunta da sessão, pelo que mudar a voz, a velocidade ou o
+//! texto (incluindo duas perguntas diferentes da mesma sessão) produz um
+//! ficheiro diferente.
 
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::audio::{normalize_wav, AudioEvent, AudioPort, CapturedAudio};
+use crate::artifacts::ArtifactStore;
+use crate::audio::{AudioEvent, AudioPort, CapturedAudio, ORIGINAL_FILE};
+use crate::db::Database;
 use crate::domain::{
-    error_code, Action, AppError, AppSnapshot, AppState, Attempt, CaptureMeta, ComponentState,
-    ComponentStatus, JobStage, ModelJob, OperationKind, OperationRecord, OperationState,
-    PlaybackTarget, RestoreResult, Transcript, TranscriptStatus,
+    error_code, AppError, Availability, CaptureMeta, ComponentState, ComponentStatus, JobStage,
+    OperationKind, PlaybackTarget, RestoreResult, Transcript, TranscriptStatus,
 };
-use crate::storage::{AttemptStore, NORMALIZED_FILE, ORIGINAL_FILE};
+use crate::interview::{
+    AnswerTarget, DatabaseState, Id, InterviewSnapshot, ModelJobView, OperationTarget,
+    QuestionDetail, ReviewOrigin, SaveReview, SessionDetail, SessionSummary,
+};
+use crate::legacy::LegacyStore;
 use crate::worker::protocol::SynthesizeParams;
-use crate::worker::protocol::TranscribeParams;
 use crate::worker::{
     HealthResult, SynthesisResult, TranscriptionResult, WorkerClient, WorkerEvent, WorkerMessage,
     WorkerPort, WorkerRequest, WorkerResult,
 };
+
+mod interview;
 
 /// Pasta da cache de voz da pergunta, dentro de `phase1`.
 pub const QUESTION_CACHE_DIR: &str = "question-cache";
@@ -76,9 +87,6 @@ pub const SYNTHESIS_SAMPLE_RATE: u32 = 24_000;
 
 /// Prefixo da chave da cache, igual ao do auxiliar Python.
 const CACHE_KEY_PREFIX: &str = "kokoro-v1";
-
-/// Pasta das respostas, relativa à raiz `phase1` (igual à da persistência).
-const ATTEMPTS_DIR: &str = "attempts";
 
 /// Operações bloqueantes do auxiliar usadas pelo serviço.
 ///
@@ -130,8 +138,18 @@ pub trait WorkerLauncher: Send + Sync {
     fn launch(&self) -> Result<LaunchedWorker, AppError>;
 }
 
-/// Destinatário das fotografias publicadas em `practice://snapshot`.
-pub type SnapshotListener = Arc<dyn Fn(&AppSnapshot) + Send + Sync>;
+/// Destinatário das fotografias publicadas em `interview://snapshot`.
+pub type SnapshotListener = Arc<dyn Fn(&InterviewSnapshot) + Send + Sync>;
+
+/// Caminhos de dados do serviço.
+///
+/// `database` é aberta no arranque (e novamente por `retry_database`); `legacy`
+/// conserva a leitura dos treinos da fase 1 e a cache de voz partilhada.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServicePaths {
+    pub database: PathBuf,
+    pub legacy: PathBuf,
+}
 
 /// Estado do auxiliar detido pelo serviço.
 #[derive(Default)]
@@ -140,117 +158,347 @@ struct WorkerSlot {
     error: Option<AppError>,
 }
 
-/// Serviço da fase 1: coordena captura, persistência, auxiliar e reprodução.
+/// Identidade da captura em curso, para reconhecer eventos atrasados.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CaptureIdentity {
+    recording_id: Id,
+    session_id: Id,
+    session_question_id: Id,
+}
+
+/// Captura finalizada cuja publicação falhou, à espera de nova tentativa.
+struct PendingPublication {
+    capture: CapturedAudio,
+    identity: CaptureIdentity,
+}
+
+/// Estado observável da entrevista.
+///
+/// A revisão é monotónica em memória e não substitui as versões persistidas: um
+/// commit da base só aparece na fotografia depois de [`AppService::refresh_session`]
+/// reler a sessão guardada. A geração do auxiliar e o pedido pendente são
+/// internos e não serializam.
+struct InterviewState {
+    revision: u64,
+    database: DatabaseState,
+    database_error: Option<AppError>,
+    active_session: Option<SessionSummary>,
+    current: Option<QuestionDetail>,
+    availability: Availability,
+    recording_id: Option<Id>,
+    /// Reserva cuja publicação falhou, espelhada de `pending_publish`.
+    pending_recording_id: Option<Id>,
+    finalizing: bool,
+    model_job: Option<ModelJobView>,
+    playback: Option<PlaybackTarget>,
+    warnings: Vec<AppError>,
+    last_error: Option<AppError>,
+    worker_generation: u64,
+    active_request: Option<String>,
+}
+
+impl InterviewState {
+    /// Estado inicial: base a abrir, nada ocupado e nenhum componente verificado.
+    fn initial() -> Self {
+        Self {
+            revision: 0,
+            database: DatabaseState::Opening,
+            database_error: None,
+            active_session: None,
+            current: None,
+            availability: Availability::loading(),
+            recording_id: None,
+            pending_recording_id: None,
+            finalizing: false,
+            model_job: None,
+            playback: None,
+            warnings: Vec::new(),
+            last_error: None,
+            worker_generation: 0,
+            active_request: None,
+        }
+    }
+
+    /// Um resultado só se aplica ao pedido pendente e à geração atual do auxiliar.
+    fn accepts_result(&self, request_id: &str, generation: u64) -> bool {
+        generation > 0
+            && generation == self.worker_generation
+            && self.active_request.as_deref() == Some(request_id)
+    }
+
+    /// Ocupa o estado com um trabalho de modelo, se estiver livre.
+    fn begin_model_job(&mut self, job: ModelJobView) -> Result<(), AppError> {
+        if self.recording_id.is_some() || self.finalizing {
+            return Err(AppError::busy(
+                "Termine a gravação antes de pedir uma transcrição ou síntese.",
+            ));
+        }
+        if self.model_job.is_some() {
+            return Err(AppError::busy(
+                "Há uma transcrição ou síntese em curso. Aguarde que termine.",
+            ));
+        }
+        self.active_request = Some(job.id.clone());
+        self.model_job = Some(job);
+        Ok(())
+    }
+
+    /// Liberta o trabalho de modelo e o pedido pendente.
+    fn finish_model_job(&mut self) {
+        self.model_job = None;
+        self.active_request = None;
+    }
+
+    /// Nova geração do auxiliar: resultados anteriores deixam de ser aceites.
+    fn set_worker_generation(&mut self, generation: u64) {
+        self.worker_generation = generation;
+    }
+
+    /// Aplica o detalhe da sessão ativa, se existir.
+    ///
+    /// A pergunta corrente é a que a posição persistida indica; não se inventa
+    /// progresso nem se mantém uma sessão concluída como ativa.
+    fn apply_detail(&mut self, detail: Option<SessionDetail>) {
+        match detail {
+            Some(detail) => {
+                let position = detail.summary.position;
+                let current = detail
+                    .questions
+                    .iter()
+                    .find(|question| question.question.position == position)
+                    .cloned();
+                self.active_session = Some(detail.summary);
+                self.current = current;
+            }
+            None => {
+                self.active_session = None;
+                self.current = None;
+            }
+        }
+    }
+
+    /// Fotografia do estado observável pela interface.
+    fn snapshot(&self) -> InterviewSnapshot {
+        InterviewSnapshot {
+            revision: self.revision,
+            database: self.database,
+            active_session: self.active_session.clone(),
+            current: self.current.clone(),
+            availability: self.availability.clone(),
+            recording_id: self.recording_id.clone(),
+            pending_recording_id: self.pending_recording_id.clone(),
+            finalizing: self.finalizing,
+            model_job: self.model_job.clone(),
+            playback: self.playback,
+            warnings: self.warnings.clone(),
+            last_error: self.last_error.clone(),
+        }
+    }
+}
+
+/// Serviço da fase 2: coordena sessões, captura, SQLite, auxiliar e reprodução.
 pub struct AppService {
-    store: AttemptStore,
+    database_path: PathBuf,
+    legacy_root: PathBuf,
+    artifacts: ArtifactStore,
+    database: Mutex<Option<Database>>,
     audio: Arc<dyn AudioPort>,
-    root: PathBuf,
     launcher: Arc<dyn WorkerLauncher>,
     models_manifest: Option<PathBuf>,
-    state: Mutex<AppState>,
+    state: Mutex<InterviewState>,
     worker: Mutex<WorkerSlot>,
     /// Geração válida do auxiliar; `0` significa que nenhum resultado é aceite.
     generation: AtomicU64,
+    /// Captura em curso, para reconhecer interrupções atrasadas.
+    capture: Mutex<Option<CaptureIdentity>>,
     /// Captura finalizada cuja publicação falhou, à espera de nova tentativa.
-    pending_publish: Mutex<Option<CapturedAudio>>,
-    /// Identificador da captura cuja interrupção ainda pode chegar.
-    current_capture: Mutex<Option<String>>,
+    pending_publish: Mutex<Option<PendingPublication>>,
     /// Pedido `health` em curso, para reportar uma falha de verificação.
     health_request: Mutex<Option<String>>,
+    /// Caminho de cache esperado do pedido de síntese em curso.
+    synthesis: Mutex<Option<(String, PathBuf)>>,
     /// Coordenador serial: uma transição de cada vez.
     transitions: tokio::sync::Mutex<()>,
     listener: Mutex<Option<SnapshotListener>>,
 }
 
 impl AppService {
-    /// Cria o serviço, recuperando a última resposta guardada.
+    /// Cria o serviço. A base de dados abre depois, em [`AppService::start`].
     ///
-    /// A recuperação não escreve nem apaga nada. Um aviso (por exemplo, um
-    /// áudio em falta) é apresentado como `lastError`, porque é o único canal
-    /// de avisos da fotografia; os restantes dados da resposta são mantidos.
-    /// Nenhum componente de áudio ou do auxiliar é aberto aqui: o arranque é
-    /// assíncrono em [`AppService::start_worker`], para a interface aparecer
-    /// mesmo sem Python ou modelos.
+    /// A abertura e a reconciliação correm fora da thread de arranque para a
+    /// janela aparecer com a fotografia em `opening`; uma falha é recuperável
+    /// por [`AppService::retry_database`]. Nenhum componente de áudio ou do
+    /// auxiliar é aberto aqui.
     pub fn new(
-        store: AttemptStore,
+        paths: ServicePaths,
+        artifacts: ArtifactStore,
         audio: Arc<dyn AudioPort>,
-        root: PathBuf,
         launcher: Arc<dyn WorkerLauncher>,
         models_manifest: Option<PathBuf>,
     ) -> Self {
-        let mut state = AppState::initial();
-        match store.restore_last() {
-            Ok(RestoreResult { attempt, warnings }) => {
-                state.attempt = attempt;
-                state.last_error = warnings.first().cloned();
-            }
-            Err(error) => state.last_error = Some(error),
-        }
-
         Self {
-            store,
+            database_path: paths.database,
+            legacy_root: paths.legacy,
+            artifacts,
+            database: Mutex::new(None),
             audio,
-            root,
             launcher,
             models_manifest,
-            state: Mutex::new(state),
+            state: Mutex::new(InterviewState::initial()),
             worker: Mutex::new(WorkerSlot::default()),
             generation: AtomicU64::new(0),
+            capture: Mutex::new(None),
             pending_publish: Mutex::new(None),
-            current_capture: Mutex::new(None),
             health_request: Mutex::new(None),
+            synthesis: Mutex::new(None),
             transitions: tokio::sync::Mutex::new(()),
             listener: Mutex::new(None),
         }
     }
 
-    /// Regista o destinatário das fotografias (o emissor de `practice://snapshot`).
+    /// Regista o destinatário das fotografias (o emissor de `interview://snapshot`).
     pub fn subscribe(&self, listener: SnapshotListener) {
         *self.lock_listener() = Some(listener);
     }
 
     /// Fotografia atual, sem alterar nem publicar.
-    pub fn snapshot(&self) -> AppSnapshot {
+    pub fn snapshot(&self) -> InterviewSnapshot {
         self.lock_state().snapshot()
     }
 
-    /// Aplica a intenção correspondente a um comando da interface.
-    pub async fn apply(self: &Arc<Self>, action: Action) -> Result<AppSnapshot, AppError> {
-        match action {
-            Action::RefreshAvailability => self.refresh_availability().await,
-            Action::StartRecording => self.start_recording().await,
-            Action::StopRecording => self.stop_recording().await,
-            Action::RetrySaveRecording => self.retry_save_recording().await,
-            Action::TranscribeResponse { attempt_id } => self.transcribe_response(attempt_id).await,
-            Action::PlayAudio { target } => self.play_audio(target).await,
-            Action::StopAudio => self.stop_audio().await,
-            Action::SaveReview {
-                attempt_id,
-                source_id,
-                text,
-            } => self.save_review(attempt_id, source_id, text).await,
-            Action::RestartWorker => self.restart_worker().await,
-            Action::PrepareClose => self.prepare_close().await,
-        }
-    }
-
-    // -- arranque e disponibilidade ----------------------------------------
-
-    /// Atualiza a disponibilidade do áudio e arranca o auxiliar.
+    /// Arranca o serviço: disponibilidade do áudio, auxiliar e base de dados.
     ///
-    /// Uma falha de configuração ou arranque do auxiliar não impede a captura:
-    /// fica indicada na disponibilidade da transcrição e da síntese.
-    pub async fn start_worker(self: &Arc<Self>) -> AppSnapshot {
+    /// A base abre e reconcilia em `spawn_blocking`. Uma falha de configuração
+    /// do auxiliar ou da base não impede a janela de aparecer: fica indicada na
+    /// fotografia e pode ser repetida.
+    pub async fn start(self: &Arc<Self>) -> InterviewSnapshot {
         let _transition = self.transitions.lock().await;
         self.refresh_audio_availability().await;
         if let Err(error) = self.launch_worker().await {
             self.show_worker_missing(&error.message);
         }
+        let _ = self.open_database_locked().await;
         self.snapshot()
     }
 
+    /// Repete a abertura e a reconciliação da base, sem reiniciar a janela.
+    pub async fn retry_database(&self) -> Result<InterviewSnapshot, AppError> {
+        let _transition = self.transitions.lock().await;
+        self.open_database_locked().await
+    }
+
+    /// Abre a base e publica as gravações interrompidas por um encerramento abrupto.
+    ///
+    /// O chamador tem de deter o coordenador serial. A fotografia fica em
+    /// `opening` durante a abertura e passa a `ready` só depois de a sessão
+    /// ativa ter sido relida da base; uma falha passa a `error`, sem apagar nem
+    /// recriar a base.
+    async fn open_database_locked(&self) -> Result<InterviewSnapshot, AppError> {
+        self.commit(|state| {
+            state.database = DatabaseState::Opening;
+            state.database_error = None;
+            state.last_error = None;
+        });
+
+        let path = self.database_path.clone();
+        let artifacts = self.artifacts.clone();
+        let opened = database_task(move || {
+            let database = Database::open(path)?;
+            let report = crate::artifacts::reconcile(&database, &artifacts)?;
+            let mut active = database.active_session()?;
+            if let Some(detail) = active.as_mut() {
+                artifacts.annotate(detail);
+            }
+            Ok((database, report, active))
+        })
+        .await;
+
+        match opened {
+            Ok((database, report, active)) => {
+                *self.lock_database() = Some(database);
+                Ok(self.commit(|state| {
+                    state.database = DatabaseState::Ready;
+                    state.database_error = None;
+                    state.warnings = report.warnings;
+                    state.last_error = None;
+                    state.apply_detail(active);
+                }))
+            }
+            Err(error) => {
+                *self.lock_database() = None;
+                let shown = error.clone();
+                self.commit(|state| {
+                    state.database = DatabaseState::Error;
+                    state.database_error = Some(shown.clone());
+                    state.active_session = None;
+                    state.current = None;
+                    state.last_error = Some(shown);
+                });
+                Err(error)
+            }
+        }
+    }
+
+    /// Base de dados aberta, ou o erro que explica a indisponibilidade.
+    fn database(&self) -> Result<Database, AppError> {
+        match self.lock_database().clone() {
+            Some(database) => Ok(database),
+            None => {
+                let detail = self.lock_state().database_error.clone();
+                Err(match detail {
+                    Some(error) => AppError::new(
+                        error_code::DATABASE_UNAVAILABLE,
+                        format!(
+                            "A base de dados não está disponível: {}. Repita a abertura.",
+                            error.message
+                        ),
+                        true,
+                    ),
+                    None => database_unavailable(
+                        "A base de dados ainda está a abrir. Aguarde um instante e repita.",
+                    ),
+                })
+            }
+        }
+    }
+
+    /// Relê a sessão ativa e publica a fotografia.
+    ///
+    /// Só chamado depois de um commit bem-sucedido: a fotografia reflete apenas
+    /// estado guardado. Uma leitura de histórico nunca passa por aqui, pelo que
+    /// não muda a pergunta corrente nem retargeta o trabalho de modelo.
+    pub(super) async fn refresh_session(
+        &self,
+        database: &Database,
+    ) -> Result<InterviewSnapshot, AppError> {
+        let detail = self.load_active_detail(database).await?;
+        Ok(self.commit(|state| {
+            state.apply_detail(detail);
+            state.last_error = None;
+        }))
+    }
+
+    /// Lê a sessão ativa da base, com os avisos de artefactos do disco.
+    async fn load_active_detail(
+        &self,
+        database: &Database,
+    ) -> Result<Option<SessionDetail>, AppError> {
+        let database = database.clone();
+        let artifacts = self.artifacts.clone();
+        database_task(move || {
+            let mut detail = database.active_session()?;
+            if let Some(detail) = detail.as_mut() {
+                artifacts.annotate(detail);
+            }
+            Ok(detail)
+        })
+        .await
+    }
+
+    // -- arranque e disponibilidade ----------------------------------------
+
     /// Verifica o microfone, a saída e o auxiliar, sem carregar modelos.
-    pub async fn refresh_availability(&self) -> Result<AppSnapshot, AppError> {
+    pub async fn refresh_availability(&self) -> Result<InterviewSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
         self.refresh_audio_availability().await;
 
@@ -286,26 +534,24 @@ impl AppService {
             // Um pedido em curso não permite verificar agora; conserva o que se
             // sabe e, sobretudo, o identificador da verificação pendente.
             Err(error) if error.code == error_code::BUSY => Ok(self.snapshot()),
-            Err(error) => {
-                let snapshot = self.commit(|state| {
-                    state.availability.transcription = error_state(&error);
-                    state.availability.synthesis = error_state(&error);
-                    state.last_error = Some(error.clone());
-                });
-                Ok(snapshot)
-            }
+            Err(error) => Ok(self.commit(|state| {
+                state.availability.transcription = error_state(&error);
+                state.availability.synthesis = error_state(&error);
+                state.last_error = Some(error);
+            })),
         }
     }
 
     /// Reinicia o auxiliar e reabre o áudio quando está livre.
     ///
-    /// Reiniciar volta a amostrar a disponibilidade do microfone e da saída
-    /// (secção 5.1) e reabre uma porta de áudio que tenha ficado presa num
-    /// comando expirado. Uma falha fica visível sem perder a resposta ativa.
-    pub async fn restart_worker(self: &Arc<Self>) -> Result<AppSnapshot, AppError> {
+    /// Reiniciar volta a amostrar a disponibilidade do microfone e da saída e
+    /// reabre uma porta de áudio que tenha ficado presa num comando expirado.
+    /// Uma falha fica visível sem perder a entrevista ativa.
+    pub async fn restart_worker(self: &Arc<Self>) -> Result<InterviewSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
         self.reopen_idle_audio().await;
-        if self.lock_state().model_job.is_some() {
+        let working = self.lock_state().model_job.is_some();
+        if working {
             let error = AppError::busy(
                 "Há uma transcrição ou síntese em curso. Aguarde que termine antes de reiniciar.",
             );
@@ -341,408 +587,12 @@ impl AppService {
                 // O reinício recusado substitui a verificação pendente: uma
                 // falha tardia dela não pode reescrever este erro.
                 *self.lock_health() = None;
-                let snapshot = self.commit(|state| {
-                    state.availability.transcription = error_state(&error);
-                    state.availability.synthesis = error_state(&error);
-                    state.last_error = Some(error.clone());
+                let shown = error.clone();
+                self.commit(|state| {
+                    state.availability.transcription = error_state(&shown);
+                    state.availability.synthesis = error_state(&shown);
+                    state.last_error = Some(shown);
                 });
-                let _ = snapshot;
-                Err(error)
-            }
-        }
-    }
-
-    // -- captura ------------------------------------------------------------
-
-    /// Reserva a pasta da gravação e abre o microfone.
-    ///
-    /// A captura não depende do auxiliar nem dos modelos; só uma gravação, um
-    /// trabalho de modelo ou uma publicação pendente impedem começar. Uma
-    /// reprodução em curso não impede gravar: é parada aqui, como a spec exige
-    /// (secção 4).
-    pub async fn start_recording(&self) -> Result<AppSnapshot, AppError> {
-        let _transition = self.transitions.lock().await;
-
-        if self.lock_pending().is_some() {
-            let error = storage_error(
-                "A gravação anterior ainda não foi guardada. Repita o guardar antes de gravar outra resposta.",
-            );
-            self.record_error(&error);
-            return Err(error);
-        }
-        // A guarda do estado cai no fim desta instrução. Um `if let` manteria a
-        // temporária viva durante todo o bloco e `record_error` voltaria a
-        // adquirir o mesmo mutex — o mutex não é reentrante, por isso o pedido
-        // ficaria bloqueado para sempre em vez de devolver `BUSY`.
-        let gate = self.lock_state().can_start_recording();
-        if let Err(error) = gate {
-            self.record_error(&error);
-            return Err(error);
-        }
-        // Uma paragem que falhou pode ainda entregar o áudio recuperável como
-        // `CaptureInterrupted`; gravar por cima perdia esse parcial sem aviso.
-        if self.lock_capture().is_some() {
-            let error = AppError::busy(
-                "A gravação interrompida ainda está a ser recuperada. Aguarde um instante e tente novamente.",
-            );
-            self.record_error(&error);
-            return Err(error);
-        }
-
-        let audio = Arc::clone(&self.audio);
-        if let Err(error) = audio_task(move || audio.stop_playback()).await {
-            self.record_error(&error);
-            return Err(error);
-        }
-        // A reprodução terminou antes de abrir a entrada; o estado acompanha a
-        // paragem mesmo que a reserva da pasta falhe de seguida.
-        if self.lock_state().playback.is_some() {
-            self.commit(|state| state.playback = None);
-        }
-
-        let store = self.store.clone();
-        let target = match storage_task(move || store.allocate()).await {
-            Ok(target) => target,
-            Err(error) => {
-                self.record_error(&error);
-                return Err(error);
-            }
-        };
-        let recording_id = target.id.clone();
-        let directory = target.directory.clone();
-
-        let audio = Arc::clone(&self.audio);
-        match audio_task(move || audio.start_capture(target)).await {
-            Ok(()) => {
-                *self.lock_capture() = Some(recording_id.clone());
-                Ok(self.commit(|state| {
-                    state.recording_id = Some(recording_id);
-                    state.playback = None;
-                    state.last_error = None;
-                }))
-            }
-            Err(error) => {
-                // A reserva vazia não fica a poluir a pasta de respostas.
-                let _ = fs::remove_dir(&directory);
-                let _ = self.commit(|state| {
-                    state.playback = None;
-                    state.last_error = Some(error.clone());
-                });
-                // Um microfone que desapareceu tem de aparecer no painel de
-                // disponibilidade, que é a instrução do que preparar (5.1).
-                self.resample_after_device_error(&error).await;
-                Err(error)
-            }
-        }
-    }
-
-    /// Termina a captura e publica a nova resposta ativa.
-    pub async fn stop_recording(&self) -> Result<AppSnapshot, AppError> {
-        let _transition = self.transitions.lock().await;
-        if self.lock_state().recording_id.is_none() {
-            let error = not_capturing();
-            self.record_error(&error);
-            return Err(error);
-        }
-
-        let audio = Arc::clone(&self.audio);
-        match audio_task(move || audio.stop_capture()).await {
-            Ok(capture) => self.finish_capture(capture, true).await,
-            Err(error) => {
-                // A thread de áudio pode recuperar o parcial e entregá-lo como
-                // `CaptureInterrupted`; a resposta anterior mantém-se ativa até lá.
-                let recording_id = self.lock_state().recording_id.clone();
-                let snapshot = self.commit(|state| {
-                    state.recording_id = None;
-                    state.last_error = Some(error.clone());
-                });
-                let _ = snapshot;
-                self.resample_after_device_error(&error).await;
-                if error.code == error_code::AUDIO_TIMEOUT {
-                    // Um pedido que expirou não produz evento de interrupção:
-                    // a recuperação tem de acontecer aqui, senão `current_capture`
-                    // bloqueava gravar e fechar para sempre.
-                    if let Some(recording_id) = recording_id {
-                        self.recover_timed_out_capture(&recording_id, error.clone())
-                            .await;
-                    }
-                }
-                Err(error)
-            }
-        }
-    }
-
-    /// Repete a publicação de uma captura já finalizada, sem voltar a gravar.
-    pub async fn retry_save_recording(&self) -> Result<AppSnapshot, AppError> {
-        let _transition = self.transitions.lock().await;
-        let Some(capture) = self.lock_pending().take() else {
-            let error = artifact_missing("Não há nenhuma gravação à espera de publicação.");
-            self.record_error(&error);
-            return Err(error);
-        };
-        self.finish_capture(capture, true).await
-    }
-
-    /// Publica a captura e, quando pedido, inicia a transcrição automática.
-    async fn finish_capture(
-        &self,
-        capture: CapturedAudio,
-        transcribe: bool,
-    ) -> Result<AppSnapshot, AppError> {
-        let publishable = capture.clone();
-        let store = self.store.clone();
-        let published = storage_task(move || store.publish(publishable)).await;
-
-        let attempt = match published {
-            Ok(attempt) => attempt,
-            Err(error) => {
-                // O áudio finalizado fica disponível para repetir a publicação.
-                *self.lock_pending() = Some(capture);
-                *self.lock_capture() = None;
-                let snapshot = self.commit(|state| {
-                    state.recording_id = None;
-                    state.last_error = Some(error.clone());
-                });
-                let _ = snapshot;
-                return Err(error);
-            }
-        };
-
-        *self.lock_pending() = None;
-        *self.lock_capture() = None;
-        self.commit(|state| {
-            state.recording_id = None;
-            state.attempt = Some(attempt.clone());
-            state.playback = None;
-            state.last_error = None;
-        });
-
-        if transcribe && self.transcriber_ready() {
-            // A resposta já está publicada: uma falha de normalização ou do
-            // auxiliar fica visível e o áudio conserva-se para repetir.
-            if let Err(error) = self.submit_transcription(&attempt.id).await {
-                let _ = error;
-            }
-        }
-
-        Ok(self.snapshot())
-    }
-
-    // -- transcrição --------------------------------------------------------
-
-    /// Transcreve a resposta ativa, reutilizando o derivado já normalizado.
-    pub async fn transcribe_response(&self, attempt_id: String) -> Result<AppSnapshot, AppError> {
-        let _transition = self.transitions.lock().await;
-        let active = self
-            .lock_state()
-            .attempt
-            .as_ref()
-            .map(|attempt| attempt.id.clone());
-        if active.as_deref() != Some(attempt_id.as_str()) {
-            let error =
-                stale_source("A transcrição pedida refere uma resposta que já não está ativa.");
-            self.record_error(&error);
-            return Err(error);
-        }
-        self.submit_transcription(&attempt_id).await
-    }
-
-    /// Prepara o áudio e submete a transcrição ao auxiliar.
-    ///
-    /// O chamador tem de deter o coordenador serial. Uma falha registra o
-    /// estado da operação e deixa a resposta e o áudio intactos.
-    async fn submit_transcription(&self, attempt_id: &str) -> Result<AppSnapshot, AppError> {
-        let attempt = match self.lock_state().attempt.clone() {
-            Some(attempt) if attempt.id == attempt_id => attempt,
-            Some(_) => {
-                let error = stale_source("A resposta indicada já não está ativa.");
-                self.record_error(&error);
-                return Err(error);
-            }
-            None => {
-                let error = artifact_missing("Ainda não há nenhuma resposta para transcrever.");
-                self.record_error(&error);
-                return Err(error);
-            }
-        };
-        if self.lock_state().model_job.is_some() {
-            let error =
-                AppError::busy("Já está um trabalho de modelo em curso. Aguarde que termine.");
-            self.record_error(&error);
-            return Err(error);
-        }
-        let Some(control) = self.worker_control() else {
-            let error = worker_unavailable(
-                "O auxiliar Python não está configurado; a resposta continua guardada.",
-            );
-            self.record_error(&error);
-            return Err(error);
-        };
-        if !control.is_running() {
-            let error = worker_unavailable(
-                "O auxiliar Python não está em execução; reinicie-o antes de transcrever.",
-            );
-            self.record_error(&error);
-            return Err(error);
-        }
-
-        let model_path = match self.whisper_directory() {
-            Ok(path) => path,
-            Err(error) => {
-                self.record_error(&error);
-                return Err(error);
-            }
-        };
-        let audio_path = match self.transcription_audio(&attempt).await {
-            Ok(path) => path,
-            Err(error) => {
-                self.record_error(&error);
-                return Err(error);
-            }
-        };
-
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let operation = OperationRecord {
-            id: request_id.clone(),
-            kind: OperationKind::Transcribe,
-            state: OperationState::Running,
-            error: None,
-        };
-        {
-            let store = self.store.clone();
-            let id = attempt.id.clone();
-            let record = operation.clone();
-            if let Err(error) = storage_task(move || store.set_operation(&id, record)).await {
-                self.record_error(&error);
-                return Err(error);
-            }
-        }
-        self.commit(|state| {
-            if let Some(active) = &mut state.attempt {
-                active.last_operation = Some(operation.clone());
-            }
-            state.last_error = None;
-        });
-
-        let params = TranscribeParams::cpu(&audio_path, &model_path);
-        let duration = std::time::Duration::from_millis(attempt.capture.duration_ms.max(1));
-        let request = match WorkerRequest::transcribe(request_id.clone(), params, duration) {
-            Ok(request) => request,
-            Err(error) => {
-                self.record_error(&error);
-                return Err(error);
-            }
-        };
-
-        let job = ModelJob {
-            id: request_id.clone(),
-            attempt_id: Some(attempt.id.clone()),
-            kind: OperationKind::Transcribe,
-            stage: JobStage::Loading,
-        };
-        if let Err(error) = self.commit_try(|state| state.begin_model_job(job, request_id.clone()))
-        {
-            self.record_error(&error);
-            return Err(error);
-        }
-
-        match worker_task(move || control.submit(request)).await {
-            Ok(()) => Ok(self.snapshot()),
-            Err(error) => {
-                let failed = OperationRecord {
-                    state: OperationState::Failed,
-                    error: Some(error.clone()),
-                    ..operation
-                };
-                {
-                    let store = self.store.clone();
-                    let id = attempt.id.clone();
-                    let record = failed.clone();
-                    let _ = storage_task(move || store.set_operation(&id, record)).await;
-                }
-                let snapshot = self.commit(|state| {
-                    state.finish_model_job();
-                    if let Some(active) = &mut state.attempt {
-                        if active.id == attempt.id {
-                            active.last_operation = Some(failed.clone());
-                        }
-                    }
-                    state.last_error = Some(error.clone());
-                });
-                let _ = snapshot;
-                Err(error)
-            }
-        }
-    }
-
-    /// Caminho absoluto do áudio a transcrever, criando o derivado se preciso.
-    async fn transcription_audio(&self, attempt: &Attempt) -> Result<PathBuf, AppError> {
-        if let Some(reference) = &attempt.normalized_file {
-            if let Ok(path) = self.attempt_file(&attempt.id, reference) {
-                return Ok(path);
-            }
-            // O derivado desapareceu: reconstrói-se a partir do original.
-        }
-
-        let source = self.attempt_file(&attempt.id, &attempt.original_file)?;
-        let destination = self.attempt_directory(&attempt.id)?.join(NORMALIZED_FILE);
-        let store = self.store.clone();
-        let attempt_id = attempt.id.clone();
-        let normalized = storage_task(move || {
-            normalize_wav(&source, &destination)?;
-            store.set_normalized(&attempt_id, NORMALIZED_FILE)
-        })
-        .await?;
-        self.commit(|state| state.attempt = Some(normalized));
-        self.attempt_file(&attempt.id, NORMALIZED_FILE)
-    }
-
-    // -- revisão ------------------------------------------------------------
-
-    /// Guarda a revisão de uma transcrição da resposta ativa.
-    ///
-    /// Guardar uma revisão não confirma a resposta para avaliação. Se a
-    /// escrita falhar, a revisão anterior mantém-se intacta na resposta; a
-    /// interface conserva a edição para repetir.
-    pub async fn save_review(
-        &self,
-        attempt_id: String,
-        source_id: String,
-        text: String,
-    ) -> Result<AppSnapshot, AppError> {
-        let _transition = self.transitions.lock().await;
-        let active = self.lock_state().attempt.clone();
-        let Some(attempt) = active.filter(|attempt| attempt.id == attempt_id) else {
-            let error = stale_source("A revisão refere uma resposta que já não está ativa.");
-            self.record_error(&error);
-            return Err(error);
-        };
-        if !attempt
-            .transcripts
-            .iter()
-            .any(|transcript| transcript.id == source_id)
-        {
-            let error =
-                stale_source("A revisão refere uma transcrição que não pertence a esta resposta.");
-            self.record_error(&error);
-            return Err(error);
-        }
-
-        let store = self.store.clone();
-        let id = attempt.id.clone();
-        let source = source_id.clone();
-        let body = text;
-        match storage_task(move || store.save_review(&id, &source, &body)).await {
-            Ok(review) => Ok(self.commit(|state| {
-                if let Some(active) = &mut state.attempt {
-                    if active.id == attempt.id {
-                        active.review = Some(review.clone());
-                    }
-                }
-                state.last_error = None;
-            })),
-            Err(error) => {
-                self.record_error(&error);
                 Err(error)
             }
         }
@@ -750,55 +600,8 @@ impl AppService {
 
     // -- reprodução ---------------------------------------------------------
 
-    /// Reproduz a pergunta ou o original da resposta ativa.
-    ///
-    /// Só a captura e uma síntese em curso impedem reproduzir. Uma transcrição
-    /// pode demorar minutos em CPU e ouvir uma resposta já guardada é
-    /// exatamente o que a spec permite nesse intervalo (secções 4 e 8).
-    pub async fn play_audio(&self, target: PlaybackTarget) -> Result<AppSnapshot, AppError> {
-        let _transition = self.transitions.lock().await;
-        {
-            let state = self.lock_state();
-            if state.recording_id.is_some() {
-                let error = AppError::busy("Termine a gravação antes de reproduzir áudio.");
-                drop(state);
-                self.record_error(&error);
-                return Err(error);
-            }
-            if let Some(job) = &state.model_job {
-                if job.kind == OperationKind::Synthesize {
-                    let error = AppError::busy(
-                        "A voz da pergunta está a ser preparada. Aguarde que termine antes de reproduzir áudio.",
-                    );
-                    drop(state);
-                    self.record_error(&error);
-                    return Err(error);
-                }
-            }
-        }
-
-        match target {
-            PlaybackTarget::Response => {
-                let Some(attempt) = self.lock_state().attempt.clone() else {
-                    let error = artifact_missing("Ainda não há nenhuma resposta para ouvir.");
-                    self.record_error(&error);
-                    return Err(error);
-                };
-                let path = match self.attempt_file(&attempt.id, &attempt.original_file) {
-                    Ok(path) => path,
-                    Err(error) => {
-                        self.record_error(&error);
-                        return Err(error);
-                    }
-                };
-                self.play_path(PlaybackTarget::Response, path).await
-            }
-            PlaybackTarget::Question => self.play_question().await,
-        }
-    }
-
     /// Pára a reprodução em curso, se existir.
-    pub async fn stop_audio(&self) -> Result<AppSnapshot, AppError> {
+    pub async fn stop_audio(&self) -> Result<InterviewSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
         if self.lock_state().playback.is_none() {
             return Ok(self.snapshot());
@@ -813,99 +616,12 @@ impl AppService {
         }
     }
 
-    /// Reproduz a pergunta, usando a cache ou pedindo a síntese ao auxiliar.
-    async fn play_question(&self) -> Result<AppSnapshot, AppError> {
-        let question = self.lock_state().question.clone();
-        let cache = self.question_cache_path();
-        if cache.is_file() {
-            let candidate = cache.clone();
-            match storage_task(move || validate_synthesis_wav(&candidate)).await {
-                Ok(()) => return self.play_path(PlaybackTarget::Question, cache).await,
-                // Um derivado inválido nunca é reproduzido: volta a sintetizar-se.
-                Err(_) => {
-                    let _ = fs::remove_file(&cache);
-                }
-            }
-        }
-
-        let synthesis = self.lock_state().availability.synthesis.clone();
-        if synthesis.status != ComponentStatus::Ready {
-            let error = model_missing(synthesis.message.unwrap_or_else(|| {
-                "A síntese de voz não está disponível nesta instalação.".to_owned()
-            }));
-            self.record_error(&error);
-            return Err(error);
-        }
-        let Some(control) = self.worker_control() else {
-            let error = worker_unavailable(
-                "O auxiliar Python não está configurado; a pergunta não pode ser sintetizada.",
-            );
-            self.record_error(&error);
-            return Err(error);
-        };
-        if !control.is_running() {
-            let error = worker_unavailable(
-                "O auxiliar Python não está em execução; reinicie-o antes de ouvir a pergunta.",
-            );
-            self.record_error(&error);
-            return Err(error);
-        }
-
-        if let Some(parent) = cache.parent() {
-            let directory = parent.to_path_buf();
-            if let Err(error) = storage_task(move || {
-                fs::create_dir_all(&directory).map_err(|error| {
-                    storage_error(format!(
-                        "Não foi possível preparar a cache da pergunta: {error}."
-                    ))
-                })
-            })
-            .await
-            {
-                self.record_error(&error);
-                return Err(error);
-            }
-        }
-
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let params = SynthesizeParams::new(question, cache);
-        let request = match WorkerRequest::synthesize(request_id.clone(), params) {
-            Ok(request) => request,
-            Err(error) => {
-                self.record_error(&error);
-                return Err(error);
-            }
-        };
-        let job = ModelJob {
-            id: request_id.clone(),
-            attempt_id: None,
-            kind: OperationKind::Synthesize,
-            stage: JobStage::Loading,
-        };
-        if let Err(error) = self.commit_try(|state| state.begin_model_job(job, request_id)) {
-            self.record_error(&error);
-            return Err(error);
-        }
-
-        match worker_task(move || control.submit(request)).await {
-            Ok(()) => Ok(self.snapshot()),
-            Err(error) => {
-                let snapshot = self.commit(|state| {
-                    state.finish_model_job();
-                    state.last_error = Some(error.clone());
-                });
-                let _ = snapshot;
-                Err(error)
-            }
-        }
-    }
-
     /// Troca a reprodução para `path` e só então a marca na fotografia.
     async fn play_path(
         &self,
         target: PlaybackTarget,
         path: PathBuf,
-    ) -> Result<AppSnapshot, AppError> {
+    ) -> Result<InterviewSnapshot, AppError> {
         if self.lock_state().playback.is_some() {
             let audio = Arc::clone(&self.audio);
             if let Err(error) = audio_task(move || audio.stop_playback()).await {
@@ -920,13 +636,85 @@ impl AppService {
                 state.last_error = None;
             })),
             Err(error) => {
-                let snapshot = self.commit(|state| {
+                let shown = error.clone();
+                self.commit(|state| {
                     state.playback = None;
-                    state.last_error = Some(error.clone());
+                    state.last_error = Some(shown);
                 });
-                let _ = snapshot;
                 Err(error)
             }
+        }
+    }
+
+    // -- operações ----------------------------------------------------------
+
+    /// Fecha a operação indicada: falhada com o erro, ou interrompida sem ele.
+    ///
+    /// Uma falha ao fechar a linha não substitui o erro original; fica visível
+    /// na fotografia e a reconciliação do próximo arranque recupera a linha.
+    async fn close_operation(
+        &self,
+        database: &Database,
+        operation_id: &str,
+        error: Option<&AppError>,
+    ) {
+        let database = database.clone();
+        let operation_id = operation_id.to_owned();
+        let closed = match error {
+            Some(error) => {
+                let error = error.clone();
+                database_task(move || database.fail_operation(&operation_id, &error)).await
+            }
+            None => database_task(move || database.interrupt_operation(&operation_id)).await,
+        };
+        if let Err(close) = closed {
+            self.record_error(&close);
+        }
+    }
+
+    /// Fecha a operação do trabalho de modelo em curso sem resultado aplicado.
+    ///
+    /// Usada quando o resultado é descartado ou o pedido não chega a ser aceite:
+    /// a operação nunca fica `running` para sempre enquanto a aplicação corre.
+    async fn abandon_model_operation(&self, error: Option<&AppError>) {
+        let operation_id = {
+            let state = self.lock_state();
+            state
+                .model_job
+                .as_ref()
+                .map(|job| job.target.operation_id.clone())
+        };
+        let Some(operation_id) = operation_id else {
+            return;
+        };
+        let Some(database) = self.lock_database().clone() else {
+            return;
+        };
+        self.close_operation(&database, &operation_id, error).await;
+    }
+
+    /// Encerra como concluída a operação do trabalho de modelo em curso.
+    ///
+    /// A síntese não grava resultado em tabela própria: o encerramento e os
+    /// tempos ficam apenas na linha da operação.
+    async fn complete_model_operation(&self) {
+        let operation_id = {
+            let state = self.lock_state();
+            state
+                .model_job
+                .as_ref()
+                .map(|job| job.target.operation_id.clone())
+        };
+        let Some(operation_id) = operation_id else {
+            return;
+        };
+        let Some(database) = self.lock_database().clone() else {
+            return;
+        };
+        let operation_id = operation_id.clone();
+        if let Err(error) = database_task(move || database.complete_operation(&operation_id)).await
+        {
+            self.record_error(&error);
         }
     }
 
@@ -934,21 +722,22 @@ impl AppService {
 
     /// Prepara o encerramento da aplicação.
     ///
-    /// Finaliza uma captura ativa, marca o trabalho pendente como interrompido
-    /// e encerra o auxiliar. Uma falha que possa perder dados — uma captura por
-    /// publicar ou um estado de operação que não pôde ser gravado — devolve erro
-    /// para a janela não fechar em silêncio.
-    pub async fn prepare_close(&self) -> Result<AppSnapshot, AppError> {
+    /// Finaliza uma captura ativa, encerra o auxiliar e deixa de aceitar
+    /// resultados tardios. Uma gravação por publicar ou uma publicação falhada
+    /// devolve erro para a janela não fechar em silêncio.
+    pub async fn prepare_close(&self) -> Result<InterviewSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
 
-        if self.lock_pending().is_some() {
+        let unsaved = self.lock_pending().is_some();
+        if unsaved {
             let error =
                 storage_error("Há uma gravação por guardar. Repita o guardar antes de fechar.");
             self.record_error(&error);
             return Err(error);
         }
 
-        if self.lock_state().recording_id.is_none() && self.lock_capture().is_some() {
+        let recovering = self.lock_state().recording_id.is_none() && self.lock_capture().is_some();
+        if recovering {
             // O parcial de uma paragem falhada ainda pode chegar como evento.
             let error = AppError::new(
                 error_code::CAPTURE_INTERRUPTED,
@@ -959,23 +748,25 @@ impl AppService {
             return Err(error);
         }
 
-        if self.lock_state().recording_id.is_some() {
+        let capturing = self.lock_state().recording_id.is_some();
+        if capturing {
             let audio = Arc::clone(&self.audio);
             match audio_task(move || audio.stop_capture()).await {
                 Ok(capture) => {
-                    self.finish_capture(capture, false).await?;
+                    self.publish_capture(capture, false).await?;
                 }
                 Err(error) => {
-                    let recording_id = self.lock_state().recording_id.clone();
-                    let snapshot = self.commit(|state| {
+                    let identity = self.lock_capture().clone();
+                    let shown = error.clone();
+                    self.commit(|state| {
                         state.recording_id = None;
-                        state.last_error = Some(error.clone());
+                        state.finalizing = false;
+                        state.last_error = Some(shown);
                     });
-                    let _ = snapshot;
                     self.resample_after_device_error(&error).await;
                     if error.code == error_code::AUDIO_TIMEOUT {
-                        if let Some(recording_id) = recording_id {
-                            self.recover_timed_out_capture(&recording_id, error.clone())
+                        if let Some(identity) = identity {
+                            self.recover_timed_out_capture(&identity, error.clone())
                                 .await;
                         }
                     }
@@ -984,42 +775,14 @@ impl AppService {
             }
         }
 
-        let job = self.lock_state().model_job.clone();
-        if let Some(job) = &job {
-            if let Some(attempt_id) = &job.attempt_id {
-                let operation = self
-                    .lock_state()
-                    .attempt
-                    .as_ref()
-                    .filter(|attempt| &attempt.id == attempt_id)
-                    .and_then(|attempt| attempt.last_operation.clone())
-                    .filter(|operation| operation.id == job.id);
-                if let Some(operation) = operation {
-                    let interrupted = OperationRecord {
-                        state: OperationState::Interrupted,
-                        ..operation
-                    };
-                    let store = self.store.clone();
-                    let id = attempt_id.clone();
-                    let record = interrupted.clone();
-                    if let Err(error) = storage_task(move || store.set_operation(&id, record)).await
-                    {
-                        self.record_error(&error);
-                        return Err(error);
-                    }
-                    let attempt_id = attempt_id.clone();
-                    self.commit(|state| {
-                        if let Some(attempt) = &mut state.attempt {
-                            if attempt.id == attempt_id {
-                                attempt.last_operation = Some(interrupted.clone());
-                            }
-                        }
-                    });
-                }
-            }
-        }
-
-        // Nenhum resultado tardio pode voltar a ser aplicado a partir daqui.
+        // Nenhum resultado tardio pode voltar a ser aplicado a partir daqui. Um
+        // trabalho em curso fica `interrupted` na base, recuperável no arranque.
+        self.abandon_model_operation(None).await;
+        *self.lock_synthesis() = None;
+        self.commit(|state| {
+            state.finish_model_job();
+            state.finalizing = false;
+        });
         self.generation.store(0, Ordering::SeqCst);
         *self.lock_health() = None;
         let control = { self.lock_worker().control.take() };
@@ -1038,6 +801,7 @@ impl AppService {
             state.finish_model_job();
             state.set_worker_generation(0);
             state.playback = None;
+            state.finalizing = false;
         }))
     }
 
@@ -1056,7 +820,8 @@ impl AppService {
                     .await;
             }
             AudioEvent::PlaybackFinished => {
-                if self.lock_state().playback.is_none() {
+                let playing = self.lock_state().playback.is_some();
+                if !playing {
                     return; // fim de uma reprodução já substituída
                 }
                 self.commit(|state| state.playback = None);
@@ -1141,6 +906,12 @@ impl AppService {
         });
     }
 
+    /// Guarda uma transcrição automática e encerra a operação que a originou.
+    ///
+    /// O alvo é validado pela base dentro da transação do resultado: uma
+    /// pergunta entretanto confirmada, uma seleção substituída ou uma operação
+    /// já encerrada terminam a operação como obsoleta, sem alterar textos,
+    /// seleções nem progresso, e libertam o trabalho em memória.
     async fn apply_transcription(
         &self,
         request_id: &str,
@@ -1152,14 +923,26 @@ impl AppService {
             if !state.accepts_result(request_id, generation) {
                 return;
             }
-            state
-                .model_job
-                .as_ref()
-                .and_then(|job| job.attempt_id.clone())
+            state.model_job.as_ref().map(|job| job.target.clone())
         };
-        let Some(attempt_id) = target else {
-            let snapshot = self.commit(|state| state.finish_model_job());
-            let _ = snapshot;
+        let Some(target) = target else {
+            self.abandon_model_operation(None).await;
+            self.commit(|state| state.finish_model_job());
+            return;
+        };
+        let Some(recording_id) = target.recording_id.clone() else {
+            self.abandon_model_operation(None).await;
+            self.commit(|state| state.finish_model_job());
+            return;
+        };
+        let Some(database) = self.lock_database().clone() else {
+            let error = database_unavailable(
+                "A base de dados não está disponível; o resultado não foi guardado.",
+            );
+            self.commit(|state| {
+                state.finish_model_job();
+                state.last_error = Some(error);
+            });
             return;
         };
 
@@ -1174,75 +957,94 @@ impl AppService {
             load_ms: result.load_ms,
             processing_ms: result.processing_ms,
         };
+        let configuration = transcription_configuration();
 
-        let store = self.store.clone();
-        let id = attempt_id.clone();
+        let saved_target = target.clone();
         let saved = transcript.clone();
-        let appended = storage_task(move || store.append_transcript(&id, saved)).await;
-        let attempt = match appended {
-            Ok(attempt) => attempt,
-            Err(error) => {
-                self.fail_operation(
-                    request_id,
-                    generation,
-                    &attempt_id,
-                    OperationKind::Transcribe,
-                    error,
-                )
-                .await;
-                return;
-            }
-        };
+        let db = database.clone();
+        let appended =
+            database_task(move || db.append_transcript(saved_target, saved, configuration)).await;
 
-        // Uma revisão inicial só é criada quando ainda não existe; versões
-        // anteriores nunca são substituídas por uma nova transcrição.
-        let mut attempt = attempt;
-        let attempt_id = attempt.id.clone();
-        let needs_review = attempt.review.is_none()
-            && transcript.status == TranscriptStatus::Completed
-            && !transcript.text.trim().is_empty();
-        if needs_review {
-            let store = self.store.clone();
-            let source_id = transcript.id.clone();
-            let text = transcript.text.clone();
-            let id = attempt.id.clone();
-            match storage_task(move || store.save_review(&id, &source_id, &text)).await {
-                Ok(review) => attempt.review = Some(review),
-                Err(error) => {
-                    let _ = self.commit(|state| {
-                        if state.attempt.as_ref().map(|active| active.id.as_str())
-                            == Some(attempt_id.as_str())
-                        {
-                            state.attempt = Some(attempt.clone());
-                        }
-                        state.finish_model_job();
-                        state.last_error = Some(error);
-                    });
-                    return;
+        match appended {
+            Ok(view) => {
+                // Uma revisão inicial só é criada quando ainda não existe; uma
+                // nova transcrição nunca substitui uma revisão guardada.
+                let needs_review = transcript.status == TranscriptStatus::Completed
+                    && !transcript.text.trim().is_empty()
+                    && view.review.is_none();
+                let mut review_error = None;
+                if needs_review {
+                    let request = SaveReview {
+                        request_id: uuid::Uuid::new_v4().to_string(),
+                        target: AnswerTarget {
+                            session_id: target.session_id.clone(),
+                            session_question_id: target.session_question_id.clone(),
+                            recording_id: recording_id.clone(),
+                            selection_version: target.selection_version,
+                        },
+                        expected_review_version: 0,
+                        source_transcript_id: Some(transcript.id.clone()),
+                        origin: ReviewOrigin::Automatic,
+                        text: transcript.text.clone(),
+                    };
+                    let db = database.clone();
+                    if let Err(error) = database_task(move || db.save_review(request)).await {
+                        review_error = Some(error);
+                    }
                 }
+                // A releitura pode falhar sem invalidar o resultado guardado;
+                // o erro fica visível e a próxima navegação volta a ler a base.
+                if let Err(error) = self.refresh_session(&database).await {
+                    self.record_error(&error);
+                }
+                if let Some(error) = review_error {
+                    self.record_error(&error);
+                }
+                self.commit(|state| state.finish_model_job());
+            }
+            // Um alvo confirmado ou substituído não é um erro a mostrar: a
+            // operação termina como obsoleta e nada é escrito.
+            Err(error) if is_obsolete(&error) => {
+                self.abandon_model_operation(None).await;
+                self.commit(|state| state.finish_model_job());
+            }
+            Err(error) => {
+                self.abandon_model_operation(Some(&error)).await;
+                let shown = error.clone();
+                self.commit(|state| {
+                    state.finish_model_job();
+                    state.last_error = Some(shown);
+                });
             }
         }
-
-        let _ = self.commit(|state| {
-            // Uma resposta mais recente nunca é substituída por um resultado antigo.
-            if state.attempt.as_ref().map(|active| active.id.as_str()) == Some(attempt_id.as_str())
-            {
-                state.attempt = Some(attempt);
-            }
-            state.finish_model_job();
-        });
     }
 
     async fn apply_synthesis(&self, request_id: &str, generation: u64, result: SynthesisResult) {
         let accepted = {
             let state = self.lock_state();
             state.accepts_result(request_id, generation)
+                && state
+                    .model_job
+                    .as_ref()
+                    .is_some_and(|job| job.kind == OperationKind::Synthesize)
         };
         if !accepted {
             return;
         }
 
-        let expected = self.question_cache_path();
+        let expected = {
+            let mut pending = self.lock_synthesis();
+            match pending.as_ref() {
+                Some((id, _)) if id == request_id => pending.take().map(|(_, path)| path),
+                _ => None,
+            }
+        };
+        let Some(expected) = expected else {
+            self.abandon_model_operation(None).await;
+            self.commit(|state| state.finish_model_job());
+            return;
+        };
+
         let candidate = expected.clone();
         let provided = result.audio_path.clone();
         let validation = storage_task(move || {
@@ -1266,26 +1068,31 @@ impl AppService {
         .await;
         if let Err(error) = validation {
             let _ = fs::remove_file(&expected);
-            let snapshot = self.commit(|state| {
+            self.abandon_model_operation(Some(&error)).await;
+            let shown = error.clone();
+            self.commit(|state| {
                 state.finish_model_job();
-                state.last_error = Some(error);
+                state.last_error = Some(shown);
             });
-            let _ = snapshot;
             return;
         }
 
-        // A síntese pode terminar enquanto uma resposta está a ser ouvida; a
-        // reprodução automática da pergunta substitui a reprodução em curso em
-        // vez de colidir com ela (a captura já está terminada aqui).
-        if self.lock_state().playback.is_some() {
+        // A síntese ficou concluída; a reprodução que se segue pertence ao
+        // áudio, não muda o estado da operação.
+        self.complete_model_operation().await;
+
+        // A síntese pode terminar enquanto um áudio está a ser ouvido; a
+        // reprodução automática da pergunta substitui a reprodução em curso.
+        let playing = self.lock_state().playback.is_some();
+        if playing {
             let audio = Arc::clone(&self.audio);
             if let Err(error) = audio_task(move || audio.stop_playback()).await {
-                let snapshot = self.commit(|state| {
+                let shown = error.clone();
+                self.commit(|state| {
                     state.finish_model_job();
                     state.playback = None;
-                    state.last_error = Some(error);
+                    state.last_error = Some(shown);
                 });
-                let _ = snapshot;
                 return;
             }
         }
@@ -1293,32 +1100,29 @@ impl AppService {
         let audio = Arc::clone(&self.audio);
         match audio_task(move || audio.play(expected)).await {
             Ok(()) => {
-                let snapshot = self.commit(|state| {
+                self.commit(|state| {
                     state.finish_model_job();
                     state.playback = Some(PlaybackTarget::Question);
                 });
-                let _ = snapshot;
             }
             Err(error) => {
-                let snapshot = self.commit(|state| {
+                self.commit(|state| {
                     state.finish_model_job();
                     state.playback = None;
                     state.last_error = Some(error);
                 });
-                let _ = snapshot;
             }
         }
     }
 
     async fn apply_worker_failure(&self, request_id: &str, generation: u64, error: AppError) {
         // Uma verificação de disponibilidade não é um `ModelJob`: sem este
-        // tratamento, a falha (por exemplo, um timeout) deixaria os componentes
-        // em `loading` para sempre e esconderia o auxiliar bloqueado.
+        // tratamento, a falha deixaria os componentes em `loading` para sempre.
         if self.clear_health_request(request_id) {
-            let _ = self.commit(|state| {
+            self.commit(|state| {
                 state.availability.transcription = error_state(&error);
                 state.availability.synthesis = error_state(&error);
-                state.last_error = Some(error.clone());
+                state.last_error = Some(error);
             });
             return;
         }
@@ -1328,94 +1132,26 @@ impl AppService {
             if !state.accepts_result(request_id, generation) {
                 return;
             }
-            state
-                .model_job
-                .as_ref()
-                .map(|job| (job.kind, job.attempt_id.clone()))
+            state.model_job.as_ref().map(|job| job.kind)
         };
-        let Some((kind, attempt_id)) = target else {
+        let Some(kind) = target else {
             return;
         };
+        if kind == OperationKind::Synthesize {
+            *self.lock_synthesis() = None;
+        }
+        self.abandon_model_operation(Some(&error)).await;
 
         let running = self.worker_running();
-        if let Some(attempt_id) = attempt_id {
-            let operation = OperationRecord {
-                id: request_id.to_owned(),
-                kind,
-                state: OperationState::Failed,
-                error: Some(error.clone()),
-            };
-            let store = self.store.clone();
-            let id = attempt_id.clone();
-            let record = operation.clone();
-            let _ = storage_task(move || store.set_operation(&id, record)).await;
-
-            let snapshot = self.commit(|state| {
-                if let Some(attempt) = &mut state.attempt {
-                    if attempt.id == attempt_id {
-                        attempt.last_operation = Some(operation.clone());
-                    }
-                }
-                state.finish_model_job();
-                state.last_error = Some(error.clone());
-                if !running {
-                    state.availability.transcription = error_state(&error);
-                    state.availability.synthesis = error_state(&error);
-                }
-            });
-            let _ = snapshot;
-            return;
-        }
-
-        let snapshot = self.commit(|state| {
+        let shown = error.clone();
+        self.commit(|state| {
             state.finish_model_job();
-            state.last_error = Some(error.clone());
+            state.last_error = Some(shown.clone());
             if !running {
-                state.availability.transcription = error_state(&error);
-                state.availability.synthesis = error_state(&error);
+                state.availability.transcription = error_state(&shown);
+                state.availability.synthesis = error_state(&shown);
             }
         });
-        let _ = snapshot;
-    }
-
-    /// Falha de uma operação: registra o estado e liberta o trabalho pendente.
-    async fn fail_operation(
-        &self,
-        request_id: &str,
-        generation: u64,
-        attempt_id: &str,
-        kind: OperationKind,
-        error: AppError,
-    ) {
-        let operation = OperationRecord {
-            id: request_id.to_owned(),
-            kind,
-            state: OperationState::Failed,
-            error: Some(error.clone()),
-        };
-        let store = self.store.clone();
-        let id = attempt_id.to_owned();
-        let record = operation.clone();
-        let _ = storage_task(move || store.set_operation(&id, record)).await;
-
-        let accepted = {
-            let state = self.lock_state();
-            state.accepts_result(request_id, generation)
-        };
-        if !accepted {
-            return;
-        }
-        let attempt_id = attempt_id.to_owned();
-        let snapshot = self.commit(|state| {
-            if let Some(attempt) = &mut state.attempt {
-                if attempt.id == attempt_id {
-                    attempt.last_operation = Some(operation.clone());
-                }
-            }
-            state.finish_model_job();
-            state.last_error = Some(error.clone());
-        });
-        let _ = snapshot;
     }
 
     /// Uma captura interrompida conserva o áudio recuperável e a resposta anterior
@@ -1426,53 +1162,39 @@ impl AppService {
         capture: Option<CapturedAudio>,
         error: AppError,
     ) {
-        let recording = self.lock_state().recording_id.clone();
-        let expected = self.lock_capture().clone();
+        let current = self.lock_capture().clone();
         // O evento pertence à gravação que o originou. Sem identidade não há
         // como o atribuir, e uma interrupção atrasada nunca pode invalidar a
         // gravação que está a decorrer agora.
         let id = recording_id.or_else(|| capture.as_ref().map(|capture| capture.id.clone()));
-        let matches = match id {
-            Some(id) => {
-                expected.as_deref() == Some(id.as_str())
-                    || recording.as_deref() == Some(id.as_str())
-            }
-            None => false,
+        let Some(identity) =
+            current.filter(|identity| id.as_deref() == Some(identity.recording_id.as_str()))
+        else {
+            return;
         };
-        if !matches {
-            return; // interrupção de uma captura já tratada ou já substituída
-        }
         *self.lock_capture() = None;
 
         let Some(capture) = capture else {
-            let snapshot = self.commit(|state| {
+            if let Ok(database) = self.database() {
+                let recording_id = identity.recording_id.clone();
+                let _ = database_task(move || database.mark_interrupted(&recording_id)).await;
+            }
+            self.commit(|state| {
                 state.recording_id = None;
+                state.finalizing = false;
                 state.last_error = Some(error);
             });
-            let _ = snapshot;
             return;
         };
 
-        let store = self.store.clone();
-        let publishable = capture.clone();
-        match storage_task(move || store.publish(publishable)).await {
-            Ok(attempt) => {
-                let snapshot = self.commit(|state| {
-                    state.recording_id = None;
-                    state.attempt = Some(attempt);
-                    state.playback = None;
-                    state.last_error = Some(error);
-                });
-                let _ = snapshot;
-            }
-            Err(publish_error) => {
-                *self.lock_pending() = Some(capture);
-                let snapshot = self.commit(|state| {
-                    state.recording_id = None;
-                    state.last_error = Some(publish_error);
-                });
-                let _ = snapshot;
-            }
+        // A publicação já registou o seu próprio erro; o timeout ou a falha do
+        // dispositivo continua a explicar porque é que a captura terminou.
+        if self
+            .publish_capture_as(capture, identity, false)
+            .await
+            .is_ok()
+        {
+            self.record_error(&error);
         }
     }
 
@@ -1537,25 +1259,20 @@ impl AppService {
                 });
             }
             Err(error) => {
-                let snapshot = self.commit(|state| {
+                self.commit(|state| {
                     state.availability.microphone = error_state(&error);
                     state.availability.playback = error_state(&error);
                 });
-                let _ = snapshot;
             }
         }
     }
 
     /// Reabre a porta de áudio quando nada a está a usar e volta a amostrar a
     /// disponibilidade.
-    ///
-    /// É a recuperação explícita de um comando que excedeu o prazo: a porta
-    /// antiga fica presa e o serviço não pode voltar a confiar no dispositivo
-    /// até ser reaberta.
     async fn reopen_idle_audio(&self) {
         let idle = {
             let state = self.lock_state();
-            state.recording_id.is_none() && state.playback.is_none()
+            state.recording_id.is_none() && state.playback.is_none() && !state.finalizing
         };
         if idle && self.lock_capture().is_none() {
             let audio = Arc::clone(&self.audio);
@@ -1568,51 +1285,14 @@ impl AppService {
 
     /// Volta a amostrar o áudio depois de uma falha de dispositivo.
     ///
-    /// O painel de disponibilidade é a instrução do que preparar (secção 5.1):
-    /// um microfone removido não pode continuar a aparecer como «Disponível»,
-    /// nem o contrário depois de restaurado.
+    /// O painel de disponibilidade é a instrução do que preparar: um microfone
+    /// removido não pode continuar a aparecer como «Disponível».
     async fn resample_after_device_error(&self, error: &AppError) {
         let device_failure = error.code == error_code::DEVICE_UNAVAILABLE
             || error.code == error_code::DEVICE_FORMAT_UNSUPPORTED
             || error.code == error_code::AUDIO_TIMEOUT;
         if device_failure {
             self.refresh_audio_availability().await;
-        }
-    }
-
-    /// Recupera uma captura cuja paragem excedeu o prazo.
-    ///
-    /// A thread de áudio pode ter finalizado `original.wav` depois de o pedido
-    /// expirar. Se existir um WAV legível, é publicado como recuperável e
-    /// marcado `incomplete`; sem ficheiro, a reserva é libertada para permitir
-    /// gravar de novo. Em ambos os casos `current_capture` é limpo, para o
-    /// serviço não ficar à espera de um evento que já não chega.
-    async fn recover_timed_out_capture(&self, recording_id: &str, error: AppError) {
-        *self.lock_capture() = None;
-        let directory = match self.attempt_directory(recording_id) {
-            Ok(directory) => directory,
-            Err(_) => return,
-        };
-        let id = recording_id.to_owned();
-        let original = directory.join(ORIGINAL_FILE);
-        match storage_task(move || read_recovered_capture(&id, &original)).await {
-            Ok(Some(capture)) => {
-                // A publicação limpa o erro; o timeout continua a ser o que
-                // explica porque é que a resposta foi recuperada. Se a
-                // publicação falhar, `finish_capture` já deixou a captura
-                // pendente para repetir.
-                if self.finish_capture(capture, false).await.is_ok() {
-                    self.record_error(&error);
-                }
-            }
-            Ok(None) => {
-                // Nunca foi finalizado áudio: a pasta reservada vazia não fica.
-                let _ = fs::remove_dir(&directory);
-                self.record_error(&error);
-            }
-            Err(storage_error) => {
-                self.record_error(&storage_error);
-            }
         }
     }
 
@@ -1632,8 +1312,14 @@ impl AppService {
 
     // -- estado interno -----------------------------------------------------
 
-    fn lock_state(&self) -> std::sync::MutexGuard<'_, AppState> {
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, InterviewState> {
         self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    fn lock_database(&self) -> std::sync::MutexGuard<'_, Option<Database>> {
+        self.database
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
     }
@@ -1644,14 +1330,14 @@ impl AppService {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
-    fn lock_pending(&self) -> std::sync::MutexGuard<'_, Option<CapturedAudio>> {
-        self.pending_publish
+    fn lock_capture(&self) -> std::sync::MutexGuard<'_, Option<CaptureIdentity>> {
+        self.capture
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
-    fn lock_capture(&self) -> std::sync::MutexGuard<'_, Option<String>> {
-        self.current_capture
+    fn lock_pending(&self) -> std::sync::MutexGuard<'_, Option<PendingPublication>> {
+        self.pending_publish
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
     }
@@ -1662,10 +1348,19 @@ impl AppService {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
+    fn lock_synthesis(&self) -> std::sync::MutexGuard<'_, Option<(String, PathBuf)>> {
+        self.synthesis
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    fn lock_listener(&self) -> std::sync::MutexGuard<'_, Option<SnapshotListener>> {
+        self.listener
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
     /// Consome o pedido `health` pendente quando o identificador coincide.
-    ///
-    /// Devolve `true` apenas para a verificação em curso; uma falha de outro
-    /// pedido, ou de uma verificação já substituída, não altera o estado.
     fn clear_health_request(&self, request_id: &str) -> bool {
         let mut pending = self.lock_health();
         if pending.as_deref() == Some(request_id) {
@@ -1676,14 +1371,8 @@ impl AppService {
         }
     }
 
-    fn lock_listener(&self) -> std::sync::MutexGuard<'_, Option<SnapshotListener>> {
-        self.listener
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-    }
-
     /// Aplica uma alteração, aumenta a revisão e publica a fotografia.
-    fn commit(&self, apply: impl FnOnce(&mut AppState)) -> AppSnapshot {
+    fn commit(&self, apply: impl FnOnce(&mut InterviewState)) -> InterviewSnapshot {
         let snapshot = {
             let mut state = self.lock_state();
             apply(&mut state);
@@ -1697,8 +1386,8 @@ impl AppService {
     /// Como [`AppService::commit`], mas uma recusa reverte a alteração.
     fn commit_try(
         &self,
-        apply: impl FnOnce(&mut AppState) -> Result<(), AppError>,
-    ) -> Result<AppSnapshot, AppError> {
+        apply: impl FnOnce(&mut InterviewState) -> Result<(), AppError>,
+    ) -> Result<InterviewSnapshot, AppError> {
         let snapshot = {
             let mut state = self.lock_state();
             apply(&mut state)?;
@@ -1709,12 +1398,12 @@ impl AppService {
         Ok(snapshot)
     }
 
-    fn record_error(&self, error: &AppError) -> AppSnapshot {
+    fn record_error(&self, error: &AppError) -> InterviewSnapshot {
         let error = error.clone();
         self.commit(|state| state.last_error = Some(error))
     }
 
-    fn notify(&self, snapshot: &AppSnapshot) {
+    fn notify(&self, snapshot: &InterviewSnapshot) {
         let listener = self.lock_listener().as_ref().map(Arc::clone);
         if let Some(listener) = listener {
             listener(snapshot);
@@ -1739,29 +1428,11 @@ impl AppService {
         self.lock_state().availability.transcription.status == ComponentStatus::Ready
     }
 
-    fn attempt_directory(&self, attempt_id: &str) -> Result<PathBuf, AppError> {
-        if !is_safe_id(attempt_id) {
-            return Err(artifact_missing(
-                "O identificador indicado não corresponde a uma resposta guardada.",
-            ));
-        }
-        Ok(self.root.join(ATTEMPTS_DIR).join(attempt_id))
-    }
-
-    /// Resolve uma referência relativa dentro da pasta da resposta ativa.
-    fn attempt_file(&self, attempt_id: &str, reference: &str) -> Result<PathBuf, AppError> {
-        resolve_attempt_file(&self.root, attempt_id, reference)
-    }
-
-    /// Caminho da cache de voz da pergunta.
-    fn question_cache_path(&self) -> PathBuf {
-        self.question_cache_path_for(&self.lock_state().question)
-    }
-
-    fn question_cache_path_for(&self, question: &str) -> PathBuf {
-        self.root
+    /// Caminho da cache de voz de um texto de pergunta.
+    fn question_cache_path(&self, text: &str) -> PathBuf {
+        self.legacy_root
             .join(QUESTION_CACHE_DIR)
-            .join(format!("{}.wav", synthesis_cache_key(question)))
+            .join(format!("{}.wav", synthesis_cache_key(text)))
     }
 
     /// Pasta do modelo de transcrição, lida do manifesto preparado offline.
@@ -1829,6 +1500,19 @@ pub fn synthesis_cache_key(text: &str) -> String {
 // Auxiliares
 // ---------------------------------------------------------------------------
 
+/// Configuração efetiva do reconhecimento enviada ao auxiliar.
+///
+/// Guardada com o resultado automático sem alterar o protocolo Python: o
+/// processo só recebe os parâmetros, o núcleo sabe o que enviou. Os caminhos não
+/// entram na configuração guardada.
+fn transcription_configuration() -> Value {
+    json!({
+        "device": "cpu",
+        "computeType": "int8",
+        "language": "en",
+    })
+}
+
 /// Trabalho bloqueante num fio próprio, sem ocupar o runtime.
 async fn offload<T, F>(code: &'static str, what: &'static str, work: F) -> Result<T, AppError>
 where
@@ -1843,6 +1527,20 @@ where
             true,
         )),
     }
+}
+
+async fn database_task<T>(
+    work: impl FnOnce() -> Result<T, AppError> + Send + 'static,
+) -> Result<T, AppError>
+where
+    T: Send + 'static,
+{
+    offload(
+        error_code::DATABASE_UNAVAILABLE,
+        "A operação na base de dados",
+        work,
+    )
+    .await
 }
 
 async fn storage_task<T>(
@@ -1948,55 +1646,18 @@ fn read_recovered_capture(id: &str, original: &Path) -> Result<Option<CapturedAu
     }))
 }
 
-/// Resolve uma referência relativa dentro da pasta de uma resposta.
+/// Resolve uma referência relativa dentro da pasta de uma resposta da fase 1.
 ///
-/// Espelha a regra da persistência: referências absolutas, `..` e prefixos são
-/// recusados, e o ficheiro tem de existir. A interface nunca fornece caminhos.
+/// Espelha a regra da persistência antiga: referências absolutas, `..` e
+/// prefixos são recusados, e o ficheiro tem de existir. A interface nunca
+/// fornece caminhos. A consulta é apenas de leitura e delega na fachada dos
+/// treinos antigos.
 pub fn resolve_attempt_file(
     root: &Path,
     attempt_id: &str,
     reference: &str,
 ) -> Result<PathBuf, AppError> {
-    if !is_safe_id(attempt_id) {
-        return Err(artifact_missing(
-            "O identificador indicado não corresponde a uma resposta guardada.",
-        ));
-    }
-    let reference = Path::new(reference);
-    if reference.is_absolute() {
-        return Err(artifact_missing(
-            "A referência do ficheiro da resposta não é válida.",
-        ));
-    }
-    let mut resolved = root.join(ATTEMPTS_DIR).join(attempt_id);
-    let mut components = 0;
-    for component in reference.components() {
-        match component {
-            Component::Normal(part) => {
-                resolved.push(part);
-                components += 1;
-            }
-            _ => {
-                return Err(artifact_missing(
-                    "A referência do ficheiro da resposta não é válida.",
-                ))
-            }
-        }
-    }
-    if components == 0 || !resolved.is_file() {
-        return Err(artifact_missing(
-            "O ficheiro da resposta não foi encontrado; os restantes dados foram conservados.",
-        ));
-    }
-    Ok(resolved)
-}
-
-fn is_safe_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 64
-        && id.chars().all(|character| {
-            character.is_ascii_alphanumeric() || character == '-' || character == '_'
-        })
+    LegacyStore::new(root.to_path_buf()).resolve_reference(attempt_id, reference)
 }
 
 fn error_state(error: &AppError) -> ComponentState {
@@ -2004,6 +1665,15 @@ fn error_state(error: &AppError) -> ComponentState {
         status: ComponentStatus::Error,
         message: Some(error.message.clone()),
     }
+}
+
+/// Um resultado pertence a um alvo que já foi confirmado ou substituído.
+fn is_obsolete(error: &AppError) -> bool {
+    error.code == error_code::ANSWER_CONFIRMED || error.code == error_code::STALE_SOURCE
+}
+
+fn database_unavailable(message: impl Into<String>) -> AppError {
+    AppError::new(error_code::DATABASE_UNAVAILABLE, message, true)
 }
 
 fn storage_error(message: impl Into<String>) -> AppError {
@@ -2026,6 +1696,14 @@ fn stale_source(message: impl Into<String>) -> AppError {
     AppError::new(error_code::STALE_SOURCE, message, false)
 }
 
+fn answer_confirmed() -> AppError {
+    AppError::new(
+        error_code::ANSWER_CONFIRMED,
+        "A resposta desta pergunta já foi confirmada e é apenas de leitura.",
+        false,
+    )
+}
+
 fn worker_unavailable(message: impl Into<String>) -> AppError {
     AppError::new(error_code::WORKER_UNAVAILABLE, message, true)
 }
@@ -2040,8 +1718,8 @@ fn not_capturing() -> AppError {
 
 /// Instante atual em UTC e RFC3339, com milissegundos.
 ///
-/// A persistência tem a mesma conversão civil privada; a fase 1 não traz uma
-/// biblioteca de datas e o `createdAt` de cada transcrição é decidido aqui.
+/// A base de dados tem a mesma conversão civil privada; o `createdAt` de cada
+/// transcrição automática é decidido aqui, no momento em que o resultado chega.
 fn utc_now() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2105,6 +1783,11 @@ mod tests {
             synthesis_cache_key(QUESTION),
             "o texto não é normalizado além das pontas"
         );
+        assert_ne!(
+            synthesis_cache_key("Tell me about a time you disagreed with a colleague."),
+            synthesis_cache_key(QUESTION),
+            "duas perguntas da mesma sessão têm entradas diferentes"
+        );
     }
 
     #[test]
@@ -2112,10 +1795,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("pasta temporária");
         let root = directory.path();
         let attempt_id = "8a1f4c78-2a4b-4f0e-9b6b-1e6b0f2e4d11";
-        let original = root
-            .join(ATTEMPTS_DIR)
-            .join(attempt_id)
-            .join("original.wav");
+        let original = root.join("attempts").join(attempt_id).join("original.wav");
         fs::create_dir_all(original.parent().expect("pasta")).expect("criar pasta");
         fs::write(&original, b"RIFF").expect("criar original");
 

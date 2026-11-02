@@ -1,20 +1,28 @@
-//! Base da aplicação desktop da fase 1.
+//! Base da aplicação desktop: entrevista guiada sobre o áudio local.
 //!
-//! `domain` reúne os contratos e as regras independentes de hardware, `audio`
-//! os tipos partilhados com a captura e a reprodução, `storage` os artefactos
-//! locais com JSON atómico e recuperação, `worker` a supervisão do auxiliar
-//! Python, `service` a coordenação do fluxo e `commands` os comandos Tauri.
+//! `domain` reúne os contratos partilhados, `audio` os tipos da captura e da
+//! reprodução, `storage` os artefactos JSON da fase 1 (apenas leitura na
+//! aplicação nova), `legacy` a consulta dos treinos anteriores, `worker` a
+//! supervisão do auxiliar Python, `interview` os DTOs e a validação das
+//! entrevistas guiadas, `db` a ligação SQLite recuperável, `artifacts` os
+//! ficheiros de áudio geridos, `service` a coordenação do fluxo e `commands` os
+//! comandos Tauri.
 //!
-//! O arranque liga os adaptadores reais: a pasta de dados é
-//! `app_data_dir()/phase1`, o auxiliar é configurado por `audio.json` em
-//! `app_config_dir()` (ou `LANGUAGE_TUTOR_CONFIG`) e o manifesto de modelos é
-//! lido do mesmo ficheiro. Sem Python ou modelos, a captura, a reprodução e a
-//! revisão continuam a funcionar; a disponibilidade indica o componente em
-//! falta.
+//! O arranque liga os adaptadores reais: a pasta de dados é `app_data_dir()`,
+//! com `tutor.sqlite3`, `sessions/` (artefactos de áudio) e `phase1/`
+//! (configuração, cache e treinos antigos); o auxiliar é configurado por
+//! `audio.json` em `app_config_dir()` (ou `LANGUAGE_TUTOR_CONFIG`) e o manifesto
+//! de modelos é lido do mesmo ficheiro. A base de dados abre em segundo plano e
+//! uma falha é recuperável sem fechar a janela. Sem Python ou modelos, a
+//! captura, a reprodução e a revisão continuam a funcionar.
 
+pub mod artifacts;
 pub mod audio;
 pub mod commands;
+pub mod db;
 pub mod domain;
+pub mod interview;
+pub mod legacy;
 pub mod service;
 pub mod storage;
 pub mod worker;
@@ -23,14 +31,15 @@ use std::sync::Arc;
 
 use tauri::{Emitter, Manager};
 
+use crate::artifacts::ArtifactStore;
 use crate::audio::{AudioEvent, NativeAudio};
-use crate::domain::{AppError, AppSnapshot};
-use crate::service::{AppService, LaunchedWorker, WorkerLauncher};
-use crate::storage::AttemptStore;
+use crate::domain::AppError;
+use crate::interview::InterviewSnapshot;
+use crate::service::{AppService, LaunchedWorker, ServicePaths, WorkerLauncher};
 use crate::worker::{WorkerClient, WorkerConfig};
 
-/// Evento com a fotografia do estado, publicado depois de cada alteração.
-pub const PRACTICE_SNAPSHOT_EVENT: &str = "practice://snapshot";
+/// Evento com a fotografia da entrevista, publicado depois de cada alteração.
+pub const INTERVIEW_SNAPSHOT_EVENT: &str = "interview://snapshot";
 
 /// Arranque real do auxiliar a partir da configuração pessoal.
 ///
@@ -57,11 +66,13 @@ impl WorkerLauncher for AudioWorkerLauncher {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let data_dir = app.path().app_data_dir()?.join("phase1");
+            let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
+            let legacy_root = data_dir.join("phase1");
+            std::fs::create_dir_all(&legacy_root)?;
             let config_dir = app.path().app_config_dir()?;
 
-            let config = WorkerConfig::load(&config_dir, &data_dir);
+            let config = WorkerConfig::load(&config_dir, &legacy_root);
             let models_manifest = config
                 .as_ref()
                 .ok()
@@ -82,17 +93,20 @@ pub fn run() {
             })?;
 
             let service = Arc::new(AppService::new(
-                AttemptStore::new(data_dir.clone()),
+                ServicePaths {
+                    database: data_dir.join("tutor.sqlite3"),
+                    legacy: legacy_root,
+                },
+                ArtifactStore::new(data_dir.join("sessions")),
                 Arc::new(audio),
-                data_dir,
                 launcher,
                 models_manifest,
             ));
 
             let handle = app.handle().clone();
-            service.subscribe(Arc::new(move |snapshot: &AppSnapshot| {
-                if let Err(error) = handle.emit(PRACTICE_SNAPSHOT_EVENT, snapshot.clone()) {
-                    eprintln!("Não foi possível publicar a fotografia: {error}");
+            service.subscribe(Arc::new(move |snapshot: &InterviewSnapshot| {
+                if let Err(error) = handle.emit(INTERVIEW_SNAPSHOT_EVENT, snapshot.clone()) {
+                    eprintln!("Não foi possível publicar a fotografia da entrevista: {error}");
                 }
             }));
 
@@ -103,28 +117,39 @@ pub fn run() {
                 }
             });
 
-            // O auxiliar arranca em segundo plano: a janela aparece e a
-            // captura fica disponível mesmo sem Python ou modelos.
+            // O auxiliar e a base arrancam em segundo plano: a janela aparece e
+            // a disponibilidade fica visível mesmo sem Python, modelos ou base.
             let starting = Arc::clone(&service);
             tauri::async_runtime::spawn(async move {
-                starting.start_worker().await;
+                starting.start().await;
             });
 
             app.manage(service);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::get_snapshot,
-            commands::refresh_availability,
-            commands::start_recording,
-            commands::stop_recording,
-            commands::retry_save_recording,
-            commands::transcribe_response,
-            commands::play_audio,
-            commands::stop_audio,
-            commands::save_review,
-            commands::restart_worker,
-            commands::prepare_close,
+            commands::interview_snapshot,
+            commands::interview_list_questions,
+            commands::interview_create_question,
+            commands::interview_update_question,
+            commands::interview_start_session,
+            commands::interview_list_sessions,
+            commands::interview_load_session,
+            commands::interview_list_legacy,
+            commands::interview_load_legacy,
+            commands::interview_start_recording,
+            commands::interview_stop_recording,
+            commands::interview_retry_save_recording,
+            commands::interview_transcribe_response,
+            commands::interview_save_review,
+            commands::interview_confirm_answer,
+            commands::interview_advance_session,
+            commands::interview_play_audio,
+            commands::interview_stop_audio,
+            commands::interview_refresh_availability,
+            commands::interview_restart_worker,
+            commands::interview_prepare_close,
+            commands::interview_retry_database,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao arrancar a aplicação Tauri");

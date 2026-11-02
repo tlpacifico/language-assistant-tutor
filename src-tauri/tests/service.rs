@@ -1,10 +1,17 @@
-//! Testes de coordenação do serviço da fase 1.
+//! Testes de coordenação do serviço da fase 2 (entrevista guiada).
 //!
 //! Nenhum teste abre um microfone, carrega modelos ou arranca subprocessos: a
 //! porta de áudio, o auxiliar e o arranque do auxiliar são substituídos por
-//! adaptadores controlados. O armazenamento é real (pasta temporária), para
-//! cobrir publicação, derivado normalizado e revisões.
+//! adaptadores controlados. A base de dados e os artefactos são reais (diretório
+//! temporário), para cobrir publicação, derivado normalizado, revisões,
+//! confirmações e recuperação.
+//!
+//! O banco inicial é aplicado ao abrir a base; o arranjo reduz depois o banco
+//! às duas perguntas fixas abaixo para o conteúdo da sessão ser determinístico.
+//! A pergunta fixa é a mesma da fase 1, para a chave de síntese continuar a ser
+//! comparada com o auxiliar Python.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -12,24 +19,34 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use hound::{SampleFormat, WavSpec, WavWriter};
+use rusqlite::params;
 use serde_json::json;
 
+use language_assistant_tutor::artifacts::{reconcile, ArtifactStore, NORMALIZED_FILE};
 use language_assistant_tutor::audio::{
     AudioEvent, AudioPort, AvailabilityAudio, CapturedAudio, RecordingTarget,
 };
+use language_assistant_tutor::db::Database;
 use language_assistant_tutor::domain::{
-    error_code, AppError, AppSnapshot, Attempt, CaptureMeta, ComponentState, ComponentStatus,
-    OperationKind, OperationState, PlaybackTarget, Segment, TranscriptStatus, QUESTION,
+    error_code, AppError, CaptureMeta, ComponentState, ComponentStatus, OperationKind,
+    PlaybackTarget, Segment, TranscriptStatus, QUESTION,
+};
+use language_assistant_tutor::interview::{
+    AdvanceSession, AnswerTarget, AudioSelection, Category, ConfirmAnswer, DatabaseState,
+    InterviewSnapshot, QuestionDetail, RecordingState, ReviewOrigin, SaveReview, SessionDetail,
+    SessionStatus, StartSession,
 };
 use language_assistant_tutor::service::{
-    synthesis_cache_key, AppService, LaunchedWorker, WorkerControl, WorkerLauncher,
+    synthesis_cache_key, AppService, LaunchedWorker, ServicePaths, WorkerControl, WorkerLauncher,
 };
-use language_assistant_tutor::storage::AttemptStore;
 use language_assistant_tutor::worker::protocol::WorkerOp;
 use language_assistant_tutor::worker::{
     HealthResult, SynthesisResult, TranscriptionResult, WorkerEvent, WorkerMessage, WorkerRequest,
     WorkerResult,
 };
+
+/// Segunda pergunta do banco inicial, mantida para sessões de duas perguntas.
+const SECOND_QUESTION: &str = "Tell me about a time you had to reduce the scope of a task.";
 
 // ---------------------------------------------------------------------------
 // Porta de áudio controlada
@@ -50,12 +67,52 @@ fn write_rate_wav(path: &Path, sample_rate: u32) {
     writer.finalize().expect("fechar WAV de teste");
 }
 
+/// WAV válido sem amostras: a publicação tem de recusá-lo.
+fn write_empty_wav(path: &Path) {
+    let spec = WavSpec {
+        channels: 1,
+        sample_rate: 48_000,
+        bits_per_sample: 16,
+        sample_format: SampleFormat::Int,
+    };
+    let writer = WavWriter::create(path, spec).expect("criar WAV vazio");
+    writer.finalize().expect("fechar WAV vazio");
+}
+
+/// Porta de espera que deixa o teste observar a janela de finalização.
+///
+/// A paragem da captura bloqueia até `release`, para o teste poder chamar um
+/// comando enquanto o serviço está a finalizar a gravação.
+#[derive(Debug, Default)]
+struct StopGate {
+    released: Mutex<bool>,
+    ready: std::sync::Condvar,
+}
+
+impl StopGate {
+    fn wait(&self) {
+        let mut released = self.released.lock().expect("porta da paragem");
+        while !*released {
+            released = self.ready.wait(released).expect("porta da paragem");
+        }
+    }
+
+    fn release(&self) {
+        *self.released.lock().expect("porta da paragem") = true;
+        self.ready.notify_all();
+    }
+}
+
 #[derive(Debug, Default)]
 struct AudioState {
     capture: Option<RecordingTarget>,
     fail_stop: bool,
     /// A paragem seguinte excede o prazo, mas o original fica finalizado.
     stop_timeout: bool,
+    /// A paragem seguinte escreve um WAV sem amostras (publicação falha).
+    corrupt_stop: bool,
+    /// A paragem seguinte fica bloqueada até a porta ser libertada.
+    stop_gate: Option<Arc<StopGate>>,
     /// Falha injetada na abertura seguinte do microfone.
     fail_start: Option<AppError>,
     /// Disponibilidade amostrada; `None` significa pronto.
@@ -80,6 +137,18 @@ impl FakeAudio {
     /// A próxima paragem expira, como uma thread de áudio que responde tarde.
     fn fail_next_stop_timeout(&self) {
         self.state.lock().expect("estado do áudio").stop_timeout = true;
+    }
+
+    /// A próxima paragem deixa um original inválido, para a publicação falhar.
+    fn corrupt_next_stop(&self) {
+        self.state.lock().expect("estado do áudio").corrupt_stop = true;
+    }
+
+    /// A próxima paragem fica bloqueada até a porta devolvida ser libertada.
+    fn block_next_stop(&self) -> Arc<StopGate> {
+        let gate = Arc::new(StopGate::default());
+        self.state.lock().expect("estado do áudio").stop_gate = Some(Arc::clone(&gate));
+        gate
     }
 
     /// A próxima abertura do microfone falha com o erro indicado.
@@ -157,6 +226,15 @@ impl AudioPort for FakeAudio {
             ));
         }
         let original = target.directory.join("original.wav");
+        if state.corrupt_stop {
+            state.corrupt_stop = false;
+            write_empty_wav(&original);
+        }
+        let gate = state.stop_gate.take();
+        drop(state);
+        if let Some(gate) = gate {
+            gate.wait();
+        }
         let bytes = fs::metadata(&original)
             .expect("a captura escreveu o original")
             .len();
@@ -391,25 +469,57 @@ fn synthesis_result(path: &Path) -> WorkerResult {
     })
 }
 
-/// Operações ainda pendentes no snapshot.
-fn pending_jobs(snapshot: &AppSnapshot) -> usize {
-    let job = usize::from(snapshot.model_job.is_some());
-    let running = snapshot
-        .attempt
-        .as_ref()
-        .and_then(|attempt| attempt.last_operation.as_ref())
-        .map(|operation| usize::from(operation.state == OperationState::Running))
-        .unwrap_or(0);
-    job + running
+/// Trabalho de modelo pendente no snapshot.
+fn pending_jobs(snapshot: &InterviewSnapshot) -> usize {
+    usize::from(snapshot.model_job.is_some())
 }
 
-fn attempt_transcript_ids(attempt: &Attempt) -> Vec<String> {
-    attempt
-        .transcripts
+fn selected_recording(
+    current: &QuestionDetail,
+) -> &language_assistant_tutor::interview::RecordingView {
+    let selected = current
+        .question
+        .selected_recording_id
+        .as_deref()
+        .expect("a pergunta tem uma gravação selecionada");
+    current
+        .recordings
         .iter()
-        .map(|transcript| transcript.id.clone())
-        .collect()
+        .find(|recording| recording.id == selected)
+        .expect("a gravação selecionada pertence à pergunta")
 }
+
+fn answer_target(current: &QuestionDetail) -> AnswerTarget {
+    AnswerTarget {
+        session_id: current.question.session_id.clone(),
+        session_question_id: current.question.id.clone(),
+        recording_id: selected_recording(current).id.clone(),
+        selection_version: current.question.selection_version,
+    }
+}
+
+fn new_request_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+/// Especificação da sessão criada pelo arranjo.
+#[derive(Debug, Clone, Copy)]
+struct StartSpec {
+    category: Option<Category>,
+    count: u32,
+}
+
+/// Sessão de uma pergunta com o texto fixo da fase 1.
+const SINGLE_FIXED: StartSpec = StartSpec {
+    category: Some(Category::ProblemSolving),
+    count: 1,
+};
+
+/// Sessão com as duas perguntas fixas do arranjo, por qualquer ordem.
+const PAIR: StartSpec = StartSpec {
+    category: None,
+    count: 2,
+};
 
 // ---------------------------------------------------------------------------
 // Arranjo do serviço
@@ -417,29 +527,54 @@ fn attempt_transcript_ids(attempt: &Attempt) -> Vec<String> {
 
 struct Harness {
     _directory: tempfile::TempDir,
-    root: PathBuf,
+    legacy_root: PathBuf,
+    artifacts_root: PathBuf,
+    database: Database,
     audio: Arc<FakeAudio>,
     worker: Arc<FakeWorker>,
     launcher: Arc<FakeLauncher>,
     service: Arc<AppService>,
-    snapshots: Arc<Mutex<Vec<AppSnapshot>>>,
+    snapshots: Arc<Mutex<Vec<InterviewSnapshot>>>,
 }
 
 impl Harness {
-    /// Serviço com auxiliar ligado mas sem verificação de disponibilidade feita.
+    /// Serviço com auxiliar ligado, sem verificação de disponibilidade e com uma
+    /// sessão da pergunta fixa.
     async fn new() -> Self {
         Self::build(
             Arc::new(FakeLauncher::new(Arc::new(FakeWorker::default()))),
             None,
+            Some(SINGLE_FIXED),
         )
         .await
     }
 
-    /// Serviço com transcrição pronta: cada captura publicada é transcrita.
+    /// Serviço com transcrição pronta: cada gravação publicada é transcrita.
     async fn with_transcriber() -> Self {
         Self::build(
             Arc::new(FakeLauncher::new(Arc::new(FakeWorker::default()))),
             Some(ComponentStatus::Ready),
+            Some(SINGLE_FIXED),
+        )
+        .await
+    }
+
+    /// Serviço com transcrição pronta e duas perguntas na sessão.
+    async fn with_transcriber_and_pair() -> Self {
+        Self::build(
+            Arc::new(FakeLauncher::new(Arc::new(FakeWorker::default()))),
+            Some(ComponentStatus::Ready),
+            Some(PAIR),
+        )
+        .await
+    }
+
+    /// Serviço com duas perguntas e sem transcrição automática.
+    async fn with_pair() -> Self {
+        Self::build(
+            Arc::new(FakeLauncher::new(Arc::new(FakeWorker::default()))),
+            None,
+            Some(PAIR),
         )
         .await
     }
@@ -453,15 +588,33 @@ impl Harness {
                 false,
             ))),
             None,
+            Some(SINGLE_FIXED),
         )
         .await
     }
 
-    async fn build(launcher: Arc<FakeLauncher>, transcription: Option<ComponentStatus>) -> Self {
+    /// Serviço sem sessão iniciada: a interface ainda não pediu nenhuma.
+    async fn without_session() -> Self {
+        Self::build(
+            Arc::new(FakeLauncher::new(Arc::new(FakeWorker::default()))),
+            None,
+            None,
+        )
+        .await
+    }
+
+    async fn build(
+        launcher: Arc<FakeLauncher>,
+        transcription: Option<ComponentStatus>,
+        session: Option<StartSpec>,
+    ) -> Self {
         let directory = tempfile::tempdir().expect("pasta temporária");
-        let root = directory.path().join("phase1");
+        let legacy_root = directory.path().join("phase1");
+        let artifacts_root = directory.path().join("sessions");
+        let database_path = directory.path().join("tutor.sqlite3");
         let whisper = directory.path().join("whisper");
         fs::create_dir_all(&whisper).expect("pasta dos modelos");
+        fs::create_dir_all(&legacy_root).expect("pasta da fase 1");
         let manifest = directory.path().join("models.json");
         fs::write(
             &manifest,
@@ -473,38 +626,102 @@ impl Harness {
         )
         .expect("escrever manifesto de modelos");
 
+        // O arranjo abre a base primeiro (aplica o banco inicial) e reduz o
+        // banco às perguntas fixas, para o conteúdo da sessão ser determinístico.
+        let database = Database::open(database_path.clone()).expect("abrir a base de teste");
+        keep_fixed_questions(&database);
+
         let worker = launcher.worker.clone();
         let audio = Arc::new(FakeAudio::default());
         let service = Arc::new(AppService::new(
-            AttemptStore::new(root.clone()),
+            ServicePaths {
+                database: database_path.clone(),
+                legacy: legacy_root.clone(),
+            },
+            ArtifactStore::new(artifacts_root.clone()),
             audio.clone(),
-            root.clone(),
             launcher.clone(),
             Some(manifest),
         ));
         let snapshots = Arc::new(Mutex::new(Vec::new()));
         let collected = snapshots.clone();
-        service.subscribe(Arc::new(move |snapshot: &AppSnapshot| {
+        service.subscribe(Arc::new(move |snapshot: &InterviewSnapshot| {
             collected
                 .lock()
                 .expect("guardar snapshots")
                 .push(snapshot.clone());
         }));
-        service.start_worker().await;
+        service.start().await;
 
-        if let Some(status) = transcription {
-            health(&service, status, ComponentStatus::Missing).await;
-        }
-
-        Self {
+        let harness = Self {
             _directory: directory,
-            root,
+            legacy_root,
+            artifacts_root,
+            database,
             audio,
             worker,
             launcher,
             service,
             snapshots,
+        };
+
+        if let Some(status) = transcription {
+            health(&harness.service, status, ComponentStatus::Missing).await;
         }
+        if let Some(spec) = session {
+            harness.start_session(spec).await;
+        }
+        harness
+    }
+
+    async fn start_session(&self, spec: StartSpec) -> SessionDetail {
+        let snapshot = self
+            .service
+            .start_session(StartSession {
+                request_id: new_request_id(),
+                category: spec.category,
+                count: spec.count,
+            })
+            .await
+            .expect("iniciar a sessão");
+        self.detail_of(&snapshot)
+    }
+
+    fn snapshot(&self) -> InterviewSnapshot {
+        self.service.snapshot()
+    }
+
+    fn session_id(&self) -> String {
+        self.snapshot()
+            .active_session
+            .expect("a sessão está em curso")
+            .id
+    }
+
+    fn current(&self) -> QuestionDetail {
+        self.snapshot()
+            .current
+            .expect("a sessão tem pergunta atual")
+    }
+
+    /// Detalhe da sessão lido da base (a única autoridade).
+    fn detail_of(&self, snapshot: &InterviewSnapshot) -> SessionDetail {
+        let session_id = snapshot
+            .active_session
+            .as_ref()
+            .expect("a sessão está em curso")
+            .id
+            .clone();
+        self.database
+            .load_session(&session_id)
+            .expect("ler a sessão guardada")
+    }
+
+    async fn load_detail(&self, session_id: &str) -> SessionDetail {
+        self.service
+            .load_session(session_id.to_owned())
+            .await
+            .expect("abrir a sessão")
     }
 
     fn requests(&self) -> Vec<WorkerRequest> {
@@ -522,6 +739,19 @@ impl Harness {
             .collect()
     }
 
+    fn synthesis_request(&self) -> PathBuf {
+        let request = self
+            .requests()
+            .into_iter()
+            .rfind(|request| request.op == WorkerOp::Synthesize)
+            .expect("pedido de síntese");
+        PathBuf::from(
+            request.params["outputPath"]
+                .as_str()
+                .expect("outputPath da síntese"),
+        )
+    }
+
     fn revisions(&self) -> Vec<u64> {
         self.snapshots
             .lock()
@@ -531,24 +761,41 @@ impl Harness {
             .collect()
     }
 
-    fn original_path(&self, attempt_id: &str) -> PathBuf {
-        self.root
-            .join("attempts")
-            .join(attempt_id)
+    fn recording_dir(&self, current: &QuestionDetail, recording_id: &str) -> PathBuf {
+        self.artifacts_root
+            .join(&current.question.session_id)
+            .join(&current.question.id)
+            .join(recording_id)
+    }
+
+    fn original_path(&self, current: &QuestionDetail, recording_id: &str) -> PathBuf {
+        self.recording_dir(current, recording_id)
             .join("original.wav")
     }
 
-    fn normalized_path(&self, attempt_id: &str) -> PathBuf {
-        self.root
-            .join("attempts")
-            .join(attempt_id)
-            .join("normalized.wav")
+    fn normalized_path(&self, current: &QuestionDetail, recording_id: &str) -> PathBuf {
+        self.recording_dir(current, recording_id)
+            .join(NORMALIZED_FILE)
     }
 
-    /// Grava uma resposta e devolve-a já ativa.
-    async fn record_once(&self) -> AppSnapshot {
+    fn cache_path(&self, text: &str) -> PathBuf {
+        self.legacy_root
+            .join("question-cache")
+            .join(format!("{}.wav", synthesis_cache_key(text)))
+    }
+
+    fn target_of(&self, current: &QuestionDetail) -> AnswerTarget {
+        answer_target(current)
+    }
+
+    /// Grava e publica uma resposta na pergunta atual.
+    async fn record_once(&self) -> InterviewSnapshot {
+        let current = self.current();
         self.service
-            .start_recording()
+            .start_recording(
+                current.question.id.clone(),
+                current.question.selection_version,
+            )
             .await
             .expect("começar a gravar");
         self.service
@@ -556,6 +803,102 @@ impl Harness {
             .await
             .expect("terminar a gravar")
     }
+
+    /// Guarda a revisão manual de uma resposta, sem confirmar.
+    async fn save_manual_review(&self, text: &str) -> InterviewSnapshot {
+        let current = self.current();
+        let target = self.target_of(&current);
+        let expected = selected_recording(&current)
+            .review
+            .as_ref()
+            .map_or(0, |review| review.version);
+        self.service
+            .save_review(SaveReview {
+                request_id: new_request_id(),
+                target,
+                expected_review_version: expected,
+                source_transcript_id: None,
+                origin: ReviewOrigin::ManualExplicit,
+                text: text.to_owned(),
+            })
+            .await
+            .expect("guardar a revisão")
+    }
+
+    /// Confirma a resposta atual com o texto guardado na revisão.
+    async fn confirm_current(&self, text: &str) -> InterviewSnapshot {
+        let snapshot = self.snapshot();
+        let current = snapshot
+            .current
+            .as_ref()
+            .expect("a sessão tem pergunta atual");
+        let target = self.target_of(current);
+        let review_version = selected_recording(current)
+            .review
+            .as_ref()
+            .expect("a revisão foi guardada")
+            .version;
+        let expected_session_version = snapshot
+            .active_session
+            .as_ref()
+            .expect("sessão em curso")
+            .version;
+        self.service
+            .confirm_answer(ConfirmAnswer {
+                request_id: new_request_id(),
+                target,
+                expected_review_version: review_version,
+                source_transcript_id: None,
+                origin: ReviewOrigin::ManualExplicit,
+                text: text.to_owned(),
+                expected_session_version,
+            })
+            .await
+            .expect("confirmar a resposta")
+    }
+
+    /// Confirma a pergunta atual e avança para a seguinte.
+    async fn confirm_and_advance(&self, text: &str) -> InterviewSnapshot {
+        self.save_manual_review(text).await;
+        let confirmed = self.confirm_current(text).await;
+        let session = confirmed
+            .active_session
+            .as_ref()
+            .expect("sessão em curso depois de confirmar");
+        let current = confirmed.current.as_ref().expect("pergunta confirmada");
+        self.service
+            .advance_session(AdvanceSession {
+                request_id: new_request_id(),
+                session_id: session.id.clone(),
+                session_question_id: current.question.id.clone(),
+                expected_session_version: session.version,
+            })
+            .await
+            .expect("avançar a sessão")
+    }
+}
+
+/// Reduz o banco inicial às duas perguntas fixas do arranjo.
+///
+/// A base é temporária e nenhuma sessão existe ainda; a pergunta fixa da fase 1
+/// fica com o texto exato usado na chave de síntese.
+fn keep_fixed_questions(database: &Database) {
+    let kept = database
+        .with_connection(|connection| {
+            connection
+                .execute(
+                    "DELETE FROM questions WHERE text NOT IN (?1, ?2)",
+                    params![QUESTION, SECOND_QUESTION],
+                )
+                .map_err(|error| AppError::new("TEST_SQLITE", error.to_string(), false))?;
+            connection
+                .query_row("SELECT count(*) FROM questions", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .map_err(|error| AppError::new("TEST_SQLITE", error.to_string(), false))
+        })
+        .expect("reduzir o banco às perguntas fixas");
+    assert_eq!(kept, 2, "o banco de teste tem de ficar com duas perguntas");
 }
 
 fn last_health_request(harness: &Harness) -> String {
@@ -589,59 +932,213 @@ async fn health(service: &AppService, transcription: ComponentStatus, synthesis:
         .await;
 }
 
+fn codes(snapshot: &InterviewSnapshot) -> Vec<String> {
+    snapshot
+        .warnings
+        .iter()
+        .chain(snapshot.last_error.iter())
+        .map(|error| error.code.clone())
+        .collect()
+}
+
+/// Identificadores das transcrições de uma pergunta da sessão.
+fn transcript_ids(current: &QuestionDetail) -> Vec<String> {
+    current
+        .recordings
+        .iter()
+        .flat_map(|recording| recording.transcripts.iter())
+        .map(|transcript| transcript.id.clone())
+        .collect()
+}
+
+fn unique_ids(values: impl IntoIterator<Item = String>) -> HashSet<String> {
+    values.into_iter().collect()
+}
+
+/// Espera que o serviço entre na janela de finalização, com prazo curto.
+async fn wait_until_finalizing(service: &AppService) {
+    for _ in 0..400 {
+        if service.snapshot().finalizing {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("a finalização não começou dentro do prazo");
+}
+
 // ---------------------------------------------------------------------------
-// Testes exigidos
+// Abertura da base e arranque
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn can_record_with_worker_missing() {
+async fn database_error_keeps_window_recoverable() {
+    // A pasta da base não existe: a abertura falha, mas a janela continua
+    // utilizável e a fotografia diz exatamente isso.
+    let directory = tempfile::tempdir().expect("pasta temporária");
+    let legacy_root = directory.path().join("phase1");
+    fs::create_dir_all(&legacy_root).expect("pasta da fase 1");
+    let database_path = directory.path().join("missing").join("tutor.sqlite3");
+
+    let worker = Arc::new(FakeWorker::default());
+    let launcher = Arc::new(FakeLauncher::new(worker.clone()));
+    let audio = Arc::new(FakeAudio::default());
+    let service = Arc::new(AppService::new(
+        ServicePaths {
+            database: database_path.clone(),
+            legacy: legacy_root,
+        },
+        ArtifactStore::new(directory.path().join("sessions")),
+        audio.clone(),
+        launcher,
+        None,
+    ));
+
+    let started = service.start().await;
+    assert_eq!(started.database, DatabaseState::Error);
+    assert_eq!(
+        started.last_error.expect("erro visível").code,
+        error_code::DATABASE_UNAVAILABLE
+    );
+    assert!(started.active_session.is_none());
+    assert_eq!(
+        started.availability.microphone.status,
+        ComponentStatus::Ready,
+        "a disponibilidade do áudio continua a ser amostrada"
+    );
+
+    // Nenhuma sessão pode ser iniciada como se estivesse guardada.
+    let error = service
+        .start_session(StartSession {
+            request_id: new_request_id(),
+            category: None,
+            count: 1,
+        })
+        .await
+        .expect_err("sem base não se inicia uma sessão");
+    assert_eq!(error.code, error_code::DATABASE_UNAVAILABLE);
+    assert_eq!(service.snapshot().database, DatabaseState::Error);
+
+    // Criada a pasta, repetir a abertura recupera a mesma janela.
+    let retried = tokio::time::timeout(Duration::from_secs(5), async {
+        fs::create_dir_all(database_path.parent().expect("pasta da base"))
+            .expect("criar a pasta da base");
+        service.retry_database().await
+    })
+    .await
+    .expect("a abertura recuperável não fica bloqueada")
+    .expect("a base abre à segunda tentativa");
+
+    assert_eq!(retried.database, DatabaseState::Ready);
+    assert!(retried.last_error.is_none());
+    let questions = service
+        .list_questions(None)
+        .await
+        .expect("listar o banco inicial");
+    assert_eq!(questions.len(), 20, "o banco inicial é aplicado ao abrir");
+}
+
+// ---------------------------------------------------------------------------
+// Captura
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn can_record_and_play_with_worker_missing() {
     let harness = Harness::without_worker().await;
 
     // O componente em falta é indicado, sem impedir a captura.
-    let snapshot = harness.service.snapshot();
+    let snapshot = harness.snapshot();
     assert_eq!(
         snapshot.availability.transcription.status,
         ComponentStatus::Missing
     );
     assert!(snapshot.availability.transcription.message.is_some());
 
+    let current = harness.current();
     let snapshot = harness.record_once().await;
-    let attempt = snapshot.attempt.expect("a resposta foi guardada");
+    let recording = selected_recording(snapshot.current.as_ref().expect("pergunta atual"));
     assert!(snapshot.recording_id.is_none());
     assert!(harness.requests().is_empty(), "nada é enviado ao auxiliar");
     assert!(
-        attempt.normalized_file.is_none(),
-        "sem transcritor não se cria o derivado"
+        recording.normalized_file.is_some(),
+        "o derivado é produzido na publicação, sem depender do auxiliar"
     );
-    assert!(harness.original_path(&attempt.id).is_file());
+    assert!(
+        harness.normalized_path(&current, &recording.id).is_file(),
+        "o derivado de transcrição fica na pasta gerida"
+    );
+    assert!(
+        harness.original_path(&current, &recording.id).is_file(),
+        "o original é guardado na pasta gerida"
+    );
+    assert!(recording.capture.as_ref().expect("metadados").duration_ms > 0);
 
     // O áudio guardado continua a poder ser ouvido.
     let snapshot = harness
         .service
-        .play_audio(PlaybackTarget::Response)
+        .play_audio(AudioSelection::Recording {
+            recording_id: recording.id.clone(),
+        })
         .await
         .expect("ouvir sem auxiliar");
     assert_eq!(snapshot.playback, Some(PlaybackTarget::Response));
     assert_eq!(
         harness.audio.played(),
-        vec![harness.original_path(&attempt.id)]
+        vec![harness.original_path(&current, &recording.id)]
     );
 }
 
 #[tokio::test]
-async fn failed_stop_keeps_previous_attempt() {
+async fn legacy_attempt_audio_is_read_only() {
+    let harness = Harness::new().await;
+    let attempt_id = "8a1f4c78-2a4b-4f0e-9b6b-1e6b0f2e4d11";
+    let directory = harness.legacy_root.join("attempts").join(attempt_id);
+    fs::create_dir_all(&directory).expect("pasta do treino antigo");
+    let original = directory.join("original.wav");
+    write_rate_wav(&original, 48_000);
+
+    let snapshot = harness
+        .service
+        .play_audio(AudioSelection::Legacy {
+            attempt_id: attempt_id.to_owned(),
+        })
+        .await
+        .expect("ouvir um treino da fase 1");
+    assert_eq!(snapshot.playback, Some(PlaybackTarget::Response));
+    assert_eq!(harness.audio.played(), vec![original.clone()]);
+    assert!(
+        original.is_file(),
+        "a consulta não altera o ficheiro antigo"
+    );
+
+    // Uma referência desconhecida não é inventada nem sai da pasta da fase 1.
+    let error = harness
+        .service
+        .play_audio(AudioSelection::Legacy {
+            attempt_id: "../fora".to_owned(),
+        })
+        .await
+        .expect_err("um identificador inválido é recusado");
+    assert_eq!(error.code, error_code::ARTIFACT_MISSING);
+}
+
+#[tokio::test]
+async fn failed_stop_keeps_previous_recording() {
     let harness = Harness::new().await;
     let first = harness.record_once().await;
-    let previous_id = first.attempt.expect("primeira resposta").id;
+    let first_current = first.current.clone().expect("pergunta atual");
+    let previous_id = selected_recording(&first_current).id.clone();
 
     harness.audio.fail_next_stop();
+    let current = harness.current();
     harness
         .service
-        .start_recording()
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
         .await
         .expect("segunda gravação");
     let interrupted_id = harness
-        .service
         .snapshot()
         .recording_id
         .clone()
@@ -653,8 +1150,15 @@ async fn failed_stop_keeps_previous_attempt() {
         .expect_err("a paragem falha");
 
     assert_eq!(error.code, error_code::CAPTURE_INTERRUPTED);
-    let snapshot = harness.service.snapshot();
-    assert_eq!(snapshot.attempt.unwrap().id, previous_id);
+    let snapshot = harness.snapshot();
+    assert_eq!(
+        snapshot
+            .current
+            .as_ref()
+            .and_then(|current| current.question.selected_recording_id.clone()),
+        Some(previous_id),
+        "a gravação anterior mantém-se selecionada"
+    );
     assert!(snapshot.recording_id.is_none());
     assert_eq!(
         snapshot.last_error.expect("erro visível").code,
@@ -662,9 +1166,13 @@ async fn failed_stop_keeps_previous_attempt() {
     );
 
     // Enquanto o parcial recuperável não chega, gravar por cima perdia áudio.
+    let current = harness.current();
     let busy = harness
         .service
-        .start_recording()
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
         .await
         .expect_err("a recuperação está pendente");
     assert_eq!(busy.code, error_code::BUSY);
@@ -681,24 +1189,31 @@ async fn failed_stop_keeps_previous_attempt() {
             ),
         })
         .await;
+    let current = harness.current();
     harness
         .service
-        .start_recording()
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
         .await
         .expect("a captura seguinte não fica bloqueada");
-    assert!(harness.service.snapshot().recording_id.is_some());
+    assert!(harness.snapshot().recording_id.is_some());
 }
 
 #[tokio::test]
 async fn repeated_start_returns_busy_instead_of_blocking() {
     let harness = Harness::new().await;
+    let current = harness.current();
     harness
         .service
-        .start_recording()
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
         .await
         .expect("primeira gravação");
     let recording_id = harness
-        .service
         .snapshot()
         .recording_id
         .clone()
@@ -706,13 +1221,19 @@ async fn repeated_start_returns_busy_instead_of_blocking() {
 
     // O mutex do estado não é reentrante: se a guarda não cair antes de
     // `record_error`, o pedido repetido fica bloqueado para sempre.
-    let second = tokio::time::timeout(Duration::from_secs(2), harness.service.start_recording())
-        .await
-        .expect("o pedido repetido devolve em vez de bloquear")
-        .expect_err("a gravação em curso impede outra");
+    let second = tokio::time::timeout(
+        Duration::from_secs(2),
+        harness.service.start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        ),
+    )
+    .await
+    .expect("o pedido repetido devolve em vez de bloquear")
+    .expect_err("a gravação em curso impede outra");
     assert_eq!(second.code, error_code::BUSY);
     assert_eq!(
-        harness.service.snapshot().recording_id.as_deref(),
+        harness.snapshot().recording_id.as_deref(),
         Some(recording_id.as_str()),
         "a gravação em curso mantém-se"
     );
@@ -728,13 +1249,16 @@ async fn repeated_start_returns_busy_instead_of_blocking() {
 #[tokio::test]
 async fn late_interruption_from_an_older_capture_is_ignored() {
     let harness = Harness::new().await;
+    let current = harness.current();
     harness
         .service
-        .start_recording()
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
         .await
         .expect("primeira gravação");
     let first_id = harness
-        .service
         .snapshot()
         .recording_id
         .clone()
@@ -745,13 +1269,16 @@ async fn late_interruption_from_an_older_capture_is_ignored() {
         .await
         .expect("paragem normal");
 
+    let current = harness.current();
     harness
         .service
-        .start_recording()
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
         .await
         .expect("nova gravação");
     let second_id = harness
-        .service
         .snapshot()
         .recording_id
         .clone()
@@ -772,7 +1299,7 @@ async fn late_interruption_from_an_older_capture_is_ignored() {
         })
         .await;
 
-    let snapshot = harness.service.snapshot();
+    let snapshot = harness.snapshot();
     assert_eq!(
         snapshot.recording_id.as_deref(),
         Some(second_id.as_str()),
@@ -785,18 +1312,427 @@ async fn late_interruption_from_an_older_capture_is_ignored() {
 }
 
 #[tokio::test]
+async fn timed_out_stop_recovers_capture() {
+    let harness = Harness::new().await;
+    let current = harness.current();
+    harness
+        .service
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
+        .await
+        .expect("gravar");
+    let recording_id = harness
+        .snapshot()
+        .recording_id
+        .expect("identificador da gravação");
+
+    harness.audio.fail_next_stop_timeout();
+    let error = harness
+        .service
+        .stop_recording()
+        .await
+        .expect_err("a paragem expira");
+    assert_eq!(error.code, error_code::AUDIO_TIMEOUT);
+
+    // A thread pode ter fechado o original depois do prazo: é publicado como
+    // recuperável e o estado deixa de esperar um evento que não chega.
+    let snapshot = harness.snapshot();
+    assert!(snapshot.recording_id.is_none());
+    let current = snapshot.current.clone().expect("pergunta atual");
+    let recording = selected_recording(&current);
+    assert_eq!(recording.id, recording_id);
+    assert!(
+        recording.capture.as_ref().expect("metadados").incomplete,
+        "a captura recuperada é marcada incompleta"
+    );
+    assert!(harness.original_path(&current, &recording_id).is_file());
+    assert_eq!(
+        snapshot.last_error.expect("erro visível").code,
+        error_code::AUDIO_TIMEOUT
+    );
+
+    // Sem a limpeza da captura em curso, gravar ficava bloqueado.
+    harness
+        .service
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
+        .await
+        .expect("gravar outra resposta");
+    harness
+        .service
+        .stop_recording()
+        .await
+        .expect("terminar a segunda gravação");
+
+    // O mesmo timeout ao fechar não pode deixar o encerramento bloqueado.
+    let current = harness.current();
+    harness
+        .service
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
+        .await
+        .expect("terceira gravação");
+    harness.audio.fail_next_stop_timeout();
+    let close_error = harness
+        .service
+        .prepare_close()
+        .await
+        .expect_err("o fecho falha no timeout");
+    assert_eq!(close_error.code, error_code::AUDIO_TIMEOUT);
+    assert!(harness.snapshot().current.is_some());
+    harness
+        .service
+        .prepare_close()
+        .await
+        .expect("o fecho seguinte conclui");
+}
+
+#[tokio::test]
+async fn save_publication_can_retry() {
+    let harness = Harness::new().await;
+    let first = harness.record_once().await;
+    let first_current = first.current.clone().expect("pergunta atual");
+    let previous_id = selected_recording(&first_current).id.clone();
+
+    let current = harness.current();
+    harness
+        .service
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
+        .await
+        .expect("segunda gravação");
+    let pending_id = harness
+        .snapshot()
+        .recording_id
+        .expect("identificador da segunda gravação");
+
+    // O original finalizado fica sem amostras: a publicação falha e nada é
+    // perdido, mas também não se anuncia uma resposta guardada.
+    harness.audio.corrupt_next_stop();
+    let error = harness
+        .service
+        .stop_recording()
+        .await
+        .expect_err("a publicação falha");
+    assert_eq!(error.code, error_code::INVALID_AUDIO);
+    let snapshot = harness.snapshot();
+    assert_eq!(
+        snapshot
+            .current
+            .as_ref()
+            .unwrap()
+            .question
+            .selected_recording_id,
+        Some(previous_id)
+    );
+    assert!(snapshot.recording_id.is_none());
+    assert_eq!(
+        snapshot.pending_recording_id.as_deref(),
+        Some(pending_id.as_str()),
+        "a fotografia expõe a publicação pendente"
+    );
+    assert_eq!(
+        snapshot.last_error.expect("erro visível").code,
+        error_code::INVALID_AUDIO
+    );
+    // A sessão foi relida: a reserva aparece na pergunta atual, com a ação de
+    // repetir o guardar alcançável no ecrã onde as tomadas são listadas.
+    let reserved = snapshot
+        .current
+        .as_ref()
+        .expect("pergunta atual")
+        .recordings
+        .iter()
+        .find(|recording| recording.id == pending_id)
+        .expect("a reserva pendente consta da pergunta atual");
+    assert_eq!(reserved.state, RecordingState::Reserved);
+
+    // Uma gravação por publicar não pode ser esquecida nem fechar em silêncio.
+    let current = harness.current();
+    assert!(
+        harness
+            .service
+            .start_recording(
+                current.question.id.clone(),
+                current.question.selection_version
+            )
+            .await
+            .is_err(),
+        "uma gravação por publicar não pode ser esquecida"
+    );
+    assert_eq!(
+        harness
+            .service
+            .prepare_close()
+            .await
+            .expect_err("o fecho não promete sucesso")
+            .code,
+        error_code::STORAGE_WRITE_FAILED
+    );
+
+    // Reparado o ficheiro, a mesma gravação é publicada sem nova captura.
+    let current = harness.current();
+    write_rate_wav(&harness.original_path(&current, &pending_id), 48_000);
+    let retried = harness
+        .service
+        .retry_save_recording(pending_id.clone())
+        .await
+        .expect("repetir a publicação");
+    assert_eq!(
+        retried
+            .current
+            .as_ref()
+            .and_then(|current| current.question.selected_recording_id.clone()),
+        Some(pending_id.clone())
+    );
+    assert!(
+        retried.pending_recording_id.is_none(),
+        "depois de guardar, a publicação pendente desaparece"
+    );
+    let current = retried.current.expect("pergunta atual");
+    assert_eq!(
+        current
+            .recordings
+            .iter()
+            .find(|recording| recording.id == pending_id)
+            .expect("gravação publicada")
+            .state
+            .as_str(),
+        "ready"
+    );
+    assert!(harness.original_path(&current, &pending_id).is_file());
+}
+
+/// Operação guardada na base de teste: tipo, estado, início, fim e erro.
+fn operation_row(
+    harness: &Harness,
+    id: &str,
+) -> (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    harness
+        .database
+        .with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT kind, state, created_at, finished_at, error_json
+                       FROM operations WHERE id = ?1",
+                    params![id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                            row.get::<_, Option<String>>(4)?,
+                        ))
+                    },
+                )
+                .map_err(|error| {
+                    AppError::new(error_code::DATABASE_UNAVAILABLE, error.to_string(), false)
+                })
+        })
+        .expect("ler a operação da base de teste")
+}
+
+/// Contagem de operações de um tipo na base de teste.
+fn operation_count(harness: &Harness, kind: &str) -> i64 {
+    harness
+        .database
+        .with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT count(*) FROM operations WHERE kind = ?1",
+                    params![kind],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| {
+                    AppError::new(error_code::DATABASE_UNAVAILABLE, error.to_string(), false)
+                })
+        })
+        .expect("contar as operações da base de teste")
+}
+
+#[tokio::test]
+async fn interrupted_operation_is_recovered_on_the_next_start() {
+    let harness = Harness::with_transcriber().await;
+    harness.record_once().await;
+    let request = harness
+        .transcription_requests()
+        .into_iter()
+        .next()
+        .expect("transcrição automática submetida");
+
+    // O pedido fica registado em `running` antes de o auxiliar responder; é o
+    // que um encerramento abrupto deixa para a reconciliação recuperar.
+    let (kind, state, created_at, finished_at, error) = operation_row(&harness, &request.id);
+    assert_eq!(kind, "transcribe");
+    assert_eq!(state, "running");
+    assert!(created_at.is_some());
+    assert!(finished_at.is_none());
+    assert!(error.is_none());
+
+    // O arranque seguinte encontra a linha e passa-a a recuperável.
+    let store = ArtifactStore::new(harness.artifacts_root.clone());
+    let report = reconcile(&harness.database, &store).expect("reconciliar no arranque");
+    assert_eq!(report.interrupted_operations, vec![request.id.clone()]);
+    let (_, state, _, finished_at, error) = operation_row(&harness, &request.id);
+    assert_eq!(state, "interrupted");
+    assert!(finished_at.is_some());
+    assert!(error.is_none());
+
+    // Repetir o arranque não volta a reportar a mesma operação.
+    let again = reconcile(&harness.database, &store).expect("reconciliar outra vez");
+    assert!(again.interrupted_operations.is_empty());
+}
+
+#[tokio::test]
+async fn transcription_closes_one_operation_with_its_timing() {
+    let harness = Harness::with_transcriber().await;
+    harness.record_once().await;
+    let request = harness
+        .transcription_requests()
+        .into_iter()
+        .next()
+        .expect("transcrição automática submetida");
+
+    harness
+        .service
+        .on_worker_event(WorkerEvent {
+            generation: 1,
+            message: WorkerMessage::Completed {
+                request_id: request.id.clone(),
+                result: transcription_result("machine words"),
+            },
+        })
+        .await;
+
+    let (kind, state, created_at, finished_at, error) = operation_row(&harness, &request.id);
+    assert_eq!(kind, "transcribe");
+    assert_eq!(state, "completed");
+    assert!(created_at.is_some(), "a operação guarda a hora de início");
+    assert!(
+        finished_at.is_some(),
+        "a operação guarda a hora de conclusão"
+    );
+    assert!(error.is_none());
+    assert_eq!(
+        operation_count(&harness, "transcribe"),
+        1,
+        "o pedido e o resultado partilham uma única operação"
+    );
+}
+
+#[tokio::test]
+async fn recording_requires_active_unconfirmed_question() {
+    // Sem sessão em curso não há pergunta para gravar.
+    let harness = Harness::without_session().await;
+    let error = harness
+        .service
+        .start_recording("unknown-question".to_owned(), 0)
+        .await
+        .expect_err("sem sessão não se grava");
+    assert_eq!(error.code, error_code::STALE_SOURCE);
+    assert!(harness.snapshot().recording_id.is_none());
+    assert!(harness.audio.played().is_empty());
+
+    // Com sessão, a versão de seleção esperada tem de ser a guardada.
+    let harness = Harness::new().await;
+    let current = harness.current();
+    let error = harness
+        .service
+        .start_recording(current.question.id.clone(), 99)
+        .await
+        .expect_err("uma seleção desatualizada é recusada");
+    assert_eq!(error.code, error_code::STALE_SOURCE);
+    assert!(harness.snapshot().recording_id.is_none());
+
+    // E uma pergunta que não pertence à sessão também não é um alvo.
+    let error = harness
+        .service
+        .start_recording(
+            "not-in-session".to_owned(),
+            current.question.selection_version,
+        )
+        .await
+        .expect_err("uma pergunta alheia é recusada");
+    assert_eq!(error.code, error_code::STALE_SOURCE);
+    assert!(harness.snapshot().recording_id.is_none());
+}
+
+#[tokio::test]
+async fn confirmed_question_rejects_capture_and_transcription() {
+    let harness = Harness::new().await;
+    harness.record_once().await;
+    let text = "I prioritised the release and told the team early.";
+    harness.save_manual_review(text).await;
+    let confirmed = harness.confirm_current(text).await;
+    let current = confirmed.current.clone().expect("pergunta confirmada");
+    assert!(current.confirmation.is_some());
+    let target = harness.target_of(&current);
+    let session_question_id = current.question.id.clone();
+    let selection_version = current.question.selection_version;
+
+    let capture = harness
+        .service
+        .start_recording(session_question_id, selection_version)
+        .await
+        .expect_err("uma resposta confirmada não volta a ser gravada");
+    assert_eq!(capture.code, error_code::ANSWER_CONFIRMED);
+    assert!(harness.snapshot().recording_id.is_none());
+
+    let transcription = harness
+        .service
+        .transcribe_response(target)
+        .await
+        .expect_err("uma resposta confirmada não volta a ser transcrita");
+    assert_eq!(transcription.code, error_code::ANSWER_CONFIRMED);
+    assert_eq!(
+        harness.snapshot().current.unwrap().recordings.len(),
+        1,
+        "nada é acrescentado à pergunta confirmada"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Transcrição
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
 async fn retry_transcription_reuses_audio() {
     let harness = Harness::with_transcriber().await;
     let snapshot = harness.record_once().await;
-    let attempt = snapshot.attempt.expect("resposta publicada");
+    let current = snapshot.current.clone().expect("pergunta atual");
+    let recording = selected_recording(&current).clone();
 
     let first = harness
         .transcription_requests()
         .into_iter()
         .next()
         .expect("transcrição automática");
-    let original_normalized_path = harness.normalized_path(&attempt.id);
-    assert_eq!(first.input_path, original_normalized_path);
+    let normalized = harness.normalized_path(&current, &recording.id);
+    assert_eq!(first.input_path, normalized);
+    let expected_reference = format!(
+        "{}/{}/{}/{}",
+        current.question.session_id, current.question.id, recording.id, NORMALIZED_FILE
+    );
+    assert_eq!(
+        recording.normalized_file.as_deref(),
+        Some(expected_reference.as_str()),
+        "a referência do derivado fica guardada"
+    );
 
     // O auxiliar perde o pedido: a resposta e o derivado têm de continuar.
     harness
@@ -813,36 +1749,23 @@ async fn retry_transcription_reuses_audio() {
             },
         })
         .await;
-    let failed = harness.service.snapshot();
+    let failed = harness.snapshot();
     assert!(failed.model_job.is_none());
-    assert_eq!(
-        failed
-            .attempt
-            .as_ref()
-            .and_then(|attempt| attempt.last_operation.as_ref())
-            .map(|operation| operation.state),
-        Some(OperationState::Failed)
-    );
-    assert!(original_normalized_path.is_file());
+    assert!(normalized.is_file());
+    assert!(transcript_ids(&harness.current()).is_empty());
 
     let after = harness
         .service
-        .transcribe_response(attempt.id.clone())
+        .transcribe_response(harness.target_of(&harness.current()))
         .await
         .expect("repetir transcrição");
 
     let requests = harness.transcription_requests();
     assert_eq!(requests.len(), 2);
     let retry = &requests[1];
-    assert_eq!(retry.input_path, original_normalized_path);
+    assert_eq!(retry.input_path, normalized);
     assert_ne!(retry.id, first.id, "o identificador tem de ser novo");
-    assert_eq!(
-        after
-            .attempt
-            .as_ref()
-            .and_then(|attempt| attempt.normalized_file.as_deref()),
-        Some("normalized.wav")
-    );
+    assert!(after.model_job.is_some());
 
     let revisions = harness.revisions();
     assert!(
@@ -852,10 +1775,9 @@ async fn retry_transcription_reuses_audio() {
 }
 
 #[tokio::test]
-async fn late_result_does_not_change_active_review() {
+async fn late_result_does_not_change_confirmed_text() {
     let harness = Harness::with_transcriber().await;
-    let snapshot = harness.record_once().await;
-    assert!(snapshot.attempt.is_some(), "resposta publicada");
+    harness.record_once().await;
     let request = harness
         .transcription_requests()
         .into_iter()
@@ -873,21 +1795,36 @@ async fn late_result_does_not_change_active_review() {
         })
         .await;
 
-    let transcribed = harness.service.snapshot();
-    let attempt = transcribed.attempt.expect("resposta transcrita");
-    assert_eq!(attempt.transcripts.len(), 1);
+    let transcribed = harness.current();
+    let recording = selected_recording(&transcribed).clone();
+    assert_eq!(recording.transcripts.len(), 1);
     assert_eq!(
-        attempt.review.as_ref().expect("revisão inicial").text,
+        recording.review.as_ref().expect("revisão inicial").text,
         "machine words"
     );
-    let source_id = attempt_transcript_ids(&attempt)[0].clone();
+    let source_id = recording.transcripts[0].id.clone();
 
-    let saved = harness
+    let target = harness.target_of(&transcribed);
+    harness
         .service
-        .save_review(attempt.id.clone(), source_id, "my words".to_owned())
+        .save_review(SaveReview {
+            request_id: new_request_id(),
+            target,
+            expected_review_version: recording.review.as_ref().unwrap().version,
+            source_transcript_id: Some(source_id.clone()),
+            origin: ReviewOrigin::ManualExplicit,
+            text: "my words".to_owned(),
+        })
         .await
         .expect("guardar revisão");
-    assert_eq!(saved.attempt.unwrap().review.unwrap().text, "my words");
+    assert_eq!(
+        selected_recording(&harness.current())
+            .review
+            .as_ref()
+            .unwrap()
+            .text,
+        "my words"
+    );
 
     // Resultado atrasado de outra geração do auxiliar.
     harness
@@ -900,27 +1837,12 @@ async fn late_result_does_not_change_active_review() {
             },
         })
         .await;
-    let after_late_result = harness.service.snapshot();
+    let after = harness.current();
     assert_eq!(
-        after_late_result
-            .attempt
-            .as_ref()
-            .unwrap()
-            .review
-            .as_ref()
-            .unwrap()
-            .text,
+        selected_recording(&after).review.as_ref().unwrap().text,
         "my words"
     );
-    assert_eq!(
-        after_late_result
-            .attempt
-            .as_ref()
-            .unwrap()
-            .transcripts
-            .len(),
-        1
-    );
+    assert_eq!(transcript_ids(&after).len(), 1);
 
     // Resultado atrasado de um pedido que já não está pendente.
     harness
@@ -933,72 +1855,20 @@ async fn late_result_does_not_change_active_review() {
             },
         })
         .await;
-    let after_late_result = harness.service.snapshot();
     assert_eq!(
-        after_late_result.attempt.unwrap().review.unwrap().text,
+        selected_recording(&harness.current())
+            .review
+            .as_ref()
+            .unwrap()
+            .text,
         "my words"
     );
 }
 
 #[tokio::test]
-async fn save_publication_can_retry() {
-    let harness = Harness::new().await;
-    let first = harness.record_once().await;
-    let previous_id = first.attempt.expect("primeira resposta").id;
-
-    harness
-        .service
-        .start_recording()
-        .await
-        .expect("segunda gravação");
-    let pending_id = harness
-        .service
-        .snapshot()
-        .recording_id
-        .expect("identificador da segunda gravação");
-
-    // Bloqueia a escrita do manifesto da resposta nova.
-    let blocker = harness
-        .root
-        .join("attempts")
-        .join(&pending_id)
-        .join("attempt.json");
-    fs::create_dir_all(&blocker).expect("bloquear o manifesto");
-
-    let error = harness
-        .service
-        .stop_recording()
-        .await
-        .expect_err("a publicação falha");
-    assert_eq!(error.code, error_code::STORAGE_WRITE_FAILED);
-    let snapshot = harness.service.snapshot();
-    assert_eq!(snapshot.attempt.unwrap().id, previous_id);
-    assert!(snapshot.recording_id.is_none());
-    assert_eq!(
-        snapshot.last_error.expect("erro visível").code,
-        error_code::STORAGE_WRITE_FAILED
-    );
-    assert!(
-        harness.service.start_recording().await.is_err(),
-        "uma gravação por publicar não pode ser esquecida"
-    );
-
-    fs::remove_dir(&blocker).expect("desbloquear o manifesto");
-    let retried = harness
-        .service
-        .retry_save_recording()
-        .await
-        .expect("repetir a publicação");
-    assert_eq!(retried.attempt.unwrap().id, pending_id);
-    assert!(harness.original_path(&pending_id).is_file());
-}
-
-#[tokio::test]
 async fn retranscribe_preserves_existing_review() {
     let harness = Harness::with_transcriber().await;
-    let snapshot = harness.record_once().await;
-    let attempt = snapshot.attempt.expect("resposta publicada");
-    let first_id = attempt.id.clone();
+    harness.record_once().await;
     let first_request = harness
         .transcription_requests()
         .into_iter()
@@ -1016,26 +1886,35 @@ async fn retranscribe_preserves_existing_review() {
         })
         .await;
 
-    let attempt = harness.service.snapshot().attempt.expect("transcrita");
-    let source_id = attempt_transcript_ids(&attempt)[0].clone();
+    let current = harness.current();
+    let source_id = selected_recording(&current).transcripts[0].id.clone();
+    let target = harness.target_of(&current);
+    let review_version = selected_recording(&current)
+        .review
+        .as_ref()
+        .unwrap()
+        .version;
     harness
         .service
-        .save_review(
-            first_id.clone(),
-            source_id.clone(),
-            "edited by me".to_owned(),
-        )
+        .save_review(SaveReview {
+            request_id: new_request_id(),
+            target: target.clone(),
+            expected_review_version: review_version,
+            source_transcript_id: Some(source_id.clone()),
+            origin: ReviewOrigin::ManualExplicit,
+            text: "edited by me".to_owned(),
+        })
         .await
         .expect("guardar revisão");
 
     harness
         .service
-        .transcribe_response(first_id.clone())
+        .transcribe_response(harness.target_of(&harness.current()))
         .await
         .expect("transcrever novamente");
     let requests = harness.transcription_requests();
-    let second_request = requests.last().expect("segundo pedido");
     assert_eq!(requests.len(), 2);
+    let second_request = requests.last().expect("segundo pedido");
     assert_ne!(second_request.id, first_request.id);
 
     harness
@@ -1049,61 +1928,15 @@ async fn retranscribe_preserves_existing_review() {
         })
         .await;
 
-    let after = harness.service.snapshot().attempt.expect("resposta");
-    assert_eq!(after.transcripts.len(), 2);
-    assert_eq!(after.transcripts[0].text, "first transcript");
-    assert_eq!(after.transcripts[1].text, "second transcript");
-    let review = after.review.expect("revisão preservada");
+    let after = harness.current();
+    let recording = selected_recording(&after);
+    assert_eq!(recording.transcripts.len(), 2);
+    assert_eq!(recording.transcripts[0].text, "first transcript");
+    assert_eq!(recording.transcripts[1].text, "second transcript");
+    let review = recording.review.as_ref().expect("revisão preservada");
     assert_eq!(review.text, "edited by me");
-    assert_eq!(review.source_transcript_id, source_id);
-    assert_eq!(
-        after.last_operation.expect("operação aplicada").id,
-        second_request.id
-    );
-    assert_eq!(pending_jobs(&harness.service.snapshot()), 0);
-}
-
-#[tokio::test]
-async fn close_finalizes_capture() {
-    // Uma captura ativa é finalizada e publicada antes de fechar.
-    let harness = Harness::without_worker().await;
-    harness
-        .service
-        .start_recording()
-        .await
-        .expect("começar a gravar");
-    let closed = harness
-        .service
-        .prepare_close()
-        .await
-        .expect("fechar com captura ativa");
-    assert_eq!(pending_jobs(&closed), 0);
-    let attempt = closed.attempt.clone().expect("captura finalizada");
-    assert!(closed.recording_id.is_none());
-    assert!(closed.model_job.is_none());
-    assert!(harness.original_path(&attempt.id).is_file());
-
-    // Um trabalho em curso fica interrompido e o auxiliar é encerrado.
-    let harness = Harness::with_transcriber().await;
-    harness.record_once().await;
-    let running = harness.service.snapshot();
-    assert!(running.model_job.is_some(), "transcrição em curso");
-    let closed = harness
-        .service
-        .prepare_close()
-        .await
-        .expect("fechar com trabalho em curso");
-    assert_eq!(pending_jobs(&closed), 0);
-    let attempt = closed.attempt.clone().expect("resposta guardada");
-    assert!(closed.recording_id.is_none());
-    assert!(closed.model_job.is_none());
-    assert_eq!(
-        attempt.last_operation.expect("operação").state,
-        OperationState::Interrupted
-    );
-    assert_eq!(harness.worker.shutdowns(), 1);
-    assert_eq!(harness.launcher.launches.load(Ordering::SeqCst), 1);
-    assert!(harness.audio.playback_stops() > 0);
+    assert_eq!(review.source_transcript_id, Some(source_id));
+    assert_eq!(pending_jobs(&harness.snapshot()), 0);
 }
 
 #[tokio::test]
@@ -1127,35 +1960,247 @@ async fn no_speech_result_is_explicit_and_creates_no_review() {
         })
         .await;
 
-    let after = harness.service.snapshot();
-    let attempt = after.attempt.clone().expect("resposta guardada");
-    assert_eq!(attempt.transcripts.len(), 1);
-    assert_eq!(attempt.transcripts[0].status, TranscriptStatus::NoSpeech);
-    assert!(attempt.transcripts[0].text.is_empty());
-    assert!(attempt.review.is_none(), "ausência de fala não cria nota");
-    assert_eq!(
-        attempt.last_operation.expect("operação").state,
-        OperationState::NoSpeech
-    );
+    let after = harness.snapshot();
+    let current = after.current.clone().expect("pergunta atual");
+    let recording = selected_recording(&current).clone();
+    assert_eq!(recording.transcripts.len(), 1);
+    assert_eq!(recording.transcripts[0].status, TranscriptStatus::NoSpeech);
+    assert!(recording.transcripts[0].text.is_empty());
+    assert!(recording.review.is_none(), "ausência de fala não cria nota");
     assert!(after.model_job.is_none());
 
     // A resposta continua a poder ser ouvida e substituída por outra gravação.
     let playing = harness
         .service
-        .play_audio(PlaybackTarget::Response)
+        .play_audio(AudioSelection::Recording {
+            recording_id: recording.id.clone(),
+        })
         .await
         .expect("ouvir a resposta sem fala");
     assert_eq!(playing.playback, Some(PlaybackTarget::Response));
+    harness.service.stop_audio().await.expect("parar");
+    harness.record_once().await;
+}
+
+#[tokio::test]
+async fn history_read_does_not_retarget_model_job() {
+    let harness = Harness::with_transcriber().await;
+    harness.record_once().await;
+    let running = harness.snapshot();
+    let job = running.model_job.clone().expect("transcrição em curso");
+    assert_eq!(job.kind, OperationKind::Transcribe);
+    let session_id = harness.session_id();
+
+    // Consultar o histórico durante a inferência não muda a identidade do
+    // trabalho nem inicia outro.
+    let detail = harness.load_detail(&session_id).await;
+    assert_eq!(detail.questions.len(), 1);
     harness
         .service
-        .stop_audio()
+        .list_sessions()
         .await
-        .expect("parar a reprodução");
+        .expect("listar sessões");
     harness
         .service
-        .start_recording()
+        .list_questions(None)
         .await
-        .expect("gravar outra resposta");
+        .expect("listar perguntas");
+
+    let after_reads = harness.snapshot();
+    assert_eq!(
+        after_reads.model_job.as_ref().map(|job| job.target.clone()),
+        Some(job.target.clone()),
+        "o alvo do trabalho não é retargetado por uma leitura"
+    );
+
+    // E o resultado do pedido original continua a ser aplicado ao alvo certo.
+    harness
+        .service
+        .on_worker_event(WorkerEvent {
+            generation: 1,
+            message: WorkerMessage::Completed {
+                request_id: job.id,
+                result: transcription_result("a stored answer"),
+            },
+        })
+        .await;
+    let after = harness.current();
+    let recording = selected_recording(&after);
+    assert_eq!(recording.transcripts.len(), 1);
+    assert_eq!(recording.transcripts[0].text, "a stored answer");
+    assert!(harness.snapshot().model_job.is_none());
+}
+
+#[tokio::test]
+async fn late_worker_result_cannot_target_next_question() {
+    let harness = Harness::with_transcriber_and_pair().await;
+    harness.record_once().await;
+    let first = harness.current();
+    let first_id = first.question.id.clone();
+    let request = harness
+        .transcription_requests()
+        .into_iter()
+        .next()
+        .expect("transcrição automática");
+
+    // Confirmar e avançar enquanto a transcrição ainda está em curso.
+    let text = "We reduced the scope and delivered the important part.";
+    let advanced = harness.confirm_and_advance(text).await;
+    let next = advanced.current.clone().expect("pergunta seguinte");
+    assert_eq!(advanced.active_session.as_ref().unwrap().position, 2);
+    assert_ne!(next.question.id, first_id);
+    assert!(transcript_ids(&next).is_empty());
+
+    // Um resultado tardio da pergunta anterior não pode escrever na nova.
+    harness
+        .service
+        .on_worker_event(WorkerEvent {
+            generation: 1,
+            message: WorkerMessage::Completed {
+                request_id: request.id,
+                result: transcription_result("late words for the old question"),
+            },
+        })
+        .await;
+
+    let after = harness.snapshot();
+    let current = after.current.clone().expect("pergunta seguinte");
+    assert_eq!(current.question.id, next.question.id);
+    assert!(
+        transcript_ids(&current).is_empty(),
+        "o resultado tardio não é escrito na pergunta seguinte"
+    );
+    assert!(after.model_job.is_none(), "o trabalho é libertado");
+    assert_eq!(
+        after
+            .active_session
+            .as_ref()
+            .expect("sessão em curso")
+            .position,
+        2
+    );
+
+    // A pergunta anterior também não recebe o resultado: já está confirmada.
+    let detail = harness.load_detail(&harness.session_id()).await;
+    let confirmed_question = detail
+        .questions
+        .iter()
+        .find(|question| question.question.id == first_id)
+        .expect("pergunta confirmada");
+    assert!(confirmed_question.confirmation.is_some());
+    assert_eq!(
+        confirmed_question.confirmation.as_ref().unwrap().text,
+        text,
+        "o texto confirmado não é alterado"
+    );
+    assert!(transcript_ids(confirmed_question).is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Reprodução, disponibilidade e recuperação de áudio
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn playback_is_allowed_while_transcribing() {
+    let harness = Harness::with_transcriber().await;
+    let snapshot = harness.record_once().await;
+    let current = snapshot.current.clone().expect("pergunta atual");
+    let recording = selected_recording(&current).clone();
+    let job = harness.snapshot().model_job.expect("transcrição em curso");
+    assert_eq!(job.kind, OperationKind::Transcribe);
+
+    // Transcrever em CPU é a espera mais longa: ouvir a resposta é permitido.
+    let playing = harness
+        .service
+        .play_audio(AudioSelection::Recording {
+            recording_id: recording.id.clone(),
+        })
+        .await
+        .expect("ouvir a resposta durante a transcrição");
+    assert_eq!(playing.playback, Some(PlaybackTarget::Response));
+    assert!(playing.model_job.is_some());
+
+    // A pergunta já em cache também substitui a resposta a meio da transcrição.
+    let cache = harness.cache_path(&current.question.text);
+    fs::create_dir_all(cache.parent().expect("pasta da cache")).expect("criar a cache");
+    write_rate_wav(&cache, 24_000);
+
+    let question = harness
+        .service
+        .play_audio(AudioSelection::Question {
+            session_id: current.question.session_id.clone(),
+            session_question_id: current.question.id.clone(),
+        })
+        .await
+        .expect("ouvir a pergunta em cache");
+    assert_eq!(question.playback, Some(PlaybackTarget::Question));
+    assert_eq!(
+        harness.audio.played(),
+        vec![harness.original_path(&current, &recording.id), cache],
+        "a reprodução da pergunta substitui a da resposta"
+    );
+}
+
+#[tokio::test]
+async fn playback_is_refused_while_recording() {
+    let harness = Harness::new().await;
+    let current = harness.current();
+    harness
+        .service
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
+        .await
+        .expect("começar a gravar");
+
+    let error = harness
+        .service
+        .play_audio(AudioSelection::Question {
+            session_id: current.question.session_id.clone(),
+            session_question_id: current.question.id.clone(),
+        })
+        .await
+        .expect_err("gravar impede reproduzir");
+    assert_eq!(error.code, error_code::BUSY);
+    assert!(harness.audio.played().is_empty());
+}
+
+#[tokio::test]
+async fn starting_recording_stops_playback() {
+    let harness = Harness::new().await;
+    let snapshot = harness.record_once().await;
+    let current = snapshot.current.clone().expect("pergunta atual");
+    let recording = selected_recording(&current).clone();
+    harness
+        .service
+        .play_audio(AudioSelection::Recording {
+            recording_id: recording.id.clone(),
+        })
+        .await
+        .expect("ouvir a resposta");
+    let stops = harness.audio.playback_stops();
+
+    // A spec manda terminar a reprodução ao começar a gravar, não exigir que o
+    // utilizador pare o áudio primeiro.
+    let recording_now = harness
+        .service
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
+        .await
+        .expect("gravar com uma reprodução ativa");
+    assert!(recording_now.recording_id.is_some());
+    assert_eq!(recording_now.playback, None);
+    assert!(
+        harness.audio.playback_stops() > stops,
+        "a reprodução em curso tem de ser parada"
+    );
+    assert_eq!(
+        harness.audio.played(),
+        vec![harness.original_path(&current, &recording.id)]
+    );
 }
 
 #[tokio::test]
@@ -1167,46 +2212,34 @@ async fn question_audio_is_synthesized_and_validated() {
         ComponentStatus::Ready,
     )
     .await;
+    let current = harness.current();
 
     let requested = harness
         .service
-        .play_audio(PlaybackTarget::Question)
+        .play_audio(AudioSelection::Question {
+            session_id: current.question.session_id.clone(),
+            session_question_id: current.question.id.clone(),
+        })
         .await
         .expect("pedir a síntese da pergunta");
     assert_eq!(requested.playback, None);
     let job = requested.model_job.expect("síntese em curso");
     assert_eq!(job.kind, OperationKind::Synthesize);
 
-    let request = harness
-        .requests()
-        .into_iter()
-        .find(|request| request.op == WorkerOp::Synthesize)
-        .expect("pedido de síntese");
-    let expected = harness
-        .root
-        .join("question-cache")
-        .join(format!("{}.wav", synthesis_cache_key(QUESTION)));
-    assert_eq!(
-        PathBuf::from(
-            request.params["outputPath"]
-                .as_str()
-                .expect("outputPath da síntese")
-        ),
-        expected
-    );
-
+    let expected = harness.cache_path(QUESTION);
+    assert_eq!(harness.synthesis_request(), expected);
     write_rate_wav(&expected, 24_000);
     harness
         .service
         .on_worker_event(WorkerEvent {
             generation: 1,
             message: WorkerMessage::Completed {
-                request_id: request.id,
+                request_id: job.id,
                 result: synthesis_result(&expected),
             },
         })
         .await;
-    let after = harness.service.snapshot();
+    let after = harness.snapshot();
     assert_eq!(after.playback, Some(PlaybackTarget::Question));
     assert!(after.model_job.is_none());
     assert_eq!(harness.audio.played(), vec![expected.clone()]);
@@ -1219,33 +2252,30 @@ async fn question_audio_is_synthesized_and_validated() {
         ComponentStatus::Ready,
     )
     .await;
+    let current = harness.current();
     harness
         .service
-        .play_audio(PlaybackTarget::Question)
+        .play_audio(AudioSelection::Question {
+            session_id: current.question.session_id.clone(),
+            session_question_id: current.question.id.clone(),
+        })
         .await
         .expect("pedir a síntese da pergunta");
-    let request = harness
-        .requests()
-        .into_iter()
-        .find(|request| request.op == WorkerOp::Synthesize)
-        .expect("pedido de síntese");
-    let expected = harness
-        .root
-        .join("question-cache")
-        .join(format!("{}.wav", synthesis_cache_key(QUESTION)));
+    let expected = harness.cache_path(QUESTION);
+    let job = harness.snapshot().model_job.expect("síntese em curso");
     write_rate_wav(&expected, 48_000);
     harness
         .service
         .on_worker_event(WorkerEvent {
             generation: 1,
             message: WorkerMessage::Completed {
-                request_id: request.id,
+                request_id: job.id,
                 result: synthesis_result(&expected),
             },
         })
         .await;
 
-    let rejected = harness.service.snapshot();
+    let rejected = harness.snapshot();
     assert_eq!(rejected.playback, None);
     assert_eq!(
         rejected.last_error.expect("erro visível").code,
@@ -1255,6 +2285,72 @@ async fn question_audio_is_synthesized_and_validated() {
     assert!(
         !expected.exists(),
         "o derivado inválido é descartado antes de uma nova síntese"
+    );
+}
+
+#[tokio::test]
+async fn question_cache_distinguishes_session_texts() {
+    let harness = Harness::with_pair().await;
+    health(
+        &harness.service,
+        ComponentStatus::Missing,
+        ComponentStatus::Ready,
+    )
+    .await;
+    let detail = harness.load_detail(&harness.session_id()).await;
+    assert_eq!(detail.questions.len(), 2);
+    let first = detail.questions[0].question.clone();
+    let second = detail.questions[1].question.clone();
+    assert_ne!(
+        first.text, second.text,
+        "as duas perguntas da sessão têm textos distintos"
+    );
+
+    let requested = harness
+        .service
+        .play_audio(AudioSelection::Question {
+            session_id: first.session_id.clone(),
+            session_question_id: first.id.clone(),
+        })
+        .await
+        .expect("sintetizar a primeira pergunta");
+    let first_job = requested.model_job.expect("síntese em curso");
+    let first_path = harness.synthesis_request();
+    assert_eq!(first_path, harness.cache_path(&first.text));
+
+    // O auxiliar perde o primeiro pedido: a cache da segunda pergunta é
+    // independente do texto da primeira.
+    harness
+        .service
+        .on_worker_event(WorkerEvent {
+            generation: 1,
+            message: WorkerMessage::Failed {
+                request_id: first_job.id,
+                error: AppError::new(
+                    error_code::WORKER_TIMEOUT,
+                    "O auxiliar não devolveu o resultado dentro do prazo.",
+                    true,
+                ),
+            },
+        })
+        .await;
+    harness
+        .service
+        .play_audio(AudioSelection::Question {
+            session_id: second.session_id.clone(),
+            session_question_id: second.id.clone(),
+        })
+        .await
+        .expect("sintetizar a segunda pergunta");
+    let second_path = harness.synthesis_request();
+    assert_eq!(second_path, harness.cache_path(&second.text));
+    assert_ne!(
+        first_path, second_path,
+        "cada texto da sessão tem a sua própria entrada de cache"
+    );
+    assert!(
+        first_path.starts_with(harness.legacy_root.join("question-cache").as_path()),
+        "a cache partilhada continua em phase1/question-cache"
     );
 }
 
@@ -1290,7 +2386,7 @@ async fn failed_health_check_reports_component_error_and_recovers() {
         })
         .await;
 
-    let failed = harness.service.snapshot();
+    let failed = harness.snapshot();
     assert_eq!(
         failed.availability.transcription.status,
         ComponentStatus::Error
@@ -1324,7 +2420,7 @@ async fn failed_health_check_reports_component_error_and_recovers() {
         })
         .await;
 
-    let recovered = harness.service.snapshot();
+    let recovered = harness.snapshot();
     assert_eq!(
         recovered.availability.transcription.status,
         ComponentStatus::Ready
@@ -1392,7 +2488,7 @@ async fn busy_refresh_keeps_pending_health_tracking() {
         })
         .await;
 
-    let failed = harness.service.snapshot();
+    let failed = harness.snapshot();
     assert_eq!(
         failed.availability.transcription.status,
         ComponentStatus::Error
@@ -1424,7 +2520,7 @@ async fn busy_refresh_keeps_pending_health_tracking() {
             },
         })
         .await;
-    let recovered = harness.service.snapshot();
+    let recovered = harness.snapshot();
     assert_eq!(
         recovered.availability.transcription.status,
         ComponentStatus::Ready
@@ -1453,7 +2549,7 @@ async fn failed_restart_discards_the_pending_health_handle() {
         .await
         .expect_err("o reinício é recusado");
     assert_eq!(error.code, error_code::BUSY);
-    let refused = harness.service.snapshot();
+    let refused = harness.snapshot();
     assert_eq!(
         refused.availability.transcription.status,
         ComponentStatus::Error
@@ -1478,105 +2574,10 @@ async fn failed_restart_discards_the_pending_health_handle() {
             },
         })
         .await;
-    let after = harness.service.snapshot();
+    let after = harness.snapshot();
     assert_eq!(
         after.last_error.expect("erro do reinício").code,
         error_code::BUSY
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Reprodução, disponibilidade e recuperação de áudio
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn playback_is_allowed_while_transcribing() {
-    let harness = Harness::with_transcriber().await;
-    let snapshot = harness.record_once().await;
-    let attempt = snapshot.attempt.expect("resposta publicada");
-    let job = harness
-        .service
-        .snapshot()
-        .model_job
-        .expect("transcrição em curso");
-    assert_eq!(job.kind, OperationKind::Transcribe);
-
-    // Transcrever em CPU é a espera mais longa: ouvir a resposta é permitido.
-    let playing = harness
-        .service
-        .play_audio(PlaybackTarget::Response)
-        .await
-        .expect("ouvir a resposta durante a transcrição");
-    assert_eq!(playing.playback, Some(PlaybackTarget::Response));
-    assert!(playing.model_job.is_some());
-
-    // A pergunta já em cache também substitui a resposta a meio da transcrição.
-    let cache = harness
-        .root
-        .join("question-cache")
-        .join(format!("{}.wav", synthesis_cache_key(QUESTION)));
-    fs::create_dir_all(cache.parent().expect("pasta da cache")).expect("criar a cache");
-    write_rate_wav(&cache, 24_000);
-
-    let question = harness
-        .service
-        .play_audio(PlaybackTarget::Question)
-        .await
-        .expect("ouvir a pergunta em cache");
-    assert_eq!(question.playback, Some(PlaybackTarget::Question));
-    assert_eq!(
-        harness.audio.played(),
-        vec![harness.original_path(&attempt.id), cache],
-        "a reprodução da pergunta substitui a da resposta"
-    );
-}
-
-#[tokio::test]
-async fn playback_is_refused_while_recording() {
-    let harness = Harness::new().await;
-    harness
-        .service
-        .start_recording()
-        .await
-        .expect("começar a gravar");
-
-    let error = harness
-        .service
-        .play_audio(PlaybackTarget::Question)
-        .await
-        .expect_err("gravar impede reproduzir");
-    assert_eq!(error.code, error_code::BUSY);
-    assert!(harness.audio.played().is_empty());
-}
-
-#[tokio::test]
-async fn starting_recording_stops_playback() {
-    let harness = Harness::new().await;
-    let snapshot = harness.record_once().await;
-    let attempt = snapshot.attempt.expect("resposta publicada");
-    harness
-        .service
-        .play_audio(PlaybackTarget::Response)
-        .await
-        .expect("ouvir a resposta");
-    let stops = harness.audio.playback_stops();
-
-    // A spec manda terminar a reprodução ao começar a gravar, não exigir que o
-    // utilizador pare o áudio primeiro.
-    let recording = harness
-        .service
-        .start_recording()
-        .await
-        .expect("gravar com uma reprodução ativa");
-    assert!(recording.recording_id.is_some());
-    assert_eq!(recording.playback, None);
-    assert!(
-        harness.audio.playback_stops() > stops,
-        "a reprodução em curso tem de ser parada"
-    );
-    assert_eq!(
-        harness.audio.played(),
-        vec![harness.original_path(&attempt.id)]
     );
 }
 
@@ -1589,28 +2590,28 @@ async fn synthesis_completion_stops_current_playback() {
         ComponentStatus::Ready,
     )
     .await;
-    harness.record_once().await;
+    let snapshot = harness.record_once().await;
+    let current = snapshot.current.clone().expect("pergunta atual");
+    let recording = selected_recording(&current).clone();
     harness
         .service
-        .play_audio(PlaybackTarget::Response)
+        .play_audio(AudioSelection::Recording {
+            recording_id: recording.id.clone(),
+        })
         .await
         .expect("ouvir a resposta");
     let stops = harness.audio.playback_stops();
 
-    harness
+    let requested = harness
         .service
-        .play_audio(PlaybackTarget::Question)
+        .play_audio(AudioSelection::Question {
+            session_id: current.question.session_id.clone(),
+            session_question_id: current.question.id.clone(),
+        })
         .await
         .expect("pedir a síntese da pergunta");
-    let request = harness
-        .requests()
-        .into_iter()
-        .find(|request| request.op == WorkerOp::Synthesize)
-        .expect("pedido de síntese");
-    let expected = harness
-        .root
-        .join("question-cache")
-        .join(format!("{}.wav", synthesis_cache_key(QUESTION)));
+    let job = requested.model_job.expect("síntese em curso");
+    let expected = harness.cache_path(QUESTION);
     write_rate_wav(&expected, 24_000);
 
     harness
@@ -1618,13 +2619,13 @@ async fn synthesis_completion_stops_current_playback() {
         .on_worker_event(WorkerEvent {
             generation: 1,
             message: WorkerMessage::Completed {
-                request_id: request.id,
+                request_id: job.id,
                 result: synthesis_result(&expected),
             },
         })
         .await;
 
-    let after = harness.service.snapshot();
+    let after = harness.snapshot();
     assert_eq!(after.playback, Some(PlaybackTarget::Question));
     assert!(after.model_job.is_none());
     assert!(
@@ -1638,7 +2639,7 @@ async fn synthesis_completion_stops_current_playback() {
 async fn restart_worker_resamples_audio_availability() {
     let harness = Harness::new().await;
     assert_eq!(
-        harness.service.snapshot().availability.microphone.status,
+        harness.snapshot().availability.microphone.status,
         ComponentStatus::Ready
     );
 
@@ -1652,7 +2653,7 @@ async fn restart_worker_resamples_audio_availability() {
         .restart_worker()
         .await
         .expect("reiniciar com o microfone em falta");
-    let missing = harness.service.snapshot();
+    let missing = harness.snapshot();
     assert_eq!(
         missing.availability.microphone.status,
         ComponentStatus::Missing
@@ -1663,7 +2664,7 @@ async fn restart_worker_resamples_audio_availability() {
     harness.audio.set_microphone(ComponentState::ready());
     harness.service.restart_worker().await.expect("reiniciar");
     assert_eq!(
-        harness.service.snapshot().availability.microphone.status,
+        harness.snapshot().availability.microphone.status,
         ComponentStatus::Ready
     );
 }
@@ -1680,14 +2681,18 @@ async fn failed_start_resamples_microphone() {
         "O microfone foi desligado.",
         true,
     ));
+    let current = harness.current();
 
     let error = harness
         .service
-        .start_recording()
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
         .await
         .expect_err("o microfone não abre");
     assert_eq!(error.code, error_code::DEVICE_UNAVAILABLE);
-    let after = harness.service.snapshot();
+    let after = harness.snapshot();
     assert_eq!(
         after.availability.microphone.status,
         ComponentStatus::Missing,
@@ -1697,65 +2702,332 @@ async fn failed_start_resamples_microphone() {
 }
 
 #[tokio::test]
-async fn timed_out_stop_recovers_capture() {
-    let harness = Harness::new().await;
-    harness.service.start_recording().await.expect("gravar");
-    let recording_id = harness
+async fn close_finalizes_capture_and_ignores_late_results() {
+    // Uma captura ativa é finalizada e publicada antes de fechar.
+    let harness = Harness::without_worker().await;
+    let current = harness.current();
+    harness
         .service
-        .snapshot()
-        .recording_id
-        .expect("identificador da gravação");
-
-    harness.audio.fail_next_stop_timeout();
-    let error = harness
-        .service
-        .stop_recording()
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
         .await
-        .expect_err("a paragem expira");
-    assert_eq!(error.code, error_code::AUDIO_TIMEOUT);
+        .expect("começar a gravar");
+    let closed = harness
+        .service
+        .prepare_close()
+        .await
+        .expect("fechar com captura ativa");
+    assert_eq!(pending_jobs(&closed), 0);
+    let current = closed.current.clone().expect("pergunta atual");
+    let recording = selected_recording(&current).clone();
+    assert!(closed.recording_id.is_none());
+    assert!(closed.model_job.is_none());
+    assert!(harness.original_path(&current, &recording.id).is_file());
 
-    // A thread pode ter fechado o original depois do prazo: é publicado como
-    // recuperável e o estado deixa de esperar um evento que não chega.
-    let snapshot = harness.service.snapshot();
-    assert!(snapshot.recording_id.is_none());
-    let attempt = snapshot.attempt.expect("o original é publicado");
-    assert_eq!(attempt.id, recording_id);
-    assert!(attempt.capture.incomplete);
-    assert!(harness.original_path(&recording_id).is_file());
+    // Um trabalho em curso fica interrompido e o auxiliar é encerrado.
+    let harness = Harness::with_transcriber().await;
+    harness.record_once().await;
+    let running = harness.snapshot();
+    assert!(running.model_job.is_some(), "transcrição em curso");
+    let request = harness
+        .transcription_requests()
+        .into_iter()
+        .next()
+        .expect("transcrição automática");
+    let closed = harness
+        .service
+        .prepare_close()
+        .await
+        .expect("fechar com trabalho em curso");
+    assert_eq!(pending_jobs(&closed), 0);
+    assert!(closed.recording_id.is_none());
+    assert!(closed.model_job.is_none());
+    assert_eq!(harness.worker.shutdowns(), 1);
+    assert_eq!(harness.launcher.launches.load(Ordering::SeqCst), 1);
+    assert!(harness.audio.playback_stops() > 0);
+
+    // Nenhum resultado tardio volta a ser aplicado depois do fecho.
+    harness
+        .service
+        .on_worker_event(WorkerEvent {
+            generation: 1,
+            message: WorkerMessage::Completed {
+                request_id: request.id,
+                result: transcription_result("late after close"),
+            },
+        })
+        .await;
+    assert!(transcript_ids(&harness.current()).is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Sessões e revisões
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn start_confirm_and_advance_persist_the_session() {
+    let harness = Harness::with_pair().await;
+    harness.record_once().await;
+    let first = harness.current();
+    assert_eq!(first.question.position, 1);
+    assert_eq!(harness.snapshot().active_session.as_ref().unwrap().count, 2);
+
+    let text = "I disagreed with the checklist and we agreed on a fix.";
+    let advanced = harness.confirm_and_advance(text).await;
+    let session = advanced.active_session.as_ref().expect("sessão");
+    assert_eq!(session.position, 2);
+    assert_eq!(session.confirmed_count, 1);
+    assert_eq!(session.status, SessionStatus::InProgress);
+
+    // A cópia confirmada fica fixa e o texto exato foi o que o utilizador viu.
+    let detail = harness.load_detail(&session.id).await;
+    let confirmation = detail.questions[0]
+        .confirmation
+        .as_ref()
+        .expect("primeira pergunta confirmada");
+    assert_eq!(confirmation.text, text);
+
+    // A pergunta seguinte está livre para gravar e o histórico não a altera.
+    let next = advanced.current.expect("pergunta seguinte");
+    assert_eq!(next.question.position, 2);
+    assert!(next.confirmation.is_none());
+}
+
+#[tokio::test]
+async fn finishing_the_last_question_completes_the_session() {
+    let harness = Harness::new().await;
+    harness.record_once().await;
+    let session_id = harness.session_id();
+    let text = "I fixed the release process and told the team early.";
+
+    // Na última pergunta, «Terminar sessão» conclui e a sessão deixa de ser a
+    // ativa; o resumo continua consultável no histórico.
+    let finished = harness.confirm_and_advance(text).await;
+    assert!(finished.active_session.is_none());
+    assert!(finished.current.is_none());
+
+    let detail = harness.load_detail(&session_id).await;
+    assert_eq!(detail.summary.status, SessionStatus::Completed);
+    assert_eq!(detail.summary.confirmed_count, 1);
+    assert!(detail.summary.completed_at.is_some());
     assert_eq!(
-        snapshot.last_error.expect("erro visível").code,
-        error_code::AUDIO_TIMEOUT
+        detail.questions[0]
+            .confirmation
+            .as_ref()
+            .expect("resposta confirmada")
+            .text,
+        text
     );
 
-    // Sem a limpeza de `current_capture`, gravar ficava bloqueado.
+    // Uma sessão concluída permite iniciar outra.
+    let next = harness
+        .service
+        .start_session(StartSession {
+            request_id: new_request_id(),
+            category: Some(Category::ProblemSolving),
+            count: 1,
+        })
+        .await
+        .expect("iniciar outra entrevista");
+    assert_ne!(next.active_session.expect("nova sessão").id, session_id);
+}
+
+#[tokio::test]
+async fn confirmation_and_advance_are_refused_during_capture() {
+    let harness = Harness::new().await;
+    harness.record_once().await;
+    let text = "I fixed the release process and told the team early.";
+    harness.save_manual_review(text).await;
+
+    let current = harness.current();
+    let session = harness.snapshot().active_session.expect("sessão em curso");
+    let review_version = selected_recording(&current)
+        .review
+        .as_ref()
+        .expect("revisão guardada")
+        .version;
+
+    // O utilizador volta a gravar antes de confirmar a primeira tomada.
     harness
         .service
-        .start_recording()
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
         .await
-        .expect("gravar outra resposta");
-    harness
+        .expect("segunda captura");
+    let recording_id = harness
+        .snapshot()
+        .recording_id
+        .clone()
+        .expect("gravação em curso");
+
+    // Confirmar a meio da captura mudaria a sessão e deixaria a tomada nova
+    // publicada mas sem seleção nem transcrição.
+    let confirm = harness
+        .service
+        .confirm_answer(ConfirmAnswer {
+            request_id: new_request_id(),
+            target: harness.target_of(&current),
+            expected_review_version: review_version,
+            source_transcript_id: None,
+            origin: ReviewOrigin::ManualExplicit,
+            text: text.to_owned(),
+            expected_session_version: session.version,
+        })
+        .await
+        .expect_err("confirmar durante a captura é recusado");
+    assert_eq!(confirm.code, error_code::BUSY);
+
+    // Avançar a meio da captura mudaria a pergunta e a página.
+    let advance = harness
+        .service
+        .advance_session(AdvanceSession {
+            request_id: new_request_id(),
+            session_id: session.id.clone(),
+            session_question_id: current.question.id.clone(),
+            expected_session_version: session.version,
+        })
+        .await
+        .expect_err("avançar durante a captura é recusado");
+    assert_eq!(advance.code, error_code::BUSY);
+
+    let refused = harness.snapshot();
+    assert_eq!(
+        refused.recording_id.as_deref(),
+        Some(recording_id.as_str()),
+        "a captura em curso mantém-se intacta"
+    );
+    assert_eq!(
+        refused.last_error.expect("erro visível").code,
+        error_code::BUSY
+    );
+
+    // Nenhuma mutação chegou à base: sem confirmação, mesma versão e posição.
+    let detail = harness.load_detail(&session.id).await;
+    assert_eq!(detail.summary.version, session.version);
+    assert_eq!(detail.summary.position, 1);
+    assert!(detail.questions[0].confirmation.is_none());
+    assert_eq!(
+        detail.questions[0].recordings[0]
+            .review
+            .as_ref()
+            .expect("revisão anterior intacta")
+            .version,
+        review_version
+    );
+
+    // A captura pode terminar: a nova tomada fica publicada e selecionada.
+    let stopped = harness
         .service
         .stop_recording()
         .await
-        .expect("terminar a segunda gravação");
+        .expect("terminar a gravação recusada não perde a tomada");
+    assert!(stopped.recording_id.is_none());
+    let current = stopped.current.expect("pergunta atual");
+    let selected = selected_recording(&current);
+    assert_eq!(selected.id, recording_id);
+    assert_eq!(selected.state, RecordingState::Ready);
+}
 
-    // O mesmo timeout ao fechar não pode deixar o encerramento bloqueado.
+#[tokio::test]
+async fn review_is_refused_while_the_capture_is_finalizing() {
+    let harness = Harness::new().await;
+    harness.record_once().await;
+    let current = harness.current();
+    let session_id = harness.session_id();
+    let target = harness.target_of(&current);
+
+    // Nova captura cuja paragem fica bloqueada dentro da finalização.
     harness
         .service
-        .start_recording()
+        .start_recording(
+            current.question.id.clone(),
+            current.question.selection_version,
+        )
         .await
-        .expect("terceira gravação");
-    harness.audio.fail_next_stop_timeout();
-    let close_error = harness
+        .expect("segunda captura");
+    let recording_id = harness
+        .snapshot()
+        .recording_id
+        .clone()
+        .expect("gravação em curso");
+    let gate = harness.audio.block_next_stop();
+    let service = Arc::clone(&harness.service);
+    let stopping = tokio::spawn(async move { service.stop_recording().await });
+    wait_until_finalizing(&harness.service).await;
+
+    // Interromper a finalização (como uma janela fechada a meio) liberta o
+    // coordenador, mas o estado continua marcado como `finalizing`.
+    stopping.abort();
+    let _ = stopping.await;
+    gate.release();
+
+    let error = harness
         .service
-        .prepare_close()
+        .save_review(SaveReview {
+            request_id: new_request_id(),
+            target,
+            expected_review_version: 0,
+            source_transcript_id: None,
+            origin: ReviewOrigin::ManualExplicit,
+            text: "edited during finalization".to_owned(),
+        })
         .await
-        .expect_err("o fecho falha no timeout");
-    assert_eq!(close_error.code, error_code::AUDIO_TIMEOUT);
-    assert!(harness.service.snapshot().attempt.is_some());
-    harness
+        .expect_err("guardar durante a finalização é recusado");
+    assert_eq!(error.code, error_code::BUSY);
+
+    let refused = harness.snapshot();
+    assert_eq!(refused.recording_id.as_deref(), Some(recording_id.as_str()));
+    assert!(refused.finalizing);
+    assert_eq!(
+        refused.last_error.expect("erro visível").code,
+        error_code::BUSY
+    );
+
+    // Nenhuma revisão foi escrita: a escrita não correu com a publicação.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let detail = harness.load_detail(&session_id).await;
+    assert!(
+        detail.questions[0].recordings[0].review.is_none(),
+        "a revisão não pode correr com a publicação"
+    );
+    assert_eq!(detail.summary.version, 1);
+}
+
+#[tokio::test]
+async fn only_one_active_session_is_presented() {
+    let harness = Harness::new().await;
+    let error = harness
         .service
-        .prepare_close()
+        .start_session(StartSession {
+            request_id: new_request_id(),
+            category: Some(Category::ProblemSolving),
+            count: 1,
+        })
         .await
-        .expect("o fecho seguinte conclui");
+        .expect_err("já existe uma entrevista em curso");
+    assert_eq!(error.code, error_code::ACTIVE_SESSION_EXISTS);
+    assert_eq!(harness.snapshot().active_session.expect("sessão").count, 1);
+}
+
+#[tokio::test]
+async fn database_snapshot_is_ready_with_the_seeded_bank() {
+    let harness = Harness::new().await;
+    let snapshot = harness.snapshot();
+    assert_eq!(snapshot.database, DatabaseState::Ready);
+    assert!(snapshot.last_error.is_none());
+    assert!(codes(&snapshot).is_empty());
+
+    let questions = harness
+        .service
+        .list_questions(None)
+        .await
+        .expect("listar perguntas");
+    assert_eq!(questions.len(), 2);
+
+    let ids: HashSet<String> = unique_ids(questions.iter().map(|question| question.id.clone()));
+    assert_eq!(ids.len(), 2);
 }
