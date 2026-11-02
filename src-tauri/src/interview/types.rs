@@ -188,6 +188,16 @@ pub enum ReviewOrigin {
     ManualExplicit,
 }
 
+impl ReviewOrigin {
+    /// Nome estável guardado na base de dados.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ReviewOrigin::Automatic => "automatic",
+            ReviewOrigin::ManualExplicit => "manual_explicit",
+        }
+    }
+}
+
 /// Revisão guardada (ou em edição) de uma gravação.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -395,6 +405,19 @@ pub fn validate_question(input: QuestionInput) -> Result<QuestionInput> {
         competencies,
         criteria,
     })
+}
+
+/// Valida o texto de uma revisão ou confirmação.
+///
+/// Só recusa texto vazio ou apenas com espaços; `trim()` não é aplicado ao
+/// texto guardado, porque a confirmação fixa exatamente o que o utilizador viu.
+pub fn validate_review_text(text: &str) -> Result<()> {
+    if text.trim().is_empty() {
+        return Err(invalid_input(
+            "O texto da resposta está vazio. Escreva a resposta antes de a guardar ou confirmar.",
+        ));
+    }
+    Ok(())
 }
 
 /// Valida a quantidade pedida contra o total elegível.

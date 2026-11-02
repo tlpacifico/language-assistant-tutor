@@ -12,8 +12,9 @@
 //! base. Depois de a migração estar aplicada, `open` garante o banco inicial de
 //! perguntas: a marca `questions-v1` em `content_seeds` torna o seed único.
 //! `questions` reúne o banco editável, `sessions` a criação atómica das
-//! entrevistas guiadas, com as cópias fixas das perguntas e os recibos dos
-//! pedidos, e `answers` as gravações, publicações e transcrições automáticas.
+//! entrevistas guiadas, com as cópias fixas das perguntas, os avanços e os
+//! recibos dos pedidos, e `answers` as gravações, publicações, transcrições
+//! automáticas, revisões append-only e confirmações imutáveis.
 
 use std::fmt;
 use std::path::PathBuf;

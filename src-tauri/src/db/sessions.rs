@@ -1,4 +1,4 @@
-//! Sessões guiadas: criação atómica, sorteio sem repetição e consulta.
+//! Sessões guiadas: criação atómica, consulta e avanço idempotente.
 //!
 //! A criação corre numa única transação `BEGIN IMMEDIATE`: valida o pedido,
 //! relê as perguntas elegíveis, sorteia com `ORDER BY random() LIMIT ?`, guarda
@@ -17,21 +17,27 @@
 //! com outro conteúdo devolve `STALE_SOURCE`. O hash é SHA-256 sobre a
 //! serialização canónica dos campos do pedido, sem o `requestId`.
 //!
+//! O avanço é explícito: exige a posição, a pergunta e a versão esperadas, uma
+//! resposta já confirmada e o recibo correspondente. Uma repetição do mesmo
+//! pedido devolve o estado guardado sem avançar outra vez. Na última pergunta,
+//! a sessão só termina quando todas as perguntas estão confirmadas; fica
+//! `completed`, com `completedAt` e o modo `local_v2` inalterado.
+//!
 //! As leituras (`active_session`, `list_sessions`, `load_session`) devolvem
-//! DTOs e nunca escrevem. As gravações e as confirmações são preenchidas pelas
-//! tarefas seguintes; nesta fase vêm vazias e a consulta não as inventa.
+//! DTOs e nunca escrevem; as gravações e as confirmações são lidas de
+//! `answers.rs` e a consulta não inventa resultados.
 
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension, Row, TransactionBehavior};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use super::answers::{find_receipt, insert_receipt, load_confirmation, request_hash, Receipt};
 use super::questions::{json_array, json_list, parse_category, utc_now, STAR_CRITERIA};
 use super::Database;
 use crate::domain::{error_code, AppError};
 use crate::interview::{
-    validate_count, Category, Id, QuestionDetail, Result, SessionDetail, SessionMode,
-    SessionQuestion, SessionStatus, SessionSummary, StartSession, Version,
+    validate_count, AdvanceSession, Category, Id, QuestionDetail, Result, SessionDetail,
+    SessionMode, SessionQuestion, SessionStatus, SessionSummary, StartSession, Version,
 };
 
 /// Colunas do resumo, com o número de respostas confirmadas da sessão.
@@ -97,7 +103,15 @@ impl Database {
             }
 
             verify_question_count(&transaction, &session_id, request.count)?;
-            insert_receipt(&transaction, &request_id, &payload_hash, &session_id)?;
+            insert_receipt(
+                &transaction,
+                &request_id,
+                "start_session",
+                &payload_hash,
+                Some(&session_id),
+                Some(&session_id),
+                Some(1),
+            )?;
 
             let detail = load_detail(&transaction, &session_id)?
                 .ok_or_else(|| read_corrupt("a sessão recém-criada não foi encontrada"))?;
@@ -146,13 +160,119 @@ impl Database {
             load_detail(connection, session_id)?.ok_or_else(session_not_found)
         })
     }
-}
 
-/// Recibo de um pedido já aplicado.
-struct Receipt {
-    kind: String,
-    payload_hash: String,
-    session_id: Option<Id>,
+    /// Avança a sessão para a pergunta seguinte ou conclui a última.
+    ///
+    /// A posição, a pergunta e a versão esperadas têm de corresponder ao estado
+    /// guardado, e a pergunta atual tem de estar confirmada. Na última posição,
+    /// a sessão só termina quando todas as perguntas estão confirmadas; nesse
+    /// caso fica `completed`, com `completedAt`, mantendo `mode = 'local_v2'`.
+    /// O recibo é escrito na mesma transação: repetir o mesmo pedido devolve o
+    /// estado guardado sem aplicar outro avanço, e o mesmo `requestId` com
+    /// outro conteúdo é `STALE_SOURCE`.
+    pub fn advance_session(&self, request: AdvanceSession) -> Result<SessionDetail> {
+        let request_id = request.request_id.trim().to_owned();
+        if request_id.is_empty() {
+            return Err(invalid_advance_request());
+        }
+        let payload_hash = request_hash(&AdvancePayload {
+            session_id: &request.session_id,
+            session_question_id: &request.session_question_id,
+            expected_session_version: request.expected_session_version,
+        })?;
+        let now = utc_now();
+
+        self.with_connection(|connection| {
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(write_failed)?;
+
+            // O recibo é consultado antes das versões: um replay nunca aplica
+            // outro avanço nem conclui a sessão duas vezes.
+            if let Some(receipt) = find_receipt(&transaction, &request_id)? {
+                return replay_advance(&transaction, &receipt, &payload_hash);
+            }
+
+            let progress =
+                find_progress(&transaction, &request.session_id)?.ok_or_else(session_not_found)?;
+            if progress.status != SessionStatus::InProgress {
+                return Err(session_already_completed());
+            }
+            if progress.version != request.expected_session_version {
+                return Err(stale_progress());
+            }
+            if progress.current_question_id.as_deref() != Some(request.session_question_id.as_str())
+            {
+                return Err(stale_progress());
+            }
+
+            let last = progress.position == progress.question_count;
+            if last {
+                // Terminar exige todas as perguntas confirmadas, não só a atual.
+                let missing = unconfirmed_questions(&transaction, &request.session_id)?;
+                if missing > 0 {
+                    return Err(completion_incomplete(missing));
+                }
+            } else if !has_confirmation(&transaction, &request.session_question_id)? {
+                return Err(answer_required());
+            }
+
+            let expected_position = version_to_i64(u64::from(progress.position))?;
+            let updated = if last {
+                transaction
+                    .execute(
+                        "UPDATE sessions
+                            SET status = 'completed', completed_at = ?3,
+                                version = version + 1
+                          WHERE id = ?1 AND version = ?2 AND position = ?4
+                            AND status = 'in_progress'",
+                        params![
+                            request.session_id,
+                            version_to_i64(request.expected_session_version)?,
+                            now,
+                            expected_position
+                        ],
+                    )
+                    .map_err(write_failed)?
+            } else {
+                transaction
+                    .execute(
+                        "UPDATE sessions
+                            SET position = position + 1, version = version + 1
+                          WHERE id = ?1 AND version = ?2 AND position = ?3
+                            AND status = 'in_progress'",
+                        params![
+                            request.session_id,
+                            version_to_i64(request.expected_session_version)?,
+                            expected_position
+                        ],
+                    )
+                    .map_err(write_failed)?
+            };
+            if updated != 1 {
+                return Err(stale_progress());
+            }
+
+            let session_version = request
+                .expected_session_version
+                .checked_add(1)
+                .ok_or_else(stale_progress)?;
+            insert_receipt(
+                &transaction,
+                &request_id,
+                "advance_session",
+                &payload_hash,
+                Some(&request.session_id),
+                Some(&request.session_question_id),
+                Some(session_version),
+            )?;
+
+            let detail = load_detail(&transaction, &request.session_id)?
+                .ok_or_else(|| read_corrupt("a sessão avançada não foi encontrada"))?;
+            transaction.commit().map_err(write_failed)?;
+            Ok(detail)
+        })
+    }
 }
 
 /// Pergunta do banco escolhida para a sessão, antes de ser copiada.
@@ -183,25 +303,6 @@ fn replay_start(
         .ok_or_else(|| read_corrupt("o recibo do início não indica a sessão criada"))?;
     load_detail(connection, session_id)?
         .ok_or_else(|| read_corrupt("a sessão indicada pelo recibo do início não existe na base"))
-}
-
-fn find_receipt(connection: &Connection, request_id: &str) -> Result<Option<Receipt>> {
-    connection
-        .query_row(
-            "SELECT kind, payload_hash, session_id
-             FROM command_receipts
-             WHERE request_id = ?1",
-            [request_id],
-            |row| {
-                Ok(Receipt {
-                    kind: row.get("kind")?,
-                    payload_hash: row.get("payload_hash")?,
-                    session_id: row.get("session_id")?,
-                })
-            },
-        )
-        .optional()
-        .map_err(read_failed)
 }
 
 fn count_eligible(connection: &Connection, category: Option<Category>) -> Result<usize> {
@@ -368,23 +469,6 @@ fn verify_question_count(connection: &Connection, session_id: &str, expected: u3
     Ok(())
 }
 
-fn insert_receipt(
-    connection: &Connection,
-    request_id: &str,
-    payload_hash: &str,
-    session_id: &str,
-) -> Result<()> {
-    connection
-        .execute(
-            "INSERT INTO command_receipts
-               (request_id, kind, payload_hash, session_id, entity_id, result_version)
-             VALUES (?1, 'start_session', ?2, ?3, ?3, 1)",
-            params![request_id, payload_hash, session_id],
-        )
-        .map_err(write_failed)?;
-    Ok(())
-}
-
 fn load_detail(connection: &Connection, session_id: &str) -> Result<Option<SessionDetail>> {
     let Some(summary) = find_summary(connection, session_id)? else {
         return Ok(None);
@@ -405,13 +489,12 @@ fn load_detail(connection: &Connection, session_id: &str) -> Result<Option<Sessi
     let mut questions = Vec::new();
     while let Some(row) = rows.next().map_err(read_failed)? {
         let question = session_question(row)?;
-        // As gravações são preenchidas pela tarefa 4; a confirmação pertence à
-        // tarefa 5 e a consulta não inventa resultados.
         let recordings = super::answers::load_recordings(connection, &question.id)?;
+        let confirmation = load_confirmation(connection, &question.id)?;
         questions.push(QuestionDetail {
             question,
             recordings,
-            confirmation: None,
+            confirmation,
         });
     }
 
@@ -535,24 +618,137 @@ struct StartPayload<'a> {
     count: u32,
 }
 
+/// Campos do pedido de avanço sem o `requestId`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AdvancePayload<'a> {
+    session_id: &'a str,
+    session_question_id: &'a str,
+    expected_session_version: Version,
+}
+
 fn start_payload_hash(category: Option<Category>, count: u32) -> Result<String> {
-    let payload = StartPayload {
+    request_hash(&StartPayload {
         category: category.map(Category::as_str),
         count,
+    })
+}
+
+/// Progresso guardado de uma sessão, para validar o avanço.
+struct SessionProgress {
+    position: u32,
+    question_count: u32,
+    status: SessionStatus,
+    version: Version,
+    current_question_id: Option<Id>,
+}
+
+fn find_progress(connection: &Connection, session_id: &str) -> Result<Option<SessionProgress>> {
+    let row = connection
+        .query_row(
+            "SELECT s.position, s.question_count, s.status, s.version,
+                    (SELECT sq.id
+                       FROM session_questions sq
+                      WHERE sq.session_id = s.id AND sq.position = s.position)
+                        AS current_question_id
+               FROM sessions s
+              WHERE s.id = ?1",
+            [session_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>("position")?,
+                    row.get::<_, i64>("question_count")?,
+                    row.get::<_, String>("status")?,
+                    row.get::<_, i64>("version")?,
+                    row.get::<_, Option<Id>>("current_question_id")?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(read_failed)?;
+    let Some((position, question_count, status, version, current_question_id)) = row else {
+        return Ok(None);
     };
-    let canonical = serde_json::to_vec(&payload).map_err(|error| {
+
+    let status = match status.as_str() {
+        "in_progress" => SessionStatus::InProgress,
+        "completed" => SessionStatus::Completed,
+        other => {
+            return Err(read_corrupt(&format!(
+                "estado de sessão desconhecido «{other}»"
+            )))
+        }
+    };
+    Ok(Some(SessionProgress {
+        position: count_from_value(position, "position")?,
+        question_count: count_from_value(question_count, "question_count")?,
+        status,
+        version: Version::try_from(version)
+            .map_err(|_| read_corrupt("versão de sessão inválida"))?,
+        current_question_id,
+    }))
+}
+
+fn has_confirmation(connection: &Connection, session_question_id: &str) -> Result<bool> {
+    let confirmed: i64 = connection
+        .query_row(
+            "SELECT EXISTS (
+                SELECT 1 FROM confirmations WHERE session_question_id = ?1
+             )",
+            [session_question_id],
+            |row| row.get(0),
+        )
+        .map_err(read_failed)?;
+    Ok(confirmed != 0)
+}
+
+/// Perguntas da sessão ainda sem resposta confirmada.
+fn unconfirmed_questions(connection: &Connection, session_id: &str) -> Result<u32> {
+    let count: i64 = connection
+        .query_row(
+            "SELECT count(*)
+               FROM session_questions sq
+              WHERE sq.session_id = ?1
+                AND NOT EXISTS (
+                    SELECT 1 FROM confirmations c
+                     WHERE c.session_question_id = sq.id
+                )",
+            [session_id],
+            |row| row.get(0),
+        )
+        .map_err(read_failed)?;
+    u32::try_from(count).map_err(|_| read_corrupt("contagem de confirmações inválida"))
+}
+
+fn count_from_value(value: i64, column: &str) -> Result<u32> {
+    u32::try_from(value).map_err(|_| read_corrupt(&format!("«{column}» inválido «{value}»")))
+}
+
+fn version_to_i64(version: Version) -> Result<i64> {
+    i64::try_from(version).map_err(|_| {
         AppError::new(
             error_code::INVALID_INPUT,
-            format!("Não foi possível preparar o pedido de início da entrevista: {error}"),
+            "A versão indicada no pedido excede o intervalo guardável.",
             false,
         )
-    })?;
-    let digest = Sha256::digest(&canonical);
-    let mut hash = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        hash.push_str(&format!("{byte:02x}"));
+    })
+}
+
+/// Repete um avanço já guardado: devolve o estado atual sem escrever nada.
+fn replay_advance(
+    connection: &Connection,
+    receipt: &Receipt,
+    payload_hash: &str,
+) -> Result<SessionDetail> {
+    if receipt.kind != "advance_session" || receipt.payload_hash != payload_hash {
+        return Err(stale_request());
     }
-    Ok(hash)
+    let session_id = receipt
+        .session_id
+        .as_deref()
+        .ok_or_else(|| read_corrupt("o recibo do avanço não indica a sessão"))?;
+    load_detail(connection, session_id)?
+        .ok_or_else(|| read_corrupt("a sessão indicada pelo recibo do avanço não existe na base"))
 }
 
 /// A única restrição de unicidade que este `INSERT` pode violar é o índice
@@ -594,6 +790,52 @@ fn stale_request() -> AppError {
          para iniciar outra entrevista.",
         false,
     )
+}
+
+fn invalid_advance_request() -> AppError {
+    AppError::new(
+        error_code::INVALID_INPUT,
+        "O pedido de avanço não tem identificador. Repita o avanço a partir da entrevista.",
+        false,
+    )
+}
+
+fn session_already_completed() -> AppError {
+    AppError::new(
+        error_code::STALE_SOURCE,
+        "Esta entrevista já terminou. Abra o histórico para a consultar.",
+        false,
+    )
+}
+
+fn stale_progress() -> AppError {
+    AppError::new(
+        error_code::STALE_SOURCE,
+        "A entrevista mudou entretanto. Atualize o estado antes de avançar para a pergunta seguinte.",
+        false,
+    )
+}
+
+/// Avançar exige a resposta da pergunta atual já confirmada.
+fn answer_required() -> AppError {
+    AppError::new(
+        error_code::ANSWER_REQUIRED,
+        "A pergunta atual ainda não tem a resposta confirmada. Confirme a resposta antes de avançar.",
+        false,
+    )
+}
+
+/// Terminar exige todas as perguntas previstas confirmadas.
+fn completion_incomplete(missing: u32) -> AppError {
+    let message = if missing == 1 {
+        "Falta 1 resposta confirmada. Confirme essa pergunta antes de terminar a sessão.".to_owned()
+    } else {
+        format!(
+            "Ainda faltam {missing} respostas confirmadas. Confirme todas as perguntas antes \
+             de terminar a sessão."
+        )
+    };
+    AppError::new(error_code::ANSWER_REQUIRED, message, false)
 }
 
 fn session_not_found() -> AppError {

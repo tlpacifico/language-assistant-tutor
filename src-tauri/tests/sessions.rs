@@ -15,7 +15,8 @@ use rusqlite::params;
 use language_assistant_tutor::db::{Database, STAR_CRITERIA};
 use language_assistant_tutor::domain::{error_code, AppError};
 use language_assistant_tutor::interview::{
-    Category, QuestionInput, SessionDetail, SessionMode, SessionStatus, StartSession,
+    AdvanceSession, Category, QuestionInput, SessionDetail, SessionMode, SessionStatus,
+    StartSession,
 };
 
 fn temp_database_path() -> (tempfile::TempDir, PathBuf) {
@@ -812,4 +813,123 @@ fn list_sessions_reports_completed_sessions_and_order() {
         database.load_session("sessao-antiga").expect("reler"),
         old_detail
     );
+}
+
+#[test]
+fn old_start_replay_after_completion_does_not_create_session() {
+    let (_directory, path) = temp_database_path();
+    let payload = request("pedido-concluido", Some(Category::LeadershipInitiative), 1);
+    let started;
+    let completed;
+    {
+        let database = open(&path);
+        started = database
+            .start_session(payload.clone())
+            .expect("iniciar a entrevista");
+        let session = started.summary.id.clone();
+        let question = started.questions[0].question.id.clone();
+
+        // Resposta já confirmada, gravada diretamente: este teste é sobre o
+        // avanço que conclui a sessão e sobre o replay do início antigo.
+        database
+            .with_connection(|connection| {
+                connection
+                    .execute(
+                        "INSERT INTO recordings
+                           (id, session_question_id, ordinal, state, original_file,
+                            normalized_file, capture_json, created_at, updated_at)
+                         VALUES ('rec-concluida', ?1, 1, 'ready',
+                                 'sessions/concluida/original.wav', NULL, NULL,
+                                 '2026-11-02T10:00:00.000Z',
+                                 '2026-11-02T10:00:00.000Z')",
+                        params![question],
+                    )
+                    .map_err(to_app_error)?;
+                connection
+                    .execute(
+                        "UPDATE session_questions
+                            SET selected_recording_id = 'rec-concluida',
+                                selection_version = 1
+                          WHERE id = ?1",
+                        params![question],
+                    )
+                    .map_err(to_app_error)?;
+                connection
+                    .execute(
+                        "INSERT INTO reviews
+                           (recording_id, version, source_transcript_id, origin, text,
+                            saved_at)
+                         VALUES ('rec-concluida', 1, NULL, 'manual_explicit',
+                                 'Only answer.', '2026-11-02T10:01:00.000Z')",
+                        [],
+                    )
+                    .map_err(to_app_error)?;
+                connection
+                    .execute(
+                        "INSERT INTO confirmations
+                           (id, session_question_id, recording_id, review_version,
+                            source_transcript_id, origin, text, confirmed_at)
+                         VALUES ('conf-concluida', ?1, 'rec-concluida', 1, NULL,
+                                 'manual_explicit', 'Only answer.',
+                                 '2026-11-02T10:02:00.000Z')",
+                        params![question],
+                    )
+                    .map_err(to_app_error)?;
+                Ok(())
+            })
+            .expect("preparar uma resposta confirmada");
+
+        completed = database
+            .advance_session(AdvanceSession {
+                request_id: "avanco-final".to_owned(),
+                session_id: session,
+                session_question_id: question,
+                expected_session_version: 1,
+            })
+            .expect("terminar a sessão completa");
+        assert_eq!(completed.summary.status, SessionStatus::Completed);
+        assert_eq!(completed.summary.mode, SessionMode::LocalV2);
+        assert_eq!(completed.summary.confirmed_count, 1);
+        assert_eq!(completed.summary.version, 2);
+        assert!(completed.summary.completed_at.is_some());
+        assert_eq!(sqlite_count(&database, "sessions"), 1);
+        assert_eq!(sqlite_count(&database, "command_receipts"), 2);
+    }
+
+    // Depois de reabrir, repetir o início antigo devolve a sessão concluída.
+    let reopened = open(&path);
+    let replay = reopened
+        .start_session(payload.clone())
+        .expect("repetir o início depois de concluir");
+    assert_eq!(replay.summary.id, started.summary.id);
+    assert_eq!(replay.summary.status, SessionStatus::Completed);
+    assert_eq!(replay.questions, completed.questions);
+    assert_eq!(
+        sqlite_count(&reopened, "sessions"),
+        1,
+        "o replay de um início antigo nunca cria outra entrevista"
+    );
+    assert_eq!(
+        sqlite_count(&reopened, "command_receipts"),
+        2,
+        "o recibo do início continua único"
+    );
+    assert!(
+        reopened
+            .active_session()
+            .expect("ler a sessão em curso")
+            .is_none(),
+        "a sessão concluída não volta a ficar em curso"
+    );
+
+    // O mesmo pedido com outra configuração continua a ser recusado.
+    let error = reopened
+        .start_session(request(
+            "pedido-concluido",
+            Some(Category::LeadershipInitiative),
+            2,
+        ))
+        .expect_err("o mesmo requestId com outro conteúdo é recusado");
+    assert_eq!(error.code, error_code::STALE_SOURCE);
+    assert_eq!(sqlite_count(&reopened, "sessions"), 1);
 }

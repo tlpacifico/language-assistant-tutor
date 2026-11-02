@@ -1,4 +1,4 @@
-//! Gravações, publicações e transcrições automáticas das entrevistas guiadas.
+//! Gravações, respostas, revisões e confirmações das entrevistas guiadas.
 //!
 //! A base é a autoridade das linhas; os ficheiros são geridos por
 //! `artifacts::ArtifactStore`. Uma gravação é reservada antes da captura, o
@@ -10,8 +10,15 @@
 //!
 //! A transcrição automática é guardada na mesma transação que encerra a sua
 //! operação: um resultado só fecha o pedido que o originou, um resultado tardio
-//! não é aplicado e uma transcrição já gravada nunca é reescrita. Guardar uma
-//! revisão pertence à tarefa 5; esta camada só a lê, sem a alterar.
+//! não é aplicado e uma transcrição já gravada nunca é reescrita.
+//!
+//! Guardar uma revisão acrescenta uma versão nova (`n+1`) e nunca reescreve nem
+//! elimina versões anteriores; não confirma nem avança a sessão. Confirmar é uma
+//! única transação: valida a versão da revisão, a seleção da gravação e a versão
+//! da sessão, insere a revisão exata que o utilizador viu quando o texto mudou,
+//! grava a confirmação imutável, incrementa `sessions.version` e escreve o
+//! recibo. Qualquer falha reverte as duas escritas e o recibo. O avanço da
+//! sessão pertence a `sessions.rs`, que reutiliza estes auxiliares.
 //!
 //! A divisão entre ficheiros e base não tem transação comum. A recuperação
 //! (`artifacts::reconcile`) inspeciona as reservas pendentes e publica os
@@ -21,7 +28,9 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
+use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::questions::utc_now;
@@ -32,7 +41,8 @@ use crate::artifacts::{
 use crate::audio::{CapturedAudio, ORIGINAL_FILE};
 use crate::domain::{error_code, AppError, CaptureMeta, Transcript, TranscriptStatus};
 use crate::interview::{
-    Id, OperationTarget, RecordingState, RecordingView, Result, ReviewDraft, ReviewOrigin, Version,
+    validate_review_text, AnswerTarget, ConfirmAnswer, Confirmation, Id, OperationTarget,
+    RecordingState, RecordingView, Result, ReviewDraft, ReviewOrigin, SaveReview, Version,
 };
 
 /// Reserva que ainda pode ter um original por publicar.
@@ -78,6 +88,46 @@ struct StoredTranscript {
     recording_id: Id,
     status: String,
     text: String,
+}
+
+/// Estado da pergunta relevante para guardar, confirmar e avançar.
+struct ReviewTarget {
+    session_id: Id,
+    selection_version: Version,
+    selected_recording_id: Option<Id>,
+    confirmed: bool,
+    session_version: Version,
+}
+
+/// Revisão lida da base, antes de ser convertida no DTO.
+struct StoredReviewRow {
+    recording_id: Id,
+    version: i64,
+    source_transcript_id: Option<Id>,
+    origin: String,
+    text: String,
+    saved_at: String,
+}
+
+/// Confirmação lida da base, antes de ser convertida no DTO.
+struct StoredConfirmationRow {
+    id: Id,
+    session_question_id: Id,
+    recording_id: Id,
+    review_version: i64,
+    source_transcript_id: Option<Id>,
+    origin: String,
+    text: String,
+    confirmed_at: String,
+}
+
+/// Recibo de um pedido já aplicado, partilhado por `sessions.rs`.
+pub(super) struct Receipt {
+    pub(super) kind: String,
+    pub(super) payload_hash: String,
+    pub(super) session_id: Option<Id>,
+    pub(super) entity_id: Option<Id>,
+    pub(super) result_version: Option<Version>,
 }
 
 impl Database {
@@ -411,6 +461,216 @@ impl Database {
         })
     }
 
+    /// Guarda uma versão nova da revisão de uma resposta, sem confirmar.
+    ///
+    /// As revisões são só de acréscimo: a versão `n+1` junta-se às anteriores e
+    /// nenhuma versão guardada é reescrita. Guardar não confirma, não avança a
+    /// sessão e não muda `sessions.version`. A versão de revisão esperada, a
+    /// seleção da gravação e a versão de seleção têm de corresponder ao estado
+    /// atual; uma pergunta já confirmada devolve `ANSWER_CONFIRMED`. Texto vazio
+    /// ou só com espaços é `INVALID_INPUT`; fora isso, o texto é guardado
+    /// exatamente como recebido.
+    pub fn save_review(&self, request: SaveReview) -> Result<ReviewDraft> {
+        let request_id = request.request_id.trim().to_owned();
+        if request_id.is_empty() {
+            return Err(invalid_review_request());
+        }
+        validate_review_text(&request.text)?;
+        let payload_hash = request_hash(&SaveReviewPayload {
+            target: &request.target,
+            expected_review_version: request.expected_review_version,
+            source_transcript_id: request.source_transcript_id.as_deref(),
+            origin: request.origin,
+            text: &request.text,
+        })?;
+        let now = utc_now();
+
+        self.with_connection(|connection| {
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(write_failed)?;
+
+            // O recibo é consultado antes das versões: repetir um pedido
+            // guardado devolve a mesma revisão sem escrever outra.
+            if let Some(receipt) = find_receipt(&transaction, &request_id)? {
+                return replay_save_review(&transaction, &receipt, &payload_hash);
+            }
+
+            let target = require_review_target(&transaction, &request.target, None)?;
+            require_selected_recording(&transaction, &request.target, &target)?;
+            require_transcript_owner(
+                &transaction,
+                &request.target.recording_id,
+                request.source_transcript_id.as_deref(),
+            )?;
+
+            let current = load_review(&transaction, &request.target.recording_id)?;
+            let expected = current.as_ref().map_or(0, |review| review.version);
+            if expected != request.expected_review_version {
+                return Err(stale_review());
+            }
+            let version = expected.checked_add(1).ok_or_else(invalid_version)?;
+            insert_review(
+                &transaction,
+                &request.target.recording_id,
+                version,
+                request.source_transcript_id.as_deref(),
+                request.origin,
+                &request.text,
+                &now,
+            )?;
+            insert_receipt(
+                &transaction,
+                &request_id,
+                "save_review",
+                &payload_hash,
+                Some(&request.target.session_id),
+                Some(&request.target.recording_id),
+                Some(version),
+            )?;
+
+            let draft = load_review(&transaction, &request.target.recording_id)?
+                .ok_or_else(|| read_corrupt("a revisão recém-guardada não foi encontrada"))?;
+            transaction.commit().map_err(write_failed)?;
+            Ok(draft)
+        })
+    }
+
+    /// Confirma a resposta num único commit, com o texto exato que o utilizador viu.
+    ///
+    /// Valida, dentro de uma transação `BEGIN IMMEDIATE`, a versão de revisão
+    /// esperada, a seleção da gravação e a versão esperada da sessão; exige uma
+    /// gravação finalizada e não confirmada. Se o texto mudou em relação à
+    /// revisão guardada, acrescenta uma versão a essa revisão e confirma essa
+    /// versão; caso contrário reutiliza a versão existente. A confirmação fica
+    /// ligada à pergunta, à gravação e à versão da revisão, a versão da sessão
+    /// avança e o recibo é escrito na mesma transação. Uma repetição do mesmo
+    /// pedido devolve a confirmação guardada antes de recusar por já confirmado.
+    pub fn confirm_answer(&self, request: ConfirmAnswer) -> Result<Confirmation> {
+        let request_id = request.request_id.trim().to_owned();
+        if request_id.is_empty() {
+            return Err(invalid_confirmation_request());
+        }
+        validate_review_text(&request.text)?;
+        let payload_hash = request_hash(&ConfirmAnswerPayload {
+            target: &request.target,
+            expected_review_version: request.expected_review_version,
+            source_transcript_id: request.source_transcript_id.as_deref(),
+            origin: request.origin,
+            text: &request.text,
+            expected_session_version: request.expected_session_version,
+        })?;
+        let now = utc_now();
+
+        self.with_connection(|connection| {
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(write_failed)?;
+
+            if let Some(receipt) = find_receipt(&transaction, &request_id)? {
+                return replay_confirmation(&transaction, &receipt, &payload_hash);
+            }
+
+            let target = require_review_target(
+                &transaction,
+                &request.target,
+                Some(request.expected_session_version),
+            )?;
+            require_selected_recording(&transaction, &request.target, &target)?;
+            require_transcript_owner(
+                &transaction,
+                &request.target.recording_id,
+                request.source_transcript_id.as_deref(),
+            )?;
+
+            let current = load_review(&transaction, &request.target.recording_id)?;
+            let expected = current.as_ref().map_or(0, |review| review.version);
+            if expected != request.expected_review_version {
+                return Err(stale_review());
+            }
+
+            // Só uma revisão diferente do estado guardado acrescenta versão; o
+            // texto confirmado é sempre o que o pedido trouxe, sem `trim`.
+            let review_version = match &current {
+                Some(review)
+                    if review.text == request.text
+                        && review.origin == request.origin
+                        && review.source_transcript_id == request.source_transcript_id =>
+                {
+                    review.version
+                }
+                _ => {
+                    let version = expected.checked_add(1).ok_or_else(invalid_version)?;
+                    insert_review(
+                        &transaction,
+                        &request.target.recording_id,
+                        version,
+                        request.source_transcript_id.as_deref(),
+                        request.origin,
+                        &request.text,
+                        &now,
+                    )?;
+                    version
+                }
+            };
+
+            let confirmation_id = Uuid::new_v4().to_string();
+            transaction
+                .execute(
+                    "INSERT INTO confirmations
+                       (id, session_question_id, recording_id, review_version,
+                        source_transcript_id, origin, text, confirmed_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        confirmation_id,
+                        request.target.session_question_id,
+                        request.target.recording_id,
+                        version_to_i64(review_version)?,
+                        request.source_transcript_id.as_deref(),
+                        request.origin.as_str(),
+                        request.text,
+                        now
+                    ],
+                )
+                .map_err(write_failed)?;
+
+            let updated = transaction
+                .execute(
+                    "UPDATE sessions
+                        SET version = version + 1
+                      WHERE id = ?1 AND version = ?2 AND status = 'in_progress'",
+                    params![
+                        target.session_id,
+                        version_to_i64(request.expected_session_version)?
+                    ],
+                )
+                .map_err(write_failed)?;
+            if updated != 1 {
+                return Err(stale_session());
+            }
+            let session_version = request
+                .expected_session_version
+                .checked_add(1)
+                .ok_or_else(invalid_version)?;
+            insert_receipt(
+                &transaction,
+                &request_id,
+                "confirm_answer",
+                &payload_hash,
+                Some(&target.session_id),
+                Some(&confirmation_id),
+                Some(session_version),
+            )?;
+
+            let confirmation =
+                load_confirmation(&transaction, &request.target.session_question_id)?.ok_or_else(
+                    || read_corrupt("a confirmação recém-guardada não foi encontrada"),
+                )?;
+            transaction.commit().map_err(write_failed)?;
+            Ok(confirmation)
+        })
+    }
+
     /// Gravações que podem ter um original ainda por publicar.
     pub(crate) fn pending_recordings(&self) -> Result<Vec<PendingRecording>> {
         self.with_connection(|connection| {
@@ -659,42 +919,128 @@ fn load_review(connection: &Connection, recording_id: &str) -> Result<Option<Rev
               ORDER BY version DESC
               LIMIT 1",
             [recording_id],
-            |row| {
-                Ok((
-                    row.get::<_, Id>("recording_id")?,
-                    row.get::<_, i64>("version")?,
-                    row.get::<_, Option<Id>>("source_transcript_id")?,
-                    row.get::<_, String>("origin")?,
-                    row.get::<_, String>("text")?,
-                    row.get::<_, String>("saved_at")?,
-                ))
-            },
+            stored_review,
         )
         .optional()
         .map_err(read_failed)?;
-    let Some((recording_id, version, source_transcript_id, origin, text, saved_at)) = row else {
-        return Ok(None);
-    };
+    row.map(StoredReviewRow::into_draft).transpose()
+}
 
-    let version =
-        Version::try_from(version).map_err(|_| read_corrupt("versão de revisão inválida"))?;
-    let origin = match origin.as_str() {
-        "automatic" => ReviewOrigin::Automatic,
-        "manual_explicit" => ReviewOrigin::ManualExplicit,
-        other => {
-            return Err(read_corrupt(&format!(
-                "origem de revisão desconhecida «{other}»"
-            )))
-        }
-    };
-    Ok(Some(ReviewDraft {
-        recording_id,
-        source_transcript_id,
-        origin,
-        text,
-        version,
-        saved_at: Some(saved_at),
-    }))
+/// Lê uma versão concreta de uma revisão, para repetir um pedido já guardado.
+fn load_review_version(
+    connection: &Connection,
+    recording_id: &str,
+    version: Version,
+) -> Result<Option<ReviewDraft>> {
+    let row = connection
+        .query_row(
+            "SELECT recording_id, version, source_transcript_id, origin, text, saved_at
+               FROM reviews
+              WHERE recording_id = ?1 AND version = ?2",
+            params![recording_id, version_to_i64(version)?],
+            stored_review,
+        )
+        .optional()
+        .map_err(read_failed)?;
+    row.map(StoredReviewRow::into_draft).transpose()
+}
+
+fn stored_review(row: &Row<'_>) -> rusqlite::Result<StoredReviewRow> {
+    Ok(StoredReviewRow {
+        recording_id: row.get("recording_id")?,
+        version: row.get("version")?,
+        source_transcript_id: row.get("source_transcript_id")?,
+        origin: row.get("origin")?,
+        text: row.get("text")?,
+        saved_at: row.get("saved_at")?,
+    })
+}
+
+impl StoredReviewRow {
+    fn into_draft(self) -> Result<ReviewDraft> {
+        Ok(ReviewDraft {
+            recording_id: self.recording_id,
+            source_transcript_id: self.source_transcript_id,
+            origin: parse_review_origin(&self.origin)?,
+            text: self.text,
+            version: Version::try_from(self.version)
+                .map_err(|_| read_corrupt("versão de revisão inválida"))?,
+            saved_at: Some(self.saved_at),
+        })
+    }
+}
+
+/// Confirmação guardada de uma pergunta da sessão, se existir.
+pub(super) fn load_confirmation(
+    connection: &Connection,
+    session_question_id: &str,
+) -> Result<Option<Confirmation>> {
+    let row = connection
+        .query_row(
+            "SELECT id, session_question_id, recording_id, review_version,
+                    source_transcript_id, origin, text, confirmed_at
+               FROM confirmations
+              WHERE session_question_id = ?1",
+            [session_question_id],
+            stored_confirmation,
+        )
+        .optional()
+        .map_err(read_failed)?;
+    row.map(StoredConfirmationRow::into_dto).transpose()
+}
+
+fn load_confirmation_by_id(connection: &Connection, id: &str) -> Result<Option<Confirmation>> {
+    let row = connection
+        .query_row(
+            "SELECT id, session_question_id, recording_id, review_version,
+                    source_transcript_id, origin, text, confirmed_at
+               FROM confirmations
+              WHERE id = ?1",
+            [id],
+            stored_confirmation,
+        )
+        .optional()
+        .map_err(read_failed)?;
+    row.map(StoredConfirmationRow::into_dto).transpose()
+}
+
+fn stored_confirmation(row: &Row<'_>) -> rusqlite::Result<StoredConfirmationRow> {
+    Ok(StoredConfirmationRow {
+        id: row.get("id")?,
+        session_question_id: row.get("session_question_id")?,
+        recording_id: row.get("recording_id")?,
+        review_version: row.get("review_version")?,
+        source_transcript_id: row.get("source_transcript_id")?,
+        origin: row.get("origin")?,
+        text: row.get("text")?,
+        confirmed_at: row.get("confirmed_at")?,
+    })
+}
+
+impl StoredConfirmationRow {
+    fn into_dto(self) -> Result<Confirmation> {
+        Ok(Confirmation {
+            id: self.id,
+            session_question_id: self.session_question_id,
+            recording_id: self.recording_id,
+            review_version: Version::try_from(self.review_version)
+                .map_err(|_| read_corrupt("versão de revisão confirmada inválida"))?,
+            source_transcript_id: self.source_transcript_id,
+            origin: parse_review_origin(&self.origin)?,
+            text: self.text,
+            confirmed_at: self.confirmed_at,
+        })
+    }
+}
+
+fn parse_review_origin(value: &str) -> Result<ReviewOrigin> {
+    match value {
+        "automatic" => Ok(ReviewOrigin::Automatic),
+        "manual_explicit" => Ok(ReviewOrigin::ManualExplicit),
+        other => Err(read_corrupt(&format!(
+            "origem de revisão desconhecida «{other}»"
+        ))),
+    }
 }
 
 fn find_answer_question(
@@ -731,6 +1077,297 @@ fn find_answer_question(
         selection_version,
         confirmed: confirmed != 0,
     }))
+}
+
+/// Estado da pergunta e da sessão relevante para guardar e confirmar.
+fn find_review_target(
+    connection: &Connection,
+    session_question_id: &str,
+) -> Result<Option<ReviewTarget>> {
+    let row = connection
+        .query_row(
+            "SELECT sq.session_id, sq.selection_version, sq.selected_recording_id,
+                    EXISTS (
+                        SELECT 1 FROM confirmations c
+                         WHERE c.session_question_id = sq.id
+                    ) AS confirmed,
+                    s.version AS session_version
+               FROM session_questions sq
+               JOIN sessions s ON s.id = sq.session_id
+              WHERE sq.id = ?1",
+            [session_question_id],
+            |row| {
+                Ok((
+                    row.get::<_, Id>("session_id")?,
+                    row.get::<_, i64>("selection_version")?,
+                    row.get::<_, Option<Id>>("selected_recording_id")?,
+                    row.get::<_, i64>("confirmed")?,
+                    row.get::<_, i64>("session_version")?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(read_failed)?;
+    let Some((session_id, selection_version, selected_recording_id, confirmed, session_version)) =
+        row
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(ReviewTarget {
+        session_id,
+        selection_version: Version::try_from(selection_version)
+            .map_err(|_| read_corrupt("versão de seleção inválida"))?,
+        selected_recording_id,
+        confirmed: confirmed != 0,
+        session_version: Version::try_from(session_version)
+            .map_err(|_| read_corrupt("versão de sessão inválida"))?,
+    }))
+}
+
+/// Valida a pergunta, a sessão, a confirmação e a versão de seleção do alvo.
+fn require_review_target(
+    connection: &Connection,
+    request: &AnswerTarget,
+    expected_session: Option<Version>,
+) -> Result<ReviewTarget> {
+    let target = find_review_target(connection, &request.session_question_id)?
+        .ok_or_else(question_not_found)?;
+    if target.session_id != request.session_id {
+        return Err(stale_target());
+    }
+    if target.confirmed {
+        return Err(answer_confirmed());
+    }
+    if expected_session.is_some_and(|version| target.session_version != version) {
+        return Err(stale_session());
+    }
+    if target.selection_version != request.selection_version {
+        return Err(stale_target());
+    }
+    Ok(target)
+}
+
+/// Exige que a gravação do alvo seja a selecionada e tenha um original finalizado.
+fn require_selected_recording(
+    connection: &Connection,
+    request: &AnswerTarget,
+    question: &ReviewTarget,
+) -> Result<()> {
+    let Some(selected) = question.selected_recording_id.as_deref() else {
+        return Err(recording_required());
+    };
+    if selected != request.recording_id {
+        return Err(stale_target());
+    }
+
+    let recording = find_stored_recording(connection, &request.recording_id)?
+        .ok_or_else(recording_not_found)?;
+    if recording.session_question_id != request.session_question_id {
+        return Err(stale_target());
+    }
+    if recording.state != RecordingState::Ready {
+        return Err(recording_required());
+    }
+    Ok(())
+}
+
+/// A transcrição de origem, quando indicada, tem de pertencer à gravação.
+fn require_transcript_owner(
+    connection: &Connection,
+    recording_id: &str,
+    source_transcript_id: Option<&str>,
+) -> Result<()> {
+    let Some(transcript_id) = source_transcript_id else {
+        return Ok(());
+    };
+    let owner: Option<Id> = connection
+        .query_row(
+            "SELECT recording_id FROM transcripts WHERE id = ?1",
+            [transcript_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(read_failed)?;
+    if owner.as_deref() != Some(recording_id) {
+        return Err(stale_transcript());
+    }
+    Ok(())
+}
+
+/// Acrescenta uma versão de revisão; as anteriores nunca são alteradas.
+fn insert_review(
+    connection: &Connection,
+    recording_id: &str,
+    version: Version,
+    source_transcript_id: Option<&str>,
+    origin: ReviewOrigin,
+    text: &str,
+    now: &str,
+) -> Result<()> {
+    connection
+        .execute(
+            "INSERT INTO reviews
+               (recording_id, version, source_transcript_id, origin, text, saved_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                recording_id,
+                version_to_i64(version)?,
+                source_transcript_id,
+                origin.as_str(),
+                text,
+                now
+            ],
+        )
+        .map_err(write_failed)?;
+    Ok(())
+}
+
+/// Recibo de um pedido, se já tiver sido aplicado.
+pub(super) fn find_receipt(connection: &Connection, request_id: &str) -> Result<Option<Receipt>> {
+    connection
+        .query_row(
+            "SELECT kind, payload_hash, session_id, entity_id, result_version
+               FROM command_receipts
+              WHERE request_id = ?1",
+            [request_id],
+            |row| {
+                let result_version: Option<i64> = row.get("result_version")?;
+                Ok((
+                    row.get::<_, String>("kind")?,
+                    row.get::<_, String>("payload_hash")?,
+                    row.get::<_, Option<Id>>("session_id")?,
+                    row.get::<_, Option<Id>>("entity_id")?,
+                    result_version,
+                ))
+            },
+        )
+        .optional()
+        .map_err(read_failed)?
+        .map(
+            |(kind, payload_hash, session_id, entity_id, result_version)| {
+                let result_version = result_version
+                    .map(Version::try_from)
+                    .transpose()
+                    .map_err(|_| read_corrupt("versão de resultado inválida no recibo"))?;
+                Ok(Receipt {
+                    kind,
+                    payload_hash,
+                    session_id,
+                    entity_id,
+                    result_version,
+                })
+            },
+        )
+        .transpose()
+}
+
+/// Escreve o recibo na transação da mutação que o originou.
+pub(super) fn insert_receipt(
+    connection: &Connection,
+    request_id: &str,
+    kind: &str,
+    payload_hash: &str,
+    session_id: Option<&str>,
+    entity_id: Option<&str>,
+    result_version: Option<Version>,
+) -> Result<()> {
+    let result_version = result_version.map(version_to_i64).transpose()?;
+    connection
+        .execute(
+            "INSERT INTO command_receipts
+               (request_id, kind, payload_hash, session_id, entity_id, result_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                request_id,
+                kind,
+                payload_hash,
+                session_id,
+                entity_id,
+                result_version
+            ],
+        )
+        .map_err(write_failed)?;
+    Ok(())
+}
+
+/// Hash SHA-256 da serialização canónica de um pedido, sem o `requestId`.
+pub(super) fn request_hash<T: Serialize>(payload: &T) -> Result<String> {
+    let canonical = serde_json::to_vec(payload).map_err(|error| {
+        AppError::new(
+            error_code::INVALID_INPUT,
+            format!("Não foi possível preparar o pedido de resposta: {error}"),
+            false,
+        )
+    })?;
+    let digest = Sha256::digest(&canonical);
+    let mut hash = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hash.push_str(&format!("{byte:02x}"));
+    }
+    Ok(hash)
+}
+
+fn replay_save_review(
+    connection: &Connection,
+    receipt: &Receipt,
+    payload_hash: &str,
+) -> Result<ReviewDraft> {
+    if receipt.kind != "save_review" || receipt.payload_hash != payload_hash {
+        return Err(stale_request());
+    }
+    let recording_id = receipt
+        .entity_id
+        .as_deref()
+        .ok_or_else(|| read_corrupt("o recibo da revisão não indica a gravação"))?;
+    let version = receipt
+        .result_version
+        .ok_or_else(|| read_corrupt("o recibo da revisão não indica a versão"))?;
+    load_review_version(connection, recording_id, version)?
+        .ok_or_else(|| read_corrupt("a revisão indicada pelo recibo não existe na base"))
+}
+
+fn replay_confirmation(
+    connection: &Connection,
+    receipt: &Receipt,
+    payload_hash: &str,
+) -> Result<Confirmation> {
+    if receipt.kind != "confirm_answer" || receipt.payload_hash != payload_hash {
+        return Err(stale_request());
+    }
+    let confirmation_id = receipt
+        .entity_id
+        .as_deref()
+        .ok_or_else(|| read_corrupt("o recibo da confirmação não indica o registo criado"))?;
+    load_confirmation_by_id(connection, confirmation_id)?
+        .ok_or_else(|| read_corrupt("a confirmação indicada pelo recibo não existe na base"))
+}
+
+/// Campos do pedido de revisão sem o `requestId`, pela ordem fixa do tipo.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveReviewPayload<'a> {
+    target: &'a AnswerTarget,
+    expected_review_version: Version,
+    source_transcript_id: Option<&'a str>,
+    origin: ReviewOrigin,
+    text: &'a str,
+}
+
+/// Campos do pedido de confirmação sem o `requestId`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfirmAnswerPayload<'a> {
+    target: &'a AnswerTarget,
+    expected_review_version: Version,
+    source_transcript_id: Option<&'a str>,
+    origin: ReviewOrigin,
+    text: &'a str,
+    expected_session_version: Version,
+}
+
+fn version_to_i64(version: Version) -> Result<i64> {
+    i64::try_from(version).map_err(|_| invalid_version())
 }
 
 fn find_stored_recording(
@@ -850,6 +1487,73 @@ fn question_not_found() -> AppError {
     AppError::new(
         error_code::STALE_SOURCE,
         "A pergunta da sessão indicada não existe. Atualize a entrevista antes de gravar.",
+        false,
+    )
+}
+
+fn invalid_review_request() -> AppError {
+    AppError::new(
+        error_code::INVALID_INPUT,
+        "O pedido de revisão não tem identificador. Repita o pedido a partir da entrevista.",
+        false,
+    )
+}
+
+fn invalid_confirmation_request() -> AppError {
+    AppError::new(
+        error_code::INVALID_INPUT,
+        "O pedido de confirmação não tem identificador. Repita a confirmação a partir da entrevista.",
+        false,
+    )
+}
+
+fn invalid_version() -> AppError {
+    AppError::new(
+        error_code::INVALID_INPUT,
+        "A versão indicada no pedido excede o intervalo guardável.",
+        false,
+    )
+}
+
+/// A versão da revisão esperada já não é a mais recente.
+fn stale_review() -> AppError {
+    AppError::new(
+        error_code::STALE_SOURCE,
+        "A revisão desta resposta mudou entretanto. Confirme exatamente a versão que está a ver.",
+        false,
+    )
+}
+
+fn stale_session() -> AppError {
+    AppError::new(
+        error_code::STALE_SOURCE,
+        "A entrevista mudou entretanto. Atualize o estado antes de confirmar a resposta.",
+        false,
+    )
+}
+
+fn stale_transcript() -> AppError {
+    AppError::new(
+        error_code::STALE_SOURCE,
+        "A transcrição indicada não pertence a esta gravação; a revisão não foi guardada.",
+        false,
+    )
+}
+
+/// Sem uma gravação finalizada e selecionada não há resposta a guardar.
+fn recording_required() -> AppError {
+    AppError::new(
+        error_code::ANSWER_REQUIRED,
+        "Esta pergunta ainda não tem uma gravação finalizada selecionada. Grave a resposta \
+         antes de a guardar ou confirmar.",
+        false,
+    )
+}
+
+fn stale_request() -> AppError {
+    AppError::new(
+        error_code::STALE_SOURCE,
+        "Este pedido já foi usado com outro conteúdo. Repita a operação a partir do estado atual.",
         false,
     )
 }
