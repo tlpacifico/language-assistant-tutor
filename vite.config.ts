@@ -13,7 +13,6 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}"],
-    // A base da fase 1 ainda não tem testes de interface; a tarefa 7 acrescenta-os.
-    passWithNoTests: true,
+    setupFiles: ["./src/test/setup.ts"],
   },
 });

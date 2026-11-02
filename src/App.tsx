@@ -1,14 +1,10 @@
-import { INITIAL_QUESTION } from "./lib/contracts";
+import Practice from "./features/practice/Practice";
+import { createPracticeClient } from "./lib/tauri";
 
-/**
- * Base da fase 1: a janela apresenta apenas a pergunta fixa.
- * A experiência completa (disponibilidade, gravação, transcrição e revisão)
- * entra na tarefa 7; não há áudio simulado nesta base.
- */
+// O cliente não abre áudio nem IPC ao ser criado; cada ação chama o comando
+// Tauri correspondente. A injeção permite testar a interface isoladamente.
+const client = createPracticeClient();
+
 export default function App() {
-  return (
-    <main>
-      <h1>{INITIAL_QUESTION}</h1>
-    </main>
-  );
+  return <Practice client={client} />;
 }

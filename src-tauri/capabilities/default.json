@@ -3,5 +3,9 @@
   "identifier": "default",
   "description": "Permissões base da janela principal da fase 1, incluindo a subscrição do evento practice://snapshot.",
   "windows": ["main"],
-  "permissions": ["core:default", "core:event:default"]
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:allow-destroy"
+  ]
 }
