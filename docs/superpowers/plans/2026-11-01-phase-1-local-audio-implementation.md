@@ -10,7 +10,7 @@
 
 **Spec:** [Spec da fase 1](../specs/2026-11-01-phase-1-local-audio-design.md). Ler também o [AGENTS.md](../../../AGENTS.md) e respeitar o [plano das fases](2026-11-01-star-interview-tutor-phases.md).
 
-**Estado:** plano técnico escrito; tarefas e verificações ainda não executadas. O pedido de avançar para este plano permite tratar a spec da fase 1 como referência aceite para o planeamento. Não regista aprovação da implementação nem inicia a fase 2.
+**Estado:** implementação da fase 1 executada da tarefa 1 à 8. Verificação automática verde (`.\scripts\verify.ps1`, 8/8 checks; teste real `-m models` com `2 passed`) e modelos preparados fora do repositório. A fase **não** está aceite: a validação manual com gravações reais, audição da voz, remoção do microfone e aceitabilidade da espera continua pendente em [docs/phase-1/validation.md](../../phase-1/validation.md). Não regista aprovação da fase nem inicia a fase 2.
 
 ## Global Constraints
 
@@ -149,7 +149,7 @@ O tipo interno `AttemptManifest` contém os campos de `Attempt` exceto `transcri
 
 Gravar metadados antes de atualizar `last-attempt.json`; só então publicar a nova resposta ativa. Se a atualização do apontador falhar, preservar a anterior e manter a nova gravação disponível para repetir a publicação. Nunca usar remove-then-rename para substituir JSON em Windows.
 
-`AttemptStore` em `storage.rs`: `new(root: PathBuf) -> Self`, `allocate() -> Result<RecordingTarget, AppError>`, `publish(capture: CapturedAudio) -> Result<Attempt, AppError>`, `restore_last() -> Result<RestoreResult, AppError>`, `append_transcript(attempt_id: &str, transcript: Transcript) -> Result<Attempt, AppError>`, `save_review(attempt_id: &str, source_id: &str, text: &str) -> Result<Review, AppError>`, `set_operation(attempt_id: &str, operation: OperationRecord) -> Result<(), AppError>`. Publicação e escrita mantêm referências antigas em caso de falha; `restore_last` recupera artefactos válidos e devolve avisos se um componente faltar. Um manifesto/apontador ilegível dá erro recuperável, sem eliminar ficheiros nem impedir nova captura.
+`AttemptStore` em `storage.rs`: `new(root: PathBuf) -> Self`, `allocate() -> Result<RecordingTarget, AppError>`, `publish(capture: CapturedAudio) -> Result<Attempt, AppError>`, `restore_last() -> Result<RestoreResult, AppError>`, `append_transcript(attempt_id: &str, transcript: Transcript) -> Result<Attempt, AppError>`, `save_review(attempt_id: &str, source_id: &str, text: &str) -> Result<Review, AppError>`, `set_operation(attempt_id: &str, operation: OperationRecord) -> Result<(), AppError>`, `set_normalized(attempt_id: &str, reference: &str) -> Result<Attempt, AppError>` (ruling R8: extensão pública usada pelo serviço para registar `normalized.wav` depois da conversão). Publicação e escrita mantêm referências antigas em caso de falha; `restore_last` recupera artefactos válidos e devolve avisos se um componente faltar. Um manifesto/apontador ilegível dá erro recuperável, sem eliminar ficheiros nem impedir nova captura.
 
 ### Áudio
 

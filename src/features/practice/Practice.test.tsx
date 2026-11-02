@@ -180,6 +180,16 @@ beforeEach(() => {
 });
 
 describe("Practice", () => {
+  it("shows_the_fixed_question", async () => {
+    await renderPractice(snapshot({ revision: 1 }));
+
+    const question = screen.getByRole("heading", { level: 1 });
+    expect(question).toHaveTextContent(
+      "Tell me about a time you solved a difficult problem at work.",
+    );
+    expect(question).toHaveAttribute("lang", "en");
+  });
+
   it("manual_start_stop", async () => {
     const finished = attempt();
     const { client, mocks, user } = await renderPractice(snapshot({ revision: 1 }));
