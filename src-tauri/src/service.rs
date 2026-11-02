@@ -370,7 +370,12 @@ impl AppService {
             self.record_error(&error);
             return Err(error);
         }
-        if let Err(error) = self.lock_state().can_start_recording() {
+        // A guarda do estado cai no fim desta instrução. Um `if let` manteria a
+        // temporária viva durante todo o bloco e `record_error` voltaria a
+        // adquirir o mesmo mutex — o mutex não é reentrante, por isso o pedido
+        // ficaria bloqueado para sempre em vez de devolver `BUSY`.
+        let gate = self.lock_state().can_start_recording();
+        if let Err(error) = gate {
             self.record_error(&error);
             return Err(error);
         }
@@ -1042,8 +1047,13 @@ impl AppService {
     pub async fn on_audio_event(&self, event: AudioEvent) {
         let _transition = self.transitions.lock().await;
         match event {
-            AudioEvent::CaptureInterrupted { capture, error } => {
-                self.apply_capture_interruption(capture, error).await;
+            AudioEvent::CaptureInterrupted {
+                recording_id,
+                capture,
+                error,
+            } => {
+                self.apply_capture_interruption(recording_id, capture, error)
+                    .await;
             }
             AudioEvent::PlaybackFinished => {
                 if self.lock_state().playback.is_none() {
@@ -1410,18 +1420,27 @@ impl AppService {
 
     /// Uma captura interrompida conserva o áudio recuperável e a resposta anterior
     /// enquanto a publicação falhar.
-    async fn apply_capture_interruption(&self, capture: Option<CapturedAudio>, error: AppError) {
+    async fn apply_capture_interruption(
+        &self,
+        recording_id: Option<String>,
+        capture: Option<CapturedAudio>,
+        error: AppError,
+    ) {
         let recording = self.lock_state().recording_id.clone();
         let expected = self.lock_capture().clone();
-        let matches = match &capture {
-            Some(capture) => {
-                expected.as_deref() == Some(capture.id.as_str())
-                    || recording.as_deref() == Some(capture.id.as_str())
+        // O evento pertence à gravação que o originou. Sem identidade não há
+        // como o atribuir, e uma interrupção atrasada nunca pode invalidar a
+        // gravação que está a decorrer agora.
+        let id = recording_id.or_else(|| capture.as_ref().map(|capture| capture.id.clone()));
+        let matches = match id {
+            Some(id) => {
+                expected.as_deref() == Some(id.as_str())
+                    || recording.as_deref() == Some(id.as_str())
             }
-            None => recording.is_some() || expected.is_some(),
+            None => false,
         };
         if !matches {
-            return; // interrupção de uma captura já tratada
+            return; // interrupção de uma captura já tratada ou já substituída
         }
         *self.lock_capture() = None;
 

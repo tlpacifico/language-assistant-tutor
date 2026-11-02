@@ -140,6 +140,8 @@ struct FakeAudio {
     playing: Option<PathBuf>,
     /// Atraso artificial em `start_capture`, para exercitar o prazo.
     start_delay: Duration,
+    /// Falha que a próxima verificação entrega como interrupção da captura.
+    interruption: Arc<Mutex<Option<AppError>>>,
 }
 
 impl FakeAudio {
@@ -148,6 +150,11 @@ impl FakeAudio {
             .lock()
             .expect("registar passo")
             .push(step.to_owned());
+    }
+
+    /// Faz a próxima verificação entregar uma interrupção sem áudio recuperável.
+    fn interrupt_next(&self, error: AppError) {
+        *self.interruption.lock().expect("falha programada") = Some(error);
     }
 
     fn steps(&self) -> Vec<String> {
@@ -174,7 +181,11 @@ impl AudioBackend for FakeAudio {
     }
 
     fn capture_interruption(&mut self) -> Option<CaptureInterruption> {
-        None
+        let error = self.interruption.lock().expect("falha programada").take()?;
+        Some(CaptureInterruption {
+            capture: None,
+            error,
+        })
     }
 
     fn stop_capture(&mut self) -> Result<CapturedAudio, AppError> {
@@ -401,6 +412,50 @@ fn recording_stops_playback() {
         probe.steps().last().map(String::as_str),
         Some("stop_capture")
     );
+}
+
+#[test]
+fn interruption_event_carries_the_recording_id() {
+    // Sem a identidade da gravação, uma interrupção atrasada de uma captura já
+    // substituída seria aplicada à gravação nova.
+    let root = tempfile::tempdir().expect("pasta temporária");
+    let fake = FakeAudio::default();
+    let factory = fake.clone();
+    let events: Arc<Mutex<Vec<AudioEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    let audio = NativeAudio::with_backend(
+        move || Box::new(factory.clone()),
+        move |event: AudioEvent| sink.lock().expect("registar evento").push(event),
+    )
+    .expect("criar porta de áudio");
+
+    let folder = target(root.path(), "gravacao");
+    audio
+        .start_capture(folder.clone())
+        .expect("começar a gravar");
+    fake.interrupt_next(AppError::new(
+        "CAPTURE_INTERRUPTED",
+        "falha de teste na captura",
+        true,
+    ));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let received = events.lock().expect("eventos").first().cloned();
+        if let Some(AudioEvent::CaptureInterrupted { recording_id, .. }) = received {
+            assert_eq!(
+                recording_id.as_deref(),
+                Some(folder.id.as_str()),
+                "o evento tem de identificar a gravação que o originou"
+            );
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "a interrupção não chegou à porta"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]

@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use hound::{SampleFormat, WavSpec, WavWriter};
 use serde_json::json;
@@ -639,6 +640,12 @@ async fn failed_stop_keeps_previous_attempt() {
         .start_recording()
         .await
         .expect("segunda gravação");
+    let interrupted_id = harness
+        .service
+        .snapshot()
+        .recording_id
+        .clone()
+        .expect("gravação em curso");
     let error = harness
         .service
         .stop_recording()
@@ -665,6 +672,7 @@ async fn failed_stop_keeps_previous_attempt() {
     harness
         .service
         .on_audio_event(AudioEvent::CaptureInterrupted {
+            recording_id: Some(interrupted_id),
             capture: None,
             error: AppError::new(
                 error_code::CAPTURE_INTERRUPTED,
@@ -679,6 +687,101 @@ async fn failed_stop_keeps_previous_attempt() {
         .await
         .expect("a captura seguinte não fica bloqueada");
     assert!(harness.service.snapshot().recording_id.is_some());
+}
+
+#[tokio::test]
+async fn repeated_start_returns_busy_instead_of_blocking() {
+    let harness = Harness::new().await;
+    harness
+        .service
+        .start_recording()
+        .await
+        .expect("primeira gravação");
+    let recording_id = harness
+        .service
+        .snapshot()
+        .recording_id
+        .clone()
+        .expect("gravação em curso");
+
+    // O mutex do estado não é reentrante: se a guarda não cair antes de
+    // `record_error`, o pedido repetido fica bloqueado para sempre.
+    let second = tokio::time::timeout(Duration::from_secs(2), harness.service.start_recording())
+        .await
+        .expect("o pedido repetido devolve em vez de bloquear")
+        .expect_err("a gravação em curso impede outra");
+    assert_eq!(second.code, error_code::BUSY);
+    assert_eq!(
+        harness.service.snapshot().recording_id.as_deref(),
+        Some(recording_id.as_str()),
+        "a gravação em curso mantém-se"
+    );
+
+    // E o serviço continua a responder aos restantes comandos.
+    let snapshot = tokio::time::timeout(Duration::from_secs(2), harness.service.stop_recording())
+        .await
+        .expect("o serviço não ficou preso")
+        .expect("terminar a gravação");
+    assert!(snapshot.recording_id.is_none());
+}
+
+#[tokio::test]
+async fn late_interruption_from_an_older_capture_is_ignored() {
+    let harness = Harness::new().await;
+    harness
+        .service
+        .start_recording()
+        .await
+        .expect("primeira gravação");
+    let first_id = harness
+        .service
+        .snapshot()
+        .recording_id
+        .clone()
+        .expect("gravação em curso");
+    harness
+        .service
+        .stop_recording()
+        .await
+        .expect("paragem normal");
+
+    harness
+        .service
+        .start_recording()
+        .await
+        .expect("nova gravação");
+    let second_id = harness
+        .service
+        .snapshot()
+        .recording_id
+        .clone()
+        .expect("nova gravação em curso");
+
+    // Interrupção atrasada da gravação anterior: não pode retirar o botão de
+    // terminar à gravação que está a decorrer agora.
+    harness
+        .service
+        .on_audio_event(AudioEvent::CaptureInterrupted {
+            recording_id: Some(first_id),
+            capture: None,
+            error: AppError::new(
+                error_code::CAPTURE_INTERRUPTED,
+                "Interrupção atrasada da gravação anterior.",
+                true,
+            ),
+        })
+        .await;
+
+    let snapshot = harness.service.snapshot();
+    assert_eq!(
+        snapshot.recording_id.as_deref(),
+        Some(second_id.as_str()),
+        "a gravação atual continua a poder ser terminada"
+    );
+    assert!(
+        snapshot.last_error.is_none(),
+        "um evento de outra gravação não altera o erro visível"
+    );
 }
 
 #[tokio::test]

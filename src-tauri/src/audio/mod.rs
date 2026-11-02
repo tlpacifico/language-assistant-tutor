@@ -76,6 +76,13 @@ pub enum AudioEvent {
     /// quando existe alguma amostra escrita; `None` significa que não há áudio
     /// recuperável e a resposta tem de ser repetida.
     CaptureInterrupted {
+        /// Gravação que originou a interrupção.
+        ///
+        /// O serviço só pode aplicar o evento à captura que o produziu: sem
+        /// esta identidade, uma interrupção atrasada de uma gravação já
+        /// reaberta invalidaria a gravação nova e retiraria o botão de
+        /// terminar.
+        recording_id: Option<String>,
         capture: Option<CapturedAudio>,
         error: AppError,
     },
@@ -336,6 +343,7 @@ impl Drop for NativeAudio {
 /// recebe o mesmo erro em vez de um resultado de sucesso.
 fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: Receiver<Command>) {
     let mut capturing = false;
+    let mut capturing_id: Option<String> = None;
     let mut playing = false;
     let mut interruption_error: Option<AppError> = None;
 
@@ -364,9 +372,11 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                     if backend.stop_playback().is_ok() {
                         playing = false;
                     }
+                    let recording_id = target.id.clone();
                     match backend.start_capture(target) {
                         Ok(()) => {
                             capturing = true;
+                            capturing_id = Some(recording_id);
                             interruption_error = None;
                             let _ = reply.send(Ok(()));
                         }
@@ -381,11 +391,12 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                         let _ = reply.send(Err(error));
                     } else {
                         capturing = false;
+                        let recording_id = capturing_id.take();
                         let result = backend.stop_capture();
                         let failed = result.is_err();
                         let _ = reply.send(result);
                         if failed {
-                            report_interruption(&mut backend, &events);
+                            report_interruption(&mut backend, &events, recording_id);
                         }
                     }
                 }
@@ -418,7 +429,7 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                 }
                 Command::Shutdown => {
                     if capturing {
-                        report_interruption(&mut backend, &events);
+                        report_interruption(&mut backend, &events, capturing_id.take());
                     }
                     let _ = backend.stop_playback();
                     break;
@@ -432,6 +443,7 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                 capturing = false;
                 interruption_error = Some(interruption.error.clone());
                 events(AudioEvent::CaptureInterrupted {
+                    recording_id: capturing_id.take(),
                     capture: interruption.capture,
                     error: interruption.error,
                 });
@@ -445,7 +457,11 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
 }
 
 /// Fecha a captura ativa e publica a interrupção com o áudio recuperável.
-fn report_interruption(backend: &mut Box<dyn AudioBackend>, events: &EventSink) {
+fn report_interruption(
+    backend: &mut Box<dyn AudioBackend>,
+    events: &EventSink,
+    recording_id: Option<String>,
+) {
     let interruption = backend
         .capture_interruption()
         .unwrap_or_else(|| CaptureInterruption {
@@ -453,6 +469,7 @@ fn report_interruption(backend: &mut Box<dyn AudioBackend>, events: &EventSink) 
             error: capture_interrupted("A gravação foi interrompida e não há áudio recuperável."),
         });
     events(AudioEvent::CaptureInterrupted {
+        recording_id,
         capture: interruption.capture,
         error: interruption.error,
     });
