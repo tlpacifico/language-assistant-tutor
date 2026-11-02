@@ -1,12 +1,19 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { toAppError } from "./lib/app-error";
 import type { AppError } from "./lib/contracts";
 import { createInterviewClient } from "./lib/interview-client";
 import type { InterviewClient } from "./lib/interview-client";
-import { CATEGORY_LABELS } from "./lib/interview-contracts";
 import type { InterviewSnapshot } from "./lib/interview-contracts";
+import Interview from "./features/interview/Interview";
+import { useInterview } from "./features/interview/useInterview";
+import NavigationGuard from "./features/navigation/NavigationGuard";
+import type {
+  GuardIntention,
+  GuardRequest,
+} from "./features/navigation/NavigationGuard";
 import QuestionBank from "./features/questions/QuestionBank";
 import SessionSetup from "./features/sessions/SessionSetup";
 import "./features/practice/practice.css";
@@ -47,44 +54,34 @@ const NAVIGATION_BLOCKED_MESSAGE =
   "Não é possível mudar de página enquanto a gravação está a ser capturada ou finalizada.";
 
 /**
- * Página da entrevista enquanto a captura, revisão e confirmação são
- * construídas na tarefa seguinte. Lê apenas a fotografia do núcleo: não cria
- * sessões, gravações ou resultados.
+ * Janela do sistema, injetável para os testes.
+ *
+ * O fecho é sempre intercetado: só depois de `prepareClose` e da decisão sobre
+ * a revisão é que `destroy` fecha a janela.
  */
-function InterviewPage({ snapshot }: { snapshot: InterviewSnapshot }) {
-  if (!snapshot.activeSession) {
-    return (
-      <section className="practice__page" aria-labelledby="interview-title">
-        <h2 id="interview-title">Entrevista</h2>
-        <p>
-          Não existe uma sessão em curso. Comece ou retome uma entrevista na
-          preparação.
-        </p>
-      </section>
-    );
-  }
+export interface AppWindow {
+  onCloseRequested: (handler: () => void) => Promise<() => void>;
+  destroy: () => Promise<void>;
+}
 
-  const { position, count, category } = snapshot.activeSession;
-  return (
-    <section className="practice__page" aria-labelledby="interview-title">
-      <h2 id="interview-title">Entrevista</h2>
-      <p className="practice__state">
-        Pergunta {position} de {count}.
-      </p>
-      <p className="practice__hint">
-        Categoria: {category ? CATEGORY_LABELS[category] : "todas as categorias"}.
-      </p>
-      {snapshot.current ? (
-        <p className="practice__question" lang="en">
-          {snapshot.current.question.text}
-        </p>
-      ) : null}
-      <p className="practice__hint">
-        A captura e a revisão da resposta são apresentadas na próxima versão
-        desta página.
-      </p>
-    </section>
-  );
+/** Janela Tauri em execução; nula quando não existe (testes ou web). */
+function tauriWindow(): AppWindow | null {
+  try {
+    const current = getCurrentWindow();
+    return {
+      onCloseRequested(handler) {
+        return current.onCloseRequested((event) => {
+          // O fecho imediato é sempre bloqueado; `destroy` fecha quando a
+          // revisão e o `prepareClose` estiverem resolvidos.
+          event.preventDefault();
+          handler();
+        });
+      },
+      destroy: () => current.destroy(),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Página de histórico: o espaço reservado até a consulta estar disponível. */
@@ -103,42 +100,57 @@ function HistoryPage() {
 /**
  * Janela das entrevistas guiadas.
  *
- * Mantém uma única subscrição ao cliente durante toda a navegação e guarda a
- * página atual em estado local. A identidade da sessão ativa vem sempre do
- * núcleo: a interface não escolhe nem inventa sessões. Enquanto a base de dados
- * não abre, as páginas que dependem dela não são montadas e a repetição da
- * abertura fica disponível. Durante a captura ou a finalização, a mudança de
- * página é recusada com o motivo visível; a decisão partilhada de guardar,
- * descartar ou cancelar pertence à proteção de alterações da tarefa seguinte.
+ * Mantém uma única subscrição ao cliente e uma única decisão de
+ * guardar/descartar/cancelar, usada pela navegação, pela captura de uma nova
+ * tomada e pelo fecho. A identidade da sessão ativa vem sempre do núcleo.
+ * Enquanto a base de dados não abre, as páginas que dependem dela não são
+ * montadas e a repetição da abertura fica disponível.
  */
 export default function App({
   client,
+  windowHandle,
 }: {
   client?: InterviewClient;
+  windowHandle?: AppWindow;
 }) {
   // O cliente por omissão é criado uma única vez: sem prop, cada render
   // recriaria o adaptador e a subscrição seria refeita a cada fotografia.
   const [fallbackClient] = useState(createInterviewClient);
   const activeClient = client ?? fallbackClient;
+  const [fallbackWindow] = useState(() => windowHandle ?? tauriWindow());
+  const activeWindow = windowHandle ?? fallbackWindow;
   const [snapshot, setSnapshot] = useState<InterviewSnapshot | null>(null);
   const [loadError, setLoadError] = useState<AppError | null>(null);
   const [actionError, setActionError] = useState<AppError | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [page, setPage] = useState<Page>("setup");
   const [navigationBlocked, setNavigationBlocked] = useState(false);
+  const [guardRequest, setGuardRequest] = useState<GuardRequest | null>(null);
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
+
+  // Uma fotografia com revisão inferior à conhecida é ignorada; nenhuma
+  // fotografia apaga o rascunho local (o hook trata da revisão).
+  const applySnapshot = useCallback((next: InterviewSnapshot) => {
+    setSnapshot((previous) =>
+      previous && next.revision < previous.revision ? previous : next,
+    );
+  }, []);
+
+  const review = useInterview(activeClient, snapshot, applySnapshot);
 
   useEffect(() => {
     let active = true;
     const unsubscribe = activeClient.subscribe((next) => {
       if (active) {
-        setSnapshot(next);
+        applySnapshot(next);
       }
     });
     activeClient
       .snapshot()
       .then((next) => {
         if (active) {
-          setSnapshot(next);
+          applySnapshot(next);
           setLoadError(null);
         }
       })
@@ -151,7 +163,7 @@ export default function App({
       active = false;
       unsubscribe();
     };
-  }, [activeClient]);
+  }, [activeClient, applySnapshot]);
 
   const busy =
     snapshot !== null &&
@@ -163,23 +175,135 @@ export default function App({
     }
   }, [busy]);
 
+  function requestDecision(
+    intention: GuardIntention,
+    proceed: () => void | Promise<void>,
+  ): void {
+    if (review.confirming) {
+      setActionError({
+        code: "BUSY",
+        message:
+          "A confirmação está a ser guardada. Aguarde que termine antes de continuar.",
+        retryable: true,
+      });
+      return;
+    }
+    if (!review.dirty) {
+      void proceed();
+      return;
+    }
+    setGuardRequest({
+      intention,
+      proceed: async () => {
+        setGuardRequest(null);
+        await proceed();
+      },
+    });
+  }
+
   function navigate(next: Page): void {
     if (next === page) {
       return;
     }
     if (busy) {
+      // A captura e a finalização não podem ser interrompidas por navegação.
       setNavigationBlocked(true);
       return;
     }
     setNavigationBlocked(false);
-    setPage(next);
+    requestDecision("navigate", () => setPage(next));
   }
+
+  async function closeNow(): Promise<void> {
+    if (closingRef.current) {
+      return;
+    }
+    closingRef.current = true;
+    setClosing(true);
+    setActionError(null);
+    try {
+      // Finaliza uma captura ativa e recusa o fecho com uma publicação
+      // pendente: nada fecha em silêncio.
+      applySnapshot(await activeClient.prepareClose());
+      if (activeWindow) {
+        await activeWindow.destroy();
+      }
+    } catch (error) {
+      setActionError(toAppError(error));
+      closingRef.current = false;
+      setClosing(false);
+    }
+  }
+
+  function requestClose(): void {
+    if (closingRef.current) {
+      return;
+    }
+    if (review.saving) {
+      setActionError({
+        code: "BUSY",
+        message:
+          "A revisão está a ser guardada. Tente fechar novamente quando a escrita terminar.",
+        retryable: true,
+      });
+      return;
+    }
+    if (review.confirming) {
+      setActionError({
+        code: "BUSY",
+        message:
+          "A confirmação está a ser guardada. Tente fechar novamente quando terminar.",
+        retryable: true,
+      });
+      return;
+    }
+    if (review.dirty) {
+      setGuardRequest({
+        intention: "close",
+        proceed: async () => {
+          setGuardRequest(null);
+          await closeNow();
+        },
+      });
+      return;
+    }
+    void closeNow();
+  }
+
+  const closeActionRef = useRef(requestClose);
+  closeActionRef.current = requestClose;
+
+  useEffect(() => {
+    if (!activeWindow) {
+      return;
+    }
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    activeWindow
+      .onCloseRequested(() => closeActionRef.current())
+      .then((remove) => {
+        if (disposed) {
+          remove();
+        } else {
+          unlisten = remove;
+        }
+      })
+      .catch(() => {
+        // Sem janela do sistema (ambiente web ou testes) não há o que fechar.
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [activeWindow]);
 
   async function retryDatabase(): Promise<void> {
     setRetrying(true);
     setActionError(null);
     try {
-      setSnapshot(await activeClient.retryDatabase());
+      applySnapshot(await activeClient.retryDatabase());
     } catch (error) {
       setActionError(toAppError(error));
     } finally {
@@ -192,7 +316,7 @@ export default function App({
   ): Promise<void> {
     setActionError(null);
     try {
-      setSnapshot(await action());
+      applySnapshot(await action());
     } catch (error) {
       setActionError(toAppError(error));
     }
@@ -221,14 +345,22 @@ export default function App({
   } else if (page === "bank") {
     content = <QuestionBank client={activeClient} />;
   } else if (page === "interview") {
-    content = <InterviewPage snapshot={snapshot} />;
+    content = (
+      <Interview
+        client={activeClient}
+        snapshot={snapshot}
+        onSnapshot={applySnapshot}
+        review={review}
+        requestDecision={requestDecision}
+      />
+    );
   } else {
     content = (
       <SessionSetup
         client={activeClient}
         snapshot={snapshot}
         onStarted={(next) => {
-          setSnapshot(next);
+          applySnapshot(next);
           setPage("interview");
         }}
       />
@@ -269,6 +401,12 @@ export default function App({
       {loadError && !snapshot ? (
         <div className="practice__notice practice__notice--error" role="alert">
           <p>{loadError.message}</p>
+        </div>
+      ) : null}
+
+      {closing ? (
+        <div className="practice__notice" role="status">
+          <p>A preparar o fecho da aplicação…</p>
         </div>
       ) : null}
 
@@ -351,6 +489,17 @@ export default function App({
           </button>
         </div>
       </section>
+
+      <NavigationGuard
+        request={guardRequest}
+        busy={busy}
+        dirty={review.dirty}
+        saving={review.saving}
+        saveError={review.error}
+        onSave={review.saveReview}
+        onDiscard={review.discardReview}
+        onCancel={() => setGuardRequest(null)}
+      />
 
       {actionError ? (
         <div className="practice__notice practice__notice--error" role="alert">

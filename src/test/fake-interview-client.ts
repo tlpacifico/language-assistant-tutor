@@ -8,13 +8,17 @@
 
 import { vi } from "vitest";
 
-import type { AppError, Availability } from "../lib/contracts";
+import type { AppError, Availability, Transcript } from "../lib/contracts";
 import type { InterviewClient } from "../lib/interview-client";
 import type {
   Category,
+  Confirmation,
   InterviewSnapshot,
   Question,
+  QuestionDetail,
   QuestionInput,
+  RecordingView,
+  SessionQuestion,
   SessionSummary,
   StartSession,
 } from "../lib/interview-contracts";
@@ -93,6 +97,109 @@ export function appError(
   retryable = true,
 ): AppError {
   return { code, message, retryable };
+}
+
+/** Transcrição automática imutável, substituível campo a campo. */
+export function makeTranscript(overrides: Partial<Transcript> = {}): Transcript {
+  return {
+    id: overrides.id ?? "transcript-1",
+    status: overrides.status ?? "completed",
+    text:
+      overrides.text ??
+      "I solved a difficult problem by splitting it into smaller steps.",
+    segments: overrides.segments ?? [],
+    model: overrides.model ?? "whisper-small",
+    language: overrides.language ?? "en",
+    createdAt: overrides.createdAt ?? "2026-11-02T10:05:00Z",
+    loadMs: overrides.loadMs ?? 120,
+    processingMs: overrides.processingMs ?? 900,
+  };
+}
+
+/** Gravação publicada da pergunta, com os resultados que lhe pertencem. */
+export function makeRecording(
+  overrides: Partial<RecordingView> = {},
+): RecordingView {
+  return {
+    id: overrides.id ?? "recording-1",
+    sessionQuestionId: overrides.sessionQuestionId ?? "sq-1",
+    ordinal: overrides.ordinal ?? 1,
+    state: overrides.state ?? "ready",
+    capture:
+      overrides.capture === undefined
+        ? {
+            sampleRate: 48000,
+            channels: 1,
+            durationMs: 12500,
+            bytes: 2400000,
+            incomplete: false,
+          }
+        : overrides.capture,
+    originalFile:
+      overrides.originalFile === undefined
+        ? "sessions/session-1/sq-1/recording-1/original.wav"
+        : overrides.originalFile,
+    normalizedFile: overrides.normalizedFile ?? null,
+    transcripts: overrides.transcripts ?? [],
+    review: overrides.review ?? null,
+    warnings: overrides.warnings ?? [],
+  };
+}
+
+/** Cópia fixada da pergunta na sessão, baseada nos valores da spec. */
+export function makeSessionQuestion(
+  overrides: Partial<SessionQuestion> = {},
+): SessionQuestion {
+  return {
+    id: overrides.id ?? "sq-1",
+    sessionId: overrides.sessionId ?? "session-1",
+    sourceQuestionId: overrides.sourceQuestionId ?? "q-1",
+    sourceVersion: overrides.sourceVersion ?? 1,
+    position: overrides.position ?? 2,
+    text:
+      overrides.text ??
+      "Tell me about a time you solved a difficult problem at work.",
+    category: overrides.category ?? "problem_solving",
+    competencies: overrides.competencies ?? ["Resolução de problemas"],
+    criteria: overrides.criteria ?? [
+      "Explicar o problema, o raciocínio e o desfecho.",
+    ],
+    selectedRecordingId:
+      overrides.selectedRecordingId === undefined
+        ? "recording-1"
+        : overrides.selectedRecordingId,
+    selectionVersion: overrides.selectionVersion ?? 2,
+  };
+}
+
+/** Texto confirmado e as suas referências. */
+export function makeConfirmation(
+  overrides: Partial<Confirmation> = {},
+): Confirmation {
+  return {
+    id: overrides.id ?? "confirmation-1",
+    sessionQuestionId: overrides.sessionQuestionId ?? "sq-1",
+    recordingId: overrides.recordingId ?? "recording-1",
+    reviewVersion: overrides.reviewVersion ?? 1,
+    sourceTranscriptId:
+      overrides.sourceTranscriptId === undefined
+        ? "transcript-1"
+        : overrides.sourceTranscriptId,
+    origin: overrides.origin ?? "automatic",
+    text: overrides.text ?? "I solved a difficult problem by splitting it.",
+    confirmedAt: overrides.confirmedAt ?? "2026-11-02T10:10:00Z",
+  };
+}
+
+/** Pergunta corrente da entrevista, com gravações e confirmação. */
+export function makeQuestionDetail(
+  overrides: Partial<QuestionDetail> = {},
+): QuestionDetail {
+  return {
+    question: overrides.question ?? makeSessionQuestion(),
+    recordings: overrides.recordings ?? [],
+    confirmation: overrides.confirmation ?? null,
+  };
 }
 
 export interface FakeInterviewClient {

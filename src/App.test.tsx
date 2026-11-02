@@ -3,12 +3,19 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import App from "./App";
+import type { AppWindow } from "./App";
 import type { InterviewClient } from "./lib/interview-client";
+import type { InterviewSnapshot } from "./lib/interview-contracts";
 import {
   appError,
   fakeInterviewClient,
   makeQuestion,
+  makeQuestionDetail,
+  makeRecording,
+  makeSessionQuestion,
+  makeTranscript,
   readyAvailability,
+  sessionSummary,
   snapshot,
 } from "./test/fake-interview-client";
 
@@ -25,6 +32,53 @@ function renderApp(initial = snapshot(), questions = QUESTIONS) {
   const fake = fakeInterviewClient({ initial, questions });
   render(<App client={fake.client} />);
   return fake;
+}
+
+/** Janela controlada: guarda o handler de fecho e a ordem dos pedidos. */
+function fakeWindow(order: string[] = []) {
+  let closeHandler: (() => void) | null = null;
+  const destroy = vi.fn(async () => {
+    order.push("destroy");
+  });
+  const windowHandle: AppWindow = {
+    onCloseRequested: vi.fn(async (handler: () => void) => {
+      closeHandler = handler;
+      return () => {
+        closeHandler = null;
+      };
+    }),
+    destroy,
+  };
+  return {
+    windowHandle,
+    destroy,
+    requestClose() {
+      closeHandler?.();
+    },
+  };
+}
+
+/** Sessão em curso com uma resposta transcrita e o editor disponível. */
+function interviewInitial(): InterviewSnapshot {
+  return snapshot({
+    revision: 2,
+    activeSession: sessionSummary({ version: 5 }),
+    current: makeQuestionDetail({
+      question: makeSessionQuestion({
+        id: "sq-2",
+        selectedRecordingId: "recording-1",
+      }),
+      recordings: [
+        makeRecording({
+          id: "recording-1",
+          sessionQuestionId: "sq-2",
+          transcripts: [
+            makeTranscript({ id: "transcript-1", text: "My stored answer." }),
+          ],
+        }),
+      ],
+    }),
+  });
 }
 
 describe("App", () => {
@@ -197,5 +251,92 @@ describe("App", () => {
     expect(
       screen.queryByRole("heading", { name: "Histórico — fase 2" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("resolve a revisão por guardar antes de fechar a janela", async () => {
+    const user = userEvent.setup();
+    const initial = interviewInitial();
+    const order: string[] = [];
+    const controller = fakeWindow(order);
+    const fake = fakeInterviewClient({ initial, questions: QUESTIONS });
+    vi.mocked(fake.client.prepareClose).mockImplementation(async () => {
+      order.push("prepareClose");
+      return initial;
+    });
+    render(
+      <App client={fake.client} windowHandle={controller.windowHandle} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Entrevista" }));
+    const editor = await screen.findByLabelText("Revisão editável");
+    await user.clear(editor);
+    await user.type(editor, "Text still unsaved.");
+
+    await act(async () => {
+      controller.requestClose();
+    });
+
+    expect(screen.getByText("Revisão por guardar")).toBeInTheDocument();
+    expect(controller.destroy).not.toHaveBeenCalled();
+    expect(order).toEqual([]);
+
+    await user.click(
+      screen.getByRole("button", { name: "Descartar e fechar" }),
+    );
+
+    await waitFor(() => expect(controller.destroy).toHaveBeenCalledTimes(1));
+    expect(order).toEqual(["prepareClose", "destroy"]);
+    expect(fake.client.subscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("finaliza a captura antes de destruir a janela", async () => {
+    const order: string[] = [];
+    const controller = fakeWindow(order);
+    const fake = fakeInterviewClient({
+      initial: snapshot({ revision: 1, recordingId: "recording-1" }),
+      questions: QUESTIONS,
+    });
+    vi.mocked(fake.client.prepareClose).mockImplementation(async () => {
+      order.push("prepareClose");
+      return snapshot({ revision: 2, recordingId: null });
+    });
+    render(
+      <App client={fake.client} windowHandle={controller.windowHandle} />,
+    );
+
+    await act(async () => {
+      controller.requestClose();
+    });
+
+    await waitFor(() => expect(controller.destroy).toHaveBeenCalledTimes(1));
+    expect(order).toEqual(["prepareClose", "destroy"]);
+  });
+
+  it("mantém a janela aberta quando o fecho falha", async () => {
+    const controller = fakeWindow();
+    const fake = fakeInterviewClient({
+      initial: snapshot({ revision: 1 }),
+      questions: QUESTIONS,
+    });
+    vi.mocked(fake.client.prepareClose).mockRejectedValue(
+      appError(
+        "STORAGE_WRITE_FAILED",
+        "Há uma gravação por guardar. Repita o guardar antes de fechar.",
+      ),
+    );
+    render(
+      <App client={fake.client} windowHandle={controller.windowHandle} />,
+    );
+
+    await act(async () => {
+      controller.requestClose();
+    });
+
+    expect(
+      await screen.findByText(
+        "Há uma gravação por guardar. Repita o guardar antes de fechar.",
+      ),
+    ).toBeInTheDocument();
+    expect(controller.destroy).not.toHaveBeenCalled();
   });
 });
