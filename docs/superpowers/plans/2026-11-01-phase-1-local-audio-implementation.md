@@ -127,7 +127,7 @@ Definir em `src-tauri/src/domain.rs`; duplicar apenas os tipos serializados em `
 | `AppSnapshot` | `revision: u64`, `question`, `availability: Availability`, `attempt: Option<Attempt>`, `recordingId: Option<String>`, `modelJob: Option<ModelJob>`, `playback: Option<PlaybackTarget>`, `lastError: Option<AppError>`. |
 | `RestoreResult` | `attempt: Option<Attempt>`, `warnings: Vec<AppError>`; permite recuperar texto/revisão mesmo se faltar um áudio ou derivado. |
 
-Erros mínimos: `BUSY`, `DEVICE_UNAVAILABLE`, `DEVICE_FORMAT_UNSUPPORTED`, `CAPTURE_INTERRUPTED`, `STORAGE_WRITE_FAILED`, `ARTIFACT_MISSING`, `INVALID_AUDIO`, `MODEL_MISSING`, `WORKER_UNAVAILABLE`, `WORKER_PROTOCOL`, `WORKER_TIMEOUT`, `STALE_SOURCE`. Ausência de fala é um resultado `no_speech`, não um erro de pronúncia.
+Erros mínimos: `BUSY`, `DEVICE_UNAVAILABLE`, `DEVICE_FORMAT_UNSUPPORTED`, `AUDIO_TIMEOUT`, `CAPTURE_INTERRUPTED`, `STORAGE_WRITE_FAILED`, `ARTIFACT_MISSING`, `INVALID_AUDIO`, `MODEL_MISSING`, `WORKER_UNAVAILABLE`, `WORKER_PROTOCOL`, `WORKER_TIMEOUT`, `STALE_SOURCE`. Ausência de fala é um resultado `no_speech`, não um erro de pronúncia.
 
 `AppState` e `Action` ficam também em `domain.rs`. `AppState::can_start_recording(&self) -> Result<(), AppError>` verifica ocupação, mas não exige modelos prontos; `AppState::accepts_result(&self, request_id: &str, generation: u64) -> bool` protege resultados. A geração do auxiliar é interna e não vai para a interface.
 

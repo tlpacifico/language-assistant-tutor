@@ -7,7 +7,8 @@ Este documento distingue **o que foi verificado** (com o comando e o resultado)
 do que **só o utilizador pode validar** (microfone real, audição da voz, três
 gravações e aceitabilidade da espera). A fase 1 **não está concluída**: os
 critérios CA-02, CA-03, CA-05, CA-06, CA-10 e CA-14 dependem dessa validação
-manual e ficam marcados como pendentes.
+manual e ficam marcados como pendentes; o CA-13 tem verificação parcial nos
+motores e continua pendente na janela.
 
 ## 1. Ambiente e modelos usados
 
@@ -36,7 +37,7 @@ pessoal foi criada ou guardada.
 
 | Comando | Resultado |
 | --- | --- |
-| `.\scripts\verify.ps1` | 8/8 checks com saída 0 (typecheck, 10 testes Vitest, build Vite, `cargo fmt --check`, `clippy -D warnings`, 63 testes Rust, 36 testes pytest sem `models`, `pip check`) |
+| `.\scripts\verify.ps1` | 8/8 checks com saída 0 (typecheck, 14 testes Vitest, build Vite, `cargo fmt --check`, `clippy -D warnings`, 74 testes Rust, 36 testes pytest sem `models`, `pip check`) |
 | `.\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_offline_models.py -m models -q` | `2 passed` em 12,18 s (síntese da pergunta + transcrição; silêncio → `no_speech`); **não foi skip** |
 | Reconstrução do lock numa `.venv` descartável em `%TEMP%` | todos os passos com exit 0 em 356,8 s: `torch==2.15.0` do índice CPU, `-r requirements.lock.txt --extra-index-url .../cpu`, editable e `pip check` (`No broken requirements found.`); versões finais `torch 2.15.0+cpu`, `faster-whisper 1.2.1`, `kokoro 0.9.4`, `spacy 3.8.18`, `transformers 5.22.1`; a `.venv` descartável foi apagada |
 | `.\.venv\Scripts\python.exe -m audio_worker.prepare --models-dir ...` | saída 0; manifesto e síntese de verificação |
@@ -74,6 +75,8 @@ foi transcrito sem tradução nem reescrita (apenas pontuação/vírgulas do mot
 ## 3. Matriz de critérios
 
 Legenda: **verificado** = existe evidência executada e reproduzível;
+**parcial** = uma parte do critério tem evidência executada e a restante
+depende de validação do utilizador;
 **pendente** = exige ação do utilizador (hardware, audição ou decisão);
 **falhado** = houve evidência contrária.
 
@@ -82,13 +85,13 @@ Legenda: **verificado** = existe evidência executada e reproduzível;
 | CA-01 | A aplicação abre no Windows e apresenta a pergunta fixa correta. | **verificado** | Binário release arrancado: janela `Tutor de entrevistas`, `Responding=True`, auxiliar iniciado e fecho normal. Teste `shows_the_fixed_question` fixa o `<h1 lang="en">` com `Tell me about a time you solved a difficult problem at work.` Falta apenas confirmação visual humana, que não altera o critério. |
 | CA-02 | Kokoro gera voz inglesa para a pergunta e o utilizador consegue ouvi-la novamente. | **pendente** | Geração real verificada (2 testes `models`, medições acima; PCM16 mono 24 kHz). Audição e repetição pela janela dependem do utilizador; a cache `question-cache/<sha256>.wav` está coberta por testes Rust. |
 | CA-03 | Início e fim de gravação manuais, com estado e duração visíveis. | **pendente** | `manual_start_stop` (Vitest) e testes de captura Rust passam, mas usam áudio simulado. Falta uma gravação real com microfone. |
-| CA-04 | Sem reprodução durante a captura nem operações duplicadas. | **verificado** | `playback_is_blocked_while_recording`, `recording_stops_playback`, testes de ocupação do serviço e botões desativados na interface. Regra aplicada pelo núcleo, não só pela UI. |
+| CA-04 | Sem reprodução durante a captura nem operações duplicadas. | **verificado** | `playback_is_blocked_while_recording`, `recording_stops_playback`, `starting_recording_stops_playback` e `playback_is_refused_while_recording` (Rust) provam a regra no núcleo; a interface deixa iniciar a gravação com áudio a tocar e o núcleo pára a saída. |
 | CA-05 | Áudio finalizado guardado e reproduzível mesmo com falha de transcrição. | **pendente** | `failed_stop_keeps_previous_attempt`, `save_publication_can_retry`, escrita/publicação atómicas e reprodução a partir do original testadas; falta ouvir a resposta gravada no hardware real e com o transcritor indisponível. |
 | CA-06 | faster-whisper transcreve uma resposta real em inglês, sem tradução nem avaliação. | **pendente** | Transcrição real de inglês sintetizado (pergunta e texto de 26,1 s) verificada, sem tradução/reescrita. Falta uma gravação humana (as três gravações da spec). |
 | CA-07 | Texto automático preservado e revisão guardada em separado. | **verificado** | `raw_transcript_is_readonly`, `save_failure_keeps_dirty_text`, testes de armazenamento (`append_does_not_overwrite_raw`, `failed_review_write_preserves_saved_text`) e `retranscribe_preserves_existing_review`. |
 | CA-08 | Repetir transcrição falhada não exige nova gravação; resultados posteriores não apagam revisões. | **verificado** | `retry_transcription_reuses_audio`, `late_result_does_not_change_active_review`, `retranscribe_preserves_existing_review` (Rust) e o fluxo de revisão na interface. |
 | CA-09 | Nova gravação e reinício não apagam a última resposta nem a revisão guardada. | **verificado** | `failed_publish_preserves_last`, `replaces_existing_json_atomically`, `corrupt_pointer_is_recoverable`, `restore_interrupted_job`, `allocate_never_reuses_a_directory`. Nota: o reinício foi provado com armazenamento controlado, não com uma resposta real gravada. |
-| CA-10 | Áudio vazio, ficheiros em falta, ausência de dispositivo e ausência de fala têm comportamento explícito e recuperável. | **pendente** | Verificados: `empty_audio_is_invalid`, `restore_reports_missing_original`, `no_speech` real com silêncio, erro `MODEL_MISSING` com voz em falta. Falta remover/restaurar o dispositivo real. |
+| CA-10 | Áudio vazio, ficheiros em falta, ausência de dispositivo e ausência de fala têm comportamento explícito e recuperável. | **pendente** | Verificados: `empty_audio_is_invalid`, `restore_reports_missing_original`, `no_speech` real com silêncio, erro `MODEL_MISSING` com voz em falta, `failed_start_resamples_microphone` (a disponibilidade é reamostrada após falha) e `timed_out_stop_recovers_capture` (um comando de áudio expirado não bloqueia gravar nem fechar; o original finalizado é publicado como incompleto). Falta remover/restaurar o dispositivo real. |
 | CA-11 | Falha ou bloqueio do auxiliar permite recuperar e repetir, sem aplicar resultados atrasados. | **verificado** | `worker_crash_releases_job`, `timeout_rejects_old_generation`, `shutdown_kills_unresponsive_worker`, `non_json_stdout_is_protocol_error`, `failed_restart_discards_the_pending_health_handle` e `late_result_does_not_change_active_review`. Executado com o stub controlado, não com o auxiliar real bloqueado pela interface. |
 | CA-12 | Interface utilizável durante carregamento e processamento. | **verificado** | `shows_loading_without_freezing_editor` mantém o editor editável e os botões incompatíveis desativados; o worker é um processo separado (medições de 7,7 s de carregamento não bloqueiam a janela). Perceção real fica para o utilizador. |
 | CA-13 | Com modelos preparados, o percurso funciona sem rede e não chama serviços de IA. | **parcial — verificado nos motores/áudio; falta a repetição pela janela** | Execução com sockets bloqueados: `health` `ready`, síntese e transcrição corretas; `HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1` aplicados antes dos imports; nenhuma referência a APIs de IA no código. Falta repetir o percurso completo na janela com a rede desligada (passo 5 da secção 4), que continua pendente. |
