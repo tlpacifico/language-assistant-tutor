@@ -213,3 +213,73 @@ pub async fn interview_retry_database(
 ) -> Result<InterviewSnapshot, AppError> {
     service.retry_database().await
 }
+
+use crate::ai::*;
+#[tauri::command]
+pub async fn interview_ai_load_ai_settings(
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<AiSettingsView, AppError> {
+    service.load_ai_settings().await
+}
+#[tauri::command]
+pub async fn interview_ai_save_ai_settings(
+    request: SaveAiSettings,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<AiSettingsView, AppError> {
+    service.save_ai_settings(request).await
+}
+#[tauri::command]
+pub async fn interview_ai_save_ai_key(
+    key: String,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<AiSettingsView, AppError> {
+    service.save_ai_key(key).await
+}
+#[tauri::command]
+pub async fn interview_ai_remove_ai_key(
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<AiSettingsView, AppError> {
+    service.remove_ai_key().await
+}
+#[tauri::command]
+pub async fn interview_ai_accept_ai_consent(
+    request: AcceptAiConsent,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<AiSettingsView, AppError> {
+    service.accept_ai_consent(request).await
+}
+#[tauri::command]
+pub async fn interview_ai_request_follow_up(
+    request: AiQuestionCommand,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<InterviewSnapshot, AppError> {
+    service.request_follow_up(request).await
+}
+#[tauri::command]
+pub async fn interview_ai_waive_follow_up(
+    request: WaiveFollowUp,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<InterviewSnapshot, AppError> {
+    service.waive_follow_up(request).await
+}
+#[tauri::command]
+pub async fn interview_ai_generate_feedback(
+    request: AiSessionCommand,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<FeedbackView, AppError> {
+    service.generate_feedback(request).await
+}
+#[tauri::command]
+pub async fn interview_ai_load_feedback(
+    id: Id,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<FeedbackView, AppError> {
+    service.load_feedback(id).await
+}
+#[tauri::command]
+pub async fn interview_ai_retry_ai_publication(
+    id: Id,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<InterviewSnapshot, AppError> {
+    service.retry_ai_publication(id).await
+}

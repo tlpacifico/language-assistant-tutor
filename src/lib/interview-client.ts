@@ -1,3 +1,12 @@
+import type {
+  AiSettingsView,
+  SaveAiSettings,
+  AcceptAiConsent,
+  AiQuestionCommand,
+  WaiveFollowUp,
+  AiSessionCommand,
+  FeedbackView,
+} from "./ai-contracts";
 /**
  * Adaptador Tauri da entrevista guiada.
  *
@@ -37,6 +46,16 @@ export type Unsubscribe = () => void;
 
 /** Acesso único da interface aos comandos Tauri da fase 2. */
 export interface InterviewClient {
+  loadAiSettings(): Promise<AiSettingsView>;
+  saveAiSettings(request: SaveAiSettings): Promise<AiSettingsView>;
+  saveAiKey(key: string): Promise<AiSettingsView>;
+  removeAiKey(): Promise<AiSettingsView>;
+  acceptAiConsent(request: AcceptAiConsent): Promise<AiSettingsView>;
+  requestFollowUp(request: AiQuestionCommand): Promise<InterviewSnapshot>;
+  waiveFollowUp(request: WaiveFollowUp): Promise<InterviewSnapshot>;
+  generateFeedback(request: AiSessionCommand): Promise<FeedbackView>;
+  loadFeedback(id: string): Promise<FeedbackView>;
+  retryAiPublication(id: string): Promise<InterviewSnapshot>;
   /** Fotografia atual, sem alterar o estado. */
   snapshot(): Promise<InterviewSnapshot>;
   /** Lista o banco de perguntas, opcionalmente filtrado por categoria. */
@@ -95,6 +114,25 @@ export interface InterviewClient {
 /** Cria o cliente sobre a aplicação Tauri em execução. */
 export function createInterviewClient(): InterviewClient {
   return {
+    loadAiSettings: () =>
+      invoke<AiSettingsView>("interview_ai_load_ai_settings"),
+    saveAiSettings: (request) =>
+      invoke<AiSettingsView>("interview_ai_save_ai_settings", { request }),
+    saveAiKey: (key) =>
+      invoke<AiSettingsView>("interview_ai_save_ai_key", { key }),
+    removeAiKey: () => invoke<AiSettingsView>("interview_ai_remove_ai_key"),
+    acceptAiConsent: (request) =>
+      invoke<AiSettingsView>("interview_ai_accept_ai_consent", { request }),
+    requestFollowUp: (request) =>
+      invoke<InterviewSnapshot>("interview_ai_request_follow_up", { request }),
+    waiveFollowUp: (request) =>
+      invoke<InterviewSnapshot>("interview_ai_waive_follow_up", { request }),
+    generateFeedback: (request) =>
+      invoke<FeedbackView>("interview_ai_generate_feedback", { request }),
+    loadFeedback: (id) =>
+      invoke<FeedbackView>("interview_ai_load_feedback", { id }),
+    retryAiPublication: (id) =>
+      invoke<InterviewSnapshot>("interview_ai_retry_ai_publication", { id }),
     snapshot: () => invoke<InterviewSnapshot>("interview_snapshot"),
     listQuestions: (category) =>
       invoke<Question[]>("interview_list_questions", {
@@ -121,8 +159,7 @@ export function createInterviewClient(): InterviewClient {
         sessionQuestionId,
         expectedSelection,
       }),
-    stopRecording: () =>
-      invoke<InterviewSnapshot>("interview_stop_recording"),
+    stopRecording: () => invoke<InterviewSnapshot>("interview_stop_recording"),
     retrySaveRecording: (recordingId) =>
       invoke<InterviewSnapshot>("interview_retry_save_recording", {
         recordingId,
@@ -140,11 +177,9 @@ export function createInterviewClient(): InterviewClient {
     stopAudio: () => invoke<InterviewSnapshot>("interview_stop_audio"),
     refreshAvailability: () =>
       invoke<InterviewSnapshot>("interview_refresh_availability"),
-    restartWorker: () =>
-      invoke<InterviewSnapshot>("interview_restart_worker"),
+    restartWorker: () => invoke<InterviewSnapshot>("interview_restart_worker"),
     prepareClose: () => invoke<InterviewSnapshot>("interview_prepare_close"),
-    retryDatabase: () =>
-      invoke<InterviewSnapshot>("interview_retry_database"),
+    retryDatabase: () => invoke<InterviewSnapshot>("interview_retry_database"),
     subscribe(listener) {
       let unlisten: Unsubscribe | null = null;
       let disposed = false;

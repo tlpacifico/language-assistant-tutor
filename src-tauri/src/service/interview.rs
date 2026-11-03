@@ -46,8 +46,12 @@ impl AppService {
     ///
     /// Editar durante uma captura é permitido (como na fase 1); durante a
     /// finalização a escrita é recusada para não competir com a publicação.
-    pub async fn save_review(&self, request: SaveReview) -> Result<InterviewSnapshot, AppError> {
+    pub async fn save_review(
+        &self,
+        mut request: SaveReview,
+    ) -> Result<InterviewSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
+        request.target = self.resolve_answer_target(request.target).await?;
         let finalizing = self.lock_state().finalizing;
         if finalizing {
             let error = AppError::busy(
@@ -74,9 +78,10 @@ impl AppService {
     /// seleção nem transcrição.
     pub async fn confirm_answer(
         &self,
-        request: ConfirmAnswer,
+        mut request: ConfirmAnswer,
     ) -> Result<InterviewSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
+        request.target = self.resolve_answer_target(request.target).await?;
         let capture_busy = {
             let state = self.lock_state();
             state.recording_id.is_some() || state.finalizing
@@ -259,7 +264,8 @@ impl AppService {
         let Some(question) = detail
             .questions
             .iter()
-            .find(|question| question.question.id == session_question_id)
+            .find(|question| question.active().question.id == session_question_id)
+            .map(|q| q.active())
         else {
             let error = stale_source(
                 "A pergunta indicada não pertence à entrevista em curso. Atualize a página.",
@@ -525,7 +531,8 @@ impl AppService {
     /// Alvo da transcrição automática: a gravação selecionada de uma pergunta
     /// publicada e ainda não confirmada.
     fn automatic_target(&self) -> Option<AnswerTarget> {
-        let current = self.lock_state().current.clone()?;
+        let detail = self.lock_state().current.clone()?;
+        let current = detail.active().clone();
         if current.confirmation.is_some() {
             return None;
         }
@@ -538,6 +545,7 @@ impl AppService {
             return None;
         }
         Some(AnswerTarget {
+            answer_id: None,
             session_id: current.question.session_id,
             session_question_id: current.question.id,
             recording_id: recording.id.clone(),
@@ -638,6 +646,7 @@ impl AppService {
         &self,
         target: AnswerTarget,
     ) -> Result<InterviewSnapshot, AppError> {
+        let target = self.resolve_answer_target(target).await?;
         let _transition = self.transitions.lock().await;
         self.submit_transcription_locked(target).await
     }
@@ -686,7 +695,8 @@ impl AppService {
         let Some(question) = detail
             .questions
             .iter()
-            .find(|question| question.question.id == target.session_question_id)
+            .find(|question| question.active().question.id == target.session_question_id)
+            .map(|q| q.active())
         else {
             let error = stale_source(
                 "A pergunta da transcrição não pertence a esta entrevista. Atualize a página.",
@@ -799,6 +809,7 @@ impl AppService {
             kind: OperationKind::Transcribe,
             stage: JobStage::Loading,
             target: OperationTarget {
+                answer_id: None,
                 session_id: target.session_id.clone(),
                 session_question_id: target.session_question_id.clone(),
                 recording_id: Some(target.recording_id.clone()),
@@ -926,6 +937,23 @@ impl AppService {
         }
 
         match target {
+            AudioSelection::FollowUp {
+                session_id,
+                session_question_id,
+                answer_id,
+            } => {
+                let database = self.database()?;
+                let sid = session_id.clone();
+                let main = session_question_id.clone();
+                let aid = answer_id.clone();
+                let valid=database_task(move||database.with_connection(|c|c.query_row("SELECT EXISTS(SELECT 1 FROM answer_slots WHERE id=?1 AND session_question_id=?2 AND session_id=?3 AND role='follow_up')",rusqlite::params![aid,main,sid],|r|r.get::<_,bool>(0)).map_err(crate::db::ai::sql_error))).await?;
+                if !valid {
+                    return Err(crate::ai::failure(
+                        "Seguimento não pertence à pergunta indicada.",
+                    ));
+                }
+                self.play_question(session_id, answer_id).await
+            }
             AudioSelection::Question {
                 session_id,
                 session_question_id,
@@ -1018,6 +1046,7 @@ impl AppService {
             kind: OperationKind::Synthesize,
             stage: JobStage::Loading,
             target: OperationTarget {
+                answer_id: None,
                 session_id: question.session_id,
                 session_question_id: question.id,
                 recording_id: None,
@@ -1073,7 +1102,7 @@ impl AppService {
             .lock_state()
             .current
             .as_ref()
-            .map(|detail| detail.question.clone());
+            .map(|detail| detail.active().question.clone());
         if let Some(question) = current {
             if question.session_id == session_id && question.id == session_question_id {
                 return Ok(question);
@@ -1093,8 +1122,8 @@ impl AppService {
         detail
             .questions
             .into_iter()
-            .find(|detail| detail.question.id == session_question_id)
-            .map(|detail| detail.question)
+            .flat_map(|d|{let mut v=vec![d.question];if let Some(f)=d.follow_up{v.push(f.question);}v})
+            .find(|q|q.id==session_question_id)
             .ok_or_else(|| {
                 stale_source(
                     "A pergunta indicada não pertence a esta entrevista. Atualize a página e tente novamente.",

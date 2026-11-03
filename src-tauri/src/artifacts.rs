@@ -151,6 +151,11 @@ impl ArtifactStore {
     /// do disco, sem alterar os textos guardados.
     pub fn annotate(&self, detail: &mut SessionDetail) {
         for question in &mut detail.questions {
+            if let Some(f) = &mut question.follow_up {
+                for r in &mut f.recordings {
+                    r.warnings = self.warnings(r);
+                }
+            }
             for recording in &mut question.recordings {
                 let extra = self.warnings(recording);
                 recording.warnings.extend(extra);

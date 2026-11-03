@@ -16,6 +16,7 @@
 //! uma falha é recuperável sem fechar a janela. Sem Python ou modelos, a
 //! captura, a reprodução e a revisão continuam a funcionar.
 
+pub mod ai;
 pub mod artifacts;
 pub mod audio;
 pub mod commands;
@@ -128,6 +129,16 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::interview_ai_load_ai_settings,
+            commands::interview_ai_save_ai_settings,
+            commands::interview_ai_save_ai_key,
+            commands::interview_ai_remove_ai_key,
+            commands::interview_ai_accept_ai_consent,
+            commands::interview_ai_request_follow_up,
+            commands::interview_ai_waive_follow_up,
+            commands::interview_ai_generate_feedback,
+            commands::interview_ai_load_feedback,
+            commands::interview_ai_retry_ai_publication,
             commands::interview_snapshot,
             commands::interview_list_questions,
             commands::interview_create_question,

@@ -39,18 +39,20 @@ const QUESTION_TEXT =
   "Tell me about a time you solved a difficult problem at work.";
 
 /** Fotografia com uma sessão em curso e a pergunta corrente. */
-function interviewSnapshot(options: {
-  position?: number;
-  count?: number;
-  sessionVersion?: number;
-  confirmedCount?: number;
-  question?: Partial<SessionQuestion>;
-  recordings?: RecordingView[];
-  confirmation?: QuestionDetail["confirmation"];
-  revision?: number;
-  recordingId?: string | null;
-  pendingRecordingId?: string | null;
-} = {}): InterviewSnapshot {
+function interviewSnapshot(
+  options: {
+    position?: number;
+    count?: number;
+    sessionVersion?: number;
+    confirmedCount?: number;
+    question?: Partial<SessionQuestion>;
+    recordings?: RecordingView[];
+    confirmation?: QuestionDetail["confirmation"];
+    revision?: number;
+    recordingId?: string | null;
+    pendingRecordingId?: string | null;
+  } = {},
+): InterviewSnapshot {
   const recordings = options.recordings ?? [];
   const position = options.position ?? 2;
   const count = options.count ?? 3;
@@ -70,9 +72,7 @@ function interviewSnapshot(options: {
         position,
         text: QUESTION_TEXT,
         selectedRecordingId:
-          recordings.length > 0
-            ? recordings[recordings.length - 1].id
-            : null,
+          recordings.length > 0 ? recordings[recordings.length - 1].id : null,
         selectionVersion: 2,
         ...options.question,
       }),
@@ -89,7 +89,9 @@ function recordedSnapshot(transcriptText = "My first automatic answer.") {
       makeRecording({
         id: "recording-1",
         sessionQuestionId: "sq-2",
-        transcripts: [makeTranscript({ id: "transcript-1", text: transcriptText })],
+        transcripts: [
+          makeTranscript({ id: "transcript-1", text: transcriptText }),
+        ],
       }),
     ],
   });
@@ -218,6 +220,115 @@ function deferred<T>() {
 }
 
 describe("Interview", () => {
+  it("resolves_follow_up_review_without_unlocking_initial_and_advances_main_counter", async () => {
+    const user = userEvent.setup();
+    const base = recordedSnapshot();
+    base.activeSession = { ...base.activeSession!, mode: "ai_v3" };
+    base.current = {
+      ...base.current!,
+      confirmation: makeConfirmation({
+        recordingId: base.current!.recordings[0].id,
+        sessionQuestionId: base.current!.question.id,
+      }),
+      followUpStage: "not_requested",
+    };
+    const { fake } = renderPage(base);
+    const follow = makeQuestionDetail({
+      question: makeSessionQuestion({
+        id: "follow-slot",
+        position: 2,
+        text: "What did you learn?",
+        selectedRecordingId: "follow-recording",
+        selectionVersion: 1,
+      }),
+      recordings: [
+        makeRecording({
+          id: "follow-recording",
+          sessionQuestionId: "sq-2",
+          transcripts: [makeTranscript({ text: "I learned to test." })],
+        }),
+      ],
+    });
+    const withFollow = {
+      ...base,
+      revision: base.revision + 1,
+      current: {
+        ...base.current!,
+        followUp: follow,
+        followUpStage: "follow_up",
+      },
+    };
+    vi.mocked(fake.client.requestFollowUp).mockResolvedValue(withFollow);
+    vi.mocked(fake.client.startRecording).mockResolvedValue(withFollow);
+    vi.mocked(fake.client.playAudio).mockResolvedValue(withFollow);
+    await user.click(screen.getByRole("button", { name: "Pedir seguimento" }));
+    expect(await screen.findByText("What did you learn?")).toBeVisible();
+    expect(screen.getByText("Pergunta 2 de 3")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Próxima pergunta" }),
+    ).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Ouvir original da resposta inicial",
+      }),
+    );
+    expect(fake.client.playAudio).toHaveBeenCalledWith({
+      type: "recording",
+      recordingId: base.current!.recordings[0].id,
+    });
+    await user.click(screen.getByRole("button", { name: "Gravar novamente" }));
+    expect(fake.client.startRecording).toHaveBeenCalledWith("follow-slot", 1);
+    vi.mocked(fake.client.confirmAnswer).mockImplementation(
+      async (request) => ({
+        ...withFollow,
+        revision: withFollow.revision + 1,
+        current: {
+          ...withFollow.current!,
+          followUp: {
+            ...follow,
+            confirmation: makeConfirmation({
+              id: "follow-confirmed",
+              recordingId: "follow-recording",
+              text: request.text,
+            }),
+          },
+        },
+      }),
+    );
+    const editable = screen.getByLabelText("Revisão editável");
+    await user.clear(editable);
+    await user.type(editable, "I learned to test earlier.");
+    await user.click(
+      screen.getByRole("button", { name: "Confirmar resposta" }),
+    );
+    await waitFor(() =>
+      expect(fake.client.confirmAnswer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: expect.objectContaining({
+            sessionQuestionId: "sq-2",
+            answerId: "follow-slot",
+            recordingId: "follow-recording",
+          }),
+        }),
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "Próxima pergunta" }),
+    ).toBeEnabled();
+    vi.mocked(fake.client.advanceSession).mockResolvedValue({
+      ...withFollow,
+      revision: withFollow.revision + 2,
+      current: makeQuestionDetail({
+        question: makeSessionQuestion({ id: "sq-3", position: 3 }),
+      }),
+      activeSession: { ...base.activeSession!, position: 3 },
+    });
+    await user.click(screen.getByRole("button", { name: "Próxima pergunta" }));
+    expect(fake.client.advanceSession).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionQuestionId: "sq-2" }),
+    );
+    expect(await screen.findByText("Pergunta 3 de 3")).toBeVisible();
+  });
   it("shows_question_two_of_three", async () => {
     renderPage(recordedSnapshot());
 
@@ -256,7 +367,9 @@ describe("Interview", () => {
       screen.getByRole("button", { name: "Próxima pergunta" }),
     ).toBeDisabled();
 
-    await user.click(screen.getByRole("button", { name: "Confirmar resposta" }));
+    await user.click(
+      screen.getByRole("button", { name: "Confirmar resposta" }),
+    );
 
     expect(fake.client.confirmAnswer).toHaveBeenCalledTimes(1);
     expect(fake.client.advanceSession).not.toHaveBeenCalled();
@@ -281,7 +394,9 @@ describe("Interview", () => {
     const editor = await screen.findByLabelText("Revisão editável");
     await user.clear(editor);
     await user.type(editor, text);
-    await user.click(screen.getByRole("button", { name: "Confirmar resposta" }));
+    await user.click(
+      screen.getByRole("button", { name: "Confirmar resposta" }),
+    );
 
     expect(confirmations).toHaveLength(1);
     const request = confirmations[0];
@@ -340,10 +455,12 @@ describe("Interview", () => {
     });
     const { fake } = renderPage(base);
     const advances: AdvanceSession[] = [];
-    vi.mocked(fake.client.advanceSession).mockImplementation(async (request) => {
-      advances.push(request);
-      return snapshot({ revision: 9, activeSession: null, current: null });
-    });
+    vi.mocked(fake.client.advanceSession).mockImplementation(
+      async (request) => {
+        advances.push(request);
+        return snapshot({ revision: 9, activeSession: null, current: null });
+      },
+    );
     const detail: SessionDetail = {
       summary: sessionSummary({
         status: "completed",
@@ -356,8 +473,12 @@ describe("Interview", () => {
     };
     vi.mocked(fake.client.loadSession).mockResolvedValue(detail);
 
-    expect(screen.queryByRole("button", { name: "Próxima pergunta" })).toBeNull();
-    const finish = await screen.findByRole("button", { name: "Terminar sessão" });
+    expect(
+      screen.queryByRole("button", { name: "Próxima pergunta" }),
+    ).toBeNull();
+    const finish = await screen.findByRole("button", {
+      name: "Terminar sessão",
+    });
     expect(finish).toBeEnabled();
     await user.click(finish);
 
@@ -440,7 +561,9 @@ describe("Interview", () => {
     expect(await screen.findByText("Tomada 1")).toBeInTheDocument();
     expect(screen.getByText("Tomada 2")).toBeInTheDocument();
     const takes = screen.getAllByRole("listitem");
-    expect(within(takes[0]).getByText("First take answer.")).toBeInTheDocument();
+    expect(
+      within(takes[0]).getByText("First take answer."),
+    ).toBeInTheDocument();
     expect(
       within(takes[1]).getByText("Second take answer."),
     ).toBeInTheDocument();
@@ -481,13 +604,18 @@ describe("Interview", () => {
     const base = recordedSnapshot();
     const { fake } = renderPage(base);
     vi.mocked(fake.client.confirmAnswer).mockRejectedValue(
-      appError("STORAGE_WRITE_FAILED", "Não foi possível confirmar a resposta."),
+      appError(
+        "STORAGE_WRITE_FAILED",
+        "Não foi possível confirmar a resposta.",
+      ),
     );
 
     const editor = await screen.findByLabelText("Revisão editável");
     await user.clear(editor);
     await user.type(editor, "Text that must survive a failed confirmation.");
-    await user.click(screen.getByRole("button", { name: "Confirmar resposta" }));
+    await user.click(
+      screen.getByRole("button", { name: "Confirmar resposta" }),
+    );
 
     expect(
       await screen.findByText("Não foi possível confirmar a resposta."),
@@ -523,7 +651,9 @@ describe("Interview", () => {
     const pending = deferred<InterviewSnapshot>();
     vi.mocked(fake.client.advanceSession).mockReturnValue(pending.promise);
 
-    const next = await screen.findByRole("button", { name: "Próxima pergunta" });
+    const next = await screen.findByRole("button", {
+      name: "Próxima pergunta",
+    });
     act(() => {
       fireEvent.click(next);
       fireEvent.click(next);
@@ -558,7 +688,9 @@ describe("Interview", () => {
       appError("WORKER_UNAVAILABLE", "A voz local não está disponível."),
     );
 
-    await user.click(await screen.findByRole("button", { name: "Ouvir pergunta" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Ouvir pergunta" }),
+    );
 
     expect(
       await screen.findByText("A voz local não está disponível."),
@@ -609,9 +741,7 @@ describe("Interview", () => {
       }),
     );
 
-    expect(
-      await screen.findByText("Reservada"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Reservada")).toBeInTheDocument();
     const retry = screen.getByRole("button", {
       name: "Repetir guardar gravação",
     });

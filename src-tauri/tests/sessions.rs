@@ -35,6 +35,7 @@ fn open(path: &Path) -> Database {
 
 fn request(request_id: &str, category: Option<Category>, count: u32) -> StartSession {
     StartSession {
+        mode: Default::default(),
         request_id: request_id.to_owned(),
         category,
         count,

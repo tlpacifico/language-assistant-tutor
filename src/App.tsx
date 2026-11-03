@@ -1,3 +1,4 @@
+import AiSettings from "./features/ai/AiSettings";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -42,13 +43,14 @@ const DATABASE_LABELS: Record<InterviewSnapshot["database"], string> = {
 };
 
 /** Páginas da aplicação, sem router nem gestor global de estado. */
-type Page = "setup" | "bank" | "interview" | "history";
+type Page = "setup" | "bank" | "interview" | "history" | "ai";
 
 const PAGES: Array<{ id: Page; label: string }> = [
   { id: "setup", label: "Preparação" },
   { id: "bank", label: "Banco de perguntas" },
   { id: "interview", label: "Entrevista" },
   { id: "history", label: "Histórico" },
+  { id: "ai", label: "Configuração IA" },
 ];
 
 /** Motivo apresentado quando uma página é pedida durante captura/finalização. */
@@ -211,8 +213,7 @@ export default function App({
       });
       return;
     }
-    const anyDirty =
-      review.dirty || (bankGuardRef.current?.dirty ?? false);
+    const anyDirty = review.dirty || (bankGuardRef.current?.dirty ?? false);
     if (!anyDirty) {
       void proceed();
       return;
@@ -280,8 +281,7 @@ export default function App({
       // Lido no momento do fecho: uma edição feita durante a escrita conta pela
       // versão mais recente do rascunho, não pela fotografia anterior.
       const stillDirty =
-        reviewRef.current.isDirty() ||
-        (bankGuardRef.current?.dirty ?? false);
+        reviewRef.current.isDirty() || (bankGuardRef.current?.dirty ?? false);
       if (stillDirty) {
         // Uma edição que tenha escapado ao bloqueio do editor não pode ser
         // perdida em `destroy`: a janela fica e a decisão reaparece.
@@ -400,9 +400,7 @@ export default function App({
     }
   }
 
-  async function run(
-    action: () => Promise<InterviewSnapshot>,
-  ): Promise<void> {
+  async function run(action: () => Promise<InterviewSnapshot>): Promise<void> {
     setActionError(null);
     try {
       applySnapshot(await action());
@@ -416,7 +414,9 @@ export default function App({
   const pendingRecordingId = snapshot?.pendingRecordingId ?? null;
 
   let content: ReactNode;
-  if (page === "history") {
+  if (page === "ai") {
+    content = <AiSettings client={activeClient} />;
+  } else if (page === "history") {
     content = <History client={activeClient} onResume={resumeSession} />;
   } else if (!snapshot) {
     content = (
@@ -468,7 +468,9 @@ export default function App({
   return (
     <main className="practice" aria-labelledby="app-title">
       <header className="practice__header">
-        <p className="practice__eyebrow">Entrevistas comportamentais em inglês</p>
+        <p className="practice__eyebrow">
+          Entrevistas comportamentais em inglês
+        </p>
         <h1 className="practice__question" id="app-title">
           Tutor de entrevistas
         </h1>
@@ -580,7 +582,9 @@ export default function App({
                       {STATUS_LABELS[component.status] ?? component.status}
                     </span>
                     {component.message ? (
-                      <span className="practice__hint">{component.message}</span>
+                      <span className="practice__hint">
+                        {component.message}
+                      </span>
                     ) : null}
                   </>
                 ) : (

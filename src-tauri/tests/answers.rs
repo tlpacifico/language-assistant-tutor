@@ -48,6 +48,7 @@ impl Harness {
     fn questions(&self, count: u32) -> SessionDetail {
         self.database
             .start_session(StartSession {
+                mode: Default::default(),
                 request_id: "req-answers".to_owned(),
                 category: None,
                 count,
@@ -141,6 +142,7 @@ fn no_speech(id: &str) -> Transcript {
 
 fn answer_target(session: &str, question: &str, recording: &str, selection: u64) -> AnswerTarget {
     AnswerTarget {
+        answer_id: None,
         session_id: session.to_owned(),
         session_question_id: question.to_owned(),
         recording_id: recording.to_owned(),
@@ -208,6 +210,7 @@ fn operation_target(
     operation: &str,
 ) -> OperationTarget {
     OperationTarget {
+        answer_id: None,
         session_id: session.to_owned(),
         session_question_id: question.to_owned(),
         recording_id: Some(recording.to_owned()),
@@ -469,6 +472,7 @@ fn transcript_append_creates_and_closes_its_operation() {
         .expect("publicar a gravação");
 
     let operation_target = OperationTarget {
+        answer_id: None,
         session_id: session.clone(),
         session_question_id: question.clone(),
         recording_id: Some(recording_id.clone()),
@@ -596,6 +600,7 @@ fn operation_starts_running_and_completes_with_its_timing() {
     let question = detail.questions[0].question.id.clone();
     let recording_id = harness.record(&session, &question, 0);
     let target = OperationTarget {
+        answer_id: None,
         session_id: session,
         session_question_id: question,
         recording_id: Some(recording_id),
@@ -684,6 +689,7 @@ fn failed_operation_keeps_its_error_and_receives_no_result() {
     let question = detail.questions[0].question.id.clone();
     let recording_id = harness.record(&session, &question, 0);
     let target = OperationTarget {
+        answer_id: None,
         session_id: session,
         session_question_id: question,
         recording_id: Some(recording_id),

@@ -84,6 +84,14 @@ O registo de consumo inclui pedidos de seguimento, relatório, reformulação e 
 
 ## Persistência e recuperação
 
+A fase 3 foi antecipada por autorização do utilizador. Acrescenta `reqwest` 0.13.5
+(HTTP JSON/Rustls, sem redirects/retries automáticos) e `keyring` 3.6.3
+(`windows-native`, sem alternativa em texto simples). O esquema SQLite v2
+introduz `answer_slots`, configuração pública/consentimento, etapas IA,
+pedidos/tentativas e relatórios imutáveis. As sessões `local_v2` mantêm o percurso
+existente; só sessões novas explicitamente `ai_v3` têm seguimentos e feedback.
+Ver [preparação da fase 3](phase-3/setup.md) para contratos e limites concretos.
+
 - SQLite é a autoridade dos dados das sessões novas da fase 2 (banco de perguntas, cópias fixas das perguntas, posição e estado da sessão, gravações, transcrições automáticas, revisões append-only, confirmações imutáveis, operações e recibos de comandos). A ligação é feita em Rust com `rusqlite` e a funcionalidade `bundled`, que compila o SQLite incluído na biblioteca e não exige SQLite instalado no sistema. Uma única `Connection` protegida por `Arc<Mutex<…>>`; as operações síncronas correm em `spawn_blocking`, fora da thread da interface, e o guard nunca atravessa um `await`. Não há ORM, pool nem acesso SQL a partir do frontend.
 - Os ficheiros JSON da fase 1 (`phase1/attempts/…`) deixam de ser escritos pela aplicação nova e são conservados apenas para leitura e consulta dos treinos anteriores. Não há duas autoridades para as mesmas sessões: os dados novos vivem exclusivamente em `tutor.sqlite3` e nos ficheiros de áudio.
 - O esquema é versionado (`PRAGMA user_version`) e migrado numa transação; uma versão futura é recusada sem escrita e uma falha não apaga nem recria a base. As restrições e triggers impedem reescrever transcrições, revisões e confirmações, e um índice parcial garante no máximo uma sessão em curso.

@@ -84,7 +84,7 @@ export function sessionSummary(
     confirmedCount: overrides.confirmedCount ?? 1,
     position: overrides.position ?? 2,
     status: overrides.status ?? "in_progress",
-    mode: "local_v2",
+    mode: overrides.mode ?? "local_v2",
     version: overrides.version ?? 3,
     createdAt: overrides.createdAt ?? "2026-11-02T10:00:00Z",
     completedAt: overrides.completedAt ?? null,
@@ -101,7 +101,9 @@ export function appError(
 }
 
 /** Transcrição automática imutável, substituível campo a campo. */
-export function makeTranscript(overrides: Partial<Transcript> = {}): Transcript {
+export function makeTranscript(
+  overrides: Partial<Transcript> = {},
+): Transcript {
   return {
     id: overrides.id ?? "transcript-1",
     status: overrides.status ?? "completed",
@@ -197,6 +199,9 @@ export function makeQuestionDetail(
   overrides: Partial<QuestionDetail> = {},
 ): QuestionDetail {
   return {
+    followUp: overrides.followUp,
+    followUpStage: overrides.followUpStage,
+    initialAnswerId: overrides.initialAnswerId,
     question: overrides.question ?? makeSessionQuestion(),
     recordings: overrides.recordings ?? [],
     confirmation: overrides.confirmation ?? null,
@@ -223,10 +228,12 @@ export interface FakeInterviewClient {
  * `startSession` devolve uma sessão ativa coerente com o pedido; os testes que
  * precisam de falhas substituem o método com `vi.fn` e restauram depois.
  */
-export function fakeInterviewClient(options: {
-  initial?: InterviewSnapshot;
-  questions?: Question[];
-} = {}): FakeInterviewClient {
+export function fakeInterviewClient(
+  options: {
+    initial?: InterviewSnapshot;
+    questions?: Question[];
+  } = {},
+): FakeInterviewClient {
   let current = options.initial ?? snapshot();
   const questions = [...(options.questions ?? [])];
   const starts: StartSession[] = [];
@@ -241,10 +248,56 @@ export function fakeInterviewClient(options: {
   }
 
   const client: InterviewClient = {
+    loadAiSettings: vi.fn(async () => ({
+      version: 1,
+      baseUrl: "https://opencode.ai/inference/openai/v1",
+      model: "deepseek-v4.1-flash",
+      tariff: null,
+      credentialConfigured: false,
+      consent: null,
+    })),
+    saveAiSettings: vi.fn(async () => {
+      throw new Error("Configuração não simulada");
+    }),
+    saveAiKey: vi.fn(async () => {
+      throw new Error("Credencial não simulada");
+    }),
+    removeAiKey: vi.fn(async () => {
+      throw new Error("Credencial não simulada");
+    }),
+    acceptAiConsent: vi.fn(async () => {
+      throw new Error("Consentimento não simulado");
+    }),
+    requestFollowUp: vi.fn(async () => {
+      throw new Error("Seguimento não simulado");
+    }),
+    waiveFollowUp: vi.fn(async () => {
+      throw new Error("Dispensa não simulada");
+    }),
+    generateFeedback: vi.fn(async () => {
+      throw new Error("Feedback não simulado");
+    }),
+    retryAiPublication: vi.fn(async () => {
+      throw new Error("Publicação não simulada");
+    }),
+    loadFeedback: vi.fn(async (id) => ({
+      sessionId: id,
+      state: "local",
+      reports: [],
+      priorities: [],
+      usage: {
+        knownReportedSubtotal: 0,
+        knownEstimatedSubtotal: 0,
+        unknownAttemptCount: 0,
+        input: 0,
+        output: 0,
+        complete: true,
+      },
+      attempts: [],
+    })),
+
     snapshot: vi.fn(async () => current),
-    listQuestions: vi.fn(async (category) =>
-      selected(category ?? null),
-    ),
+    listQuestions: vi.fn(async (category) => selected(category ?? null)),
     createQuestion: vi.fn(async (input: QuestionInput) => {
       creates.push(input);
       const created = makeQuestion({

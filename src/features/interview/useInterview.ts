@@ -1,3 +1,4 @@
+import { activeAnswer } from "../../lib/interview-contracts";
 /**
  * Estado local da revisão de uma resposta da entrevista guiada.
  *
@@ -103,7 +104,7 @@ export function latestTranscript(
 export function selectedAnswer(
   snapshot: InterviewSnapshot | null,
 ): SelectedAnswer | null {
-  const current = snapshot?.current;
+  const current = activeAnswer(snapshot?.current);
   const recordingId = current?.question.selectedRecordingId;
   if (!current || !recordingId) {
     return null;
@@ -134,7 +135,8 @@ function seedDraft(recording: RecordingView): Draft {
     version: saved?.version ?? 0,
     sourceTranscriptId:
       saved?.sourceTranscriptId ?? latestTranscript(recording)?.id ?? null,
-    origin: saved?.origin ?? (automatic !== null ? "automatic" : "manual_explicit"),
+    origin:
+      saved?.origin ?? (automatic !== null ? "automatic" : "manual_explicit"),
     savedAt: saved?.savedAt ?? null,
   };
 }
@@ -190,12 +192,7 @@ function reconcileDraft(
   if (saved && saved.version !== draft.version) {
     return { ...fresh, text: saved.text, baseline: saved.text };
   }
-  if (
-    !saved &&
-    draft.version === 0 &&
-    draft.text === "" &&
-    fresh.text !== ""
-  ) {
+  if (!saved && draft.version === 0 && draft.text === "" && fresh.text !== "") {
     return { ...fresh, text: fresh.text, baseline: fresh.text };
   }
   if (draft.version === 0) {
@@ -219,7 +216,7 @@ function reconcileDrafts(
   state: InterviewState,
   snapshot: InterviewSnapshot,
 ): Record<Id, Draft> {
-  const current = snapshot.current;
+  const current = activeAnswer(snapshot.current);
   if (!current) {
     return state.drafts;
   }
@@ -283,7 +280,10 @@ function reducer(state: InterviewState, action: Action): InterviewState {
         return state;
       }
       return {
-        ...withDraft(state, answer.recording.id, { ...draft, text: action.text }),
+        ...withDraft(state, answer.recording.id, {
+          ...draft,
+          text: action.text,
+        }),
         error: null,
       };
     }
@@ -406,7 +406,8 @@ export function useInterview(
 
   const answer = selectedAnswer(state.snapshot);
   const draft = answer ? state.drafts[answer.recording.id] : undefined;
-  const confirmation = state.snapshot?.current?.confirmation ?? null;
+  const confirmation =
+    activeAnswer(state.snapshot?.current)?.confirmation ?? null;
   const confirmed =
     confirmation !== null &&
     answer !== null &&
@@ -425,7 +426,11 @@ export function useInterview(
     (state.snapshot?.recordingId ?? null) !== null ||
     (state.snapshot?.finalizing ?? false);
   const canEdit =
-    answer !== null && !confirmed && !state.confirming && !captureBusy && !locked;
+    answer !== null &&
+    !confirmed &&
+    !state.confirming &&
+    !captureBusy &&
+    !locked;
 
   // O rascunho é alinhado antes de a página ser apresentada: a revisão começa
   // preenchida, sem um instante com o editor vazio.
@@ -462,7 +467,7 @@ export function useInterview(
     if (!selected || !currentDraft || current.confirming || capturing) {
       return;
     }
-    if (current.snapshot?.current?.confirmation) {
+    if (activeAnswer(current.snapshot?.current)?.confirmation) {
       return;
     }
     textRef.current = nextText;
@@ -474,7 +479,10 @@ export function useInterview(
     if (lockedRef.current) {
       return;
     }
-    if (current.confirming || current.snapshot?.current?.confirmation) {
+    if (
+      current.confirming ||
+      activeAnswer(current.snapshot?.current)?.confirmation
+    ) {
       return;
     }
     const selected = selectedAnswer(current.snapshot);
@@ -510,7 +518,7 @@ export function useInterview(
       });
       return "failed";
     }
-    if (current.snapshot?.current?.confirmation) {
+    if (activeAnswer(current.snapshot?.current)?.confirmation) {
       dispatch({
         type: "save-failure",
         error: invalid("A resposta confirmada é apenas de leitura."),
@@ -529,7 +537,10 @@ export function useInterview(
     const { question, recording } = selected;
     const target: AnswerTarget = {
       sessionId: question.sessionId,
-      sessionQuestionId: question.id,
+      sessionQuestionId: current.snapshot?.current?.question.id ?? question.id,
+      ...(current.snapshot?.current?.question.id !== question.id
+        ? { answerId: question.id }
+        : {}),
       recordingId: recording.id,
       selectionVersion: question.selectionVersion,
     };
@@ -603,7 +614,7 @@ export function useInterview(
       });
       return false;
     }
-    if (current.snapshot?.current?.confirmation) {
+    if (activeAnswer(current.snapshot?.current)?.confirmation) {
       return true;
     }
     if (current.confirming) {
@@ -621,7 +632,10 @@ export function useInterview(
     const { question, recording } = selected;
     const target: AnswerTarget = {
       sessionId: question.sessionId,
-      sessionQuestionId: question.id,
+      sessionQuestionId: current.snapshot?.current?.question.id ?? question.id,
+      ...(current.snapshot?.current?.question.id !== question.id
+        ? { answerId: question.id }
+        : {}),
       recordingId: recording.id,
       selectionVersion: question.selectionVersion,
     };

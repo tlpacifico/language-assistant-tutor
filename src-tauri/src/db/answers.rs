@@ -239,7 +239,7 @@ impl Database {
             // uma gravação antiga nunca substitui a seleção mais recente.
             transaction
                 .execute(
-                    "UPDATE session_questions
+                    "UPDATE answer_slots
                         SET selected_recording_id = ?1,
                             selection_version = selection_version + 1
                       WHERE id = ?2
@@ -250,7 +250,7 @@ impl Database {
                         AND ?3 > COALESCE(
                             (SELECT r.ordinal
                                FROM recordings r
-                              WHERE r.id = session_questions.selected_recording_id),
+                              WHERE r.id = answer_slots.selected_recording_id),
                             0)",
                     params![capture.id, recording.session_question_id, recording.ordinal],
                 )
@@ -712,7 +712,7 @@ impl Database {
                 .prepare(
                     "SELECT r.id, sq.session_id, r.session_question_id
                        FROM recordings r
-                       JOIN session_questions sq ON sq.id = r.session_question_id
+                       JOIN answer_slots sq ON sq.id = r.session_question_id
                       WHERE r.state IN ('reserved', 'capturing', 'publish_pending')
                       ORDER BY r.created_at, r.rowid",
                 )
@@ -737,7 +737,7 @@ impl Database {
                 .prepare(
                     "SELECT r.id, sq.session_id, r.session_question_id
                        FROM recordings r
-                       JOIN session_questions sq ON sq.id = r.session_question_id",
+                       JOIN answer_slots sq ON sq.id = r.session_question_id",
                 )
                 .map_err(read_failed)?;
             let mut rows = statement.query([]).map_err(read_failed)?;
@@ -850,6 +850,7 @@ fn load_recording_view(
     let transcripts = load_transcripts(connection, &id)?;
     let review = load_review(connection, &id)?;
     Ok(Some(RecordingView {
+        answer_id: session_question_id.clone(),
         id,
         session_question_id,
         ordinal,
@@ -1014,6 +1015,7 @@ fn stored_confirmation(row: &Row<'_>) -> rusqlite::Result<StoredConfirmationRow>
 impl StoredConfirmationRow {
     fn into_dto(self) -> Result<Confirmation> {
         Ok(Confirmation {
+            answer_id: self.session_question_id.clone(),
             id: self.id,
             session_question_id: self.session_question_id,
             recording_id: self.recording_id,
@@ -1048,7 +1050,7 @@ fn find_answer_question(
                         SELECT 1 FROM confirmations c
                          WHERE c.session_question_id = sq.id
                     ) AS confirmed
-               FROM session_questions sq
+               FROM answer_slots sq
               WHERE sq.id = ?1",
             [session_question_id],
             |row| {
@@ -1086,7 +1088,7 @@ fn find_review_target(
                          WHERE c.session_question_id = sq.id
                     ) AS confirmed,
                     s.version AS session_version
-               FROM session_questions sq
+               FROM answer_slots sq
                JOIN sessions s ON s.id = sq.session_id
               WHERE sq.id = ?1",
             [session_question_id],
@@ -1372,7 +1374,7 @@ fn find_stored_recording(
         .query_row(
             "SELECT sq.session_id, r.session_question_id, r.ordinal, r.state
                FROM recordings r
-               JOIN session_questions sq ON sq.id = r.session_question_id
+               JOIN answer_slots sq ON sq.id = r.session_question_id
               WHERE r.id = ?1",
             [recording_id],
             |row| {

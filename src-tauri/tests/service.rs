@@ -491,6 +491,7 @@ fn selected_recording(
 
 fn answer_target(current: &QuestionDetail) -> AnswerTarget {
     AnswerTarget {
+        answer_id: None,
         session_id: current.question.session_id.clone(),
         session_question_id: current.question.id.clone(),
         recording_id: selected_recording(current).id.clone(),
@@ -678,6 +679,7 @@ impl Harness {
         let snapshot = self
             .service
             .start_session(StartSession {
+                mode: Default::default(),
                 request_id: new_request_id(),
                 category: spec.category,
                 count: spec.count,
@@ -1009,6 +1011,7 @@ async fn database_error_keeps_window_recoverable() {
     // Nenhuma sessão pode ser iniciada como se estivesse guardada.
     let error = service
         .start_session(StartSession {
+            mode: Default::default(),
             request_id: new_request_id(),
             category: None,
             count: 1,
@@ -2825,6 +2828,7 @@ async fn finishing_the_last_question_completes_the_session() {
     let next = harness
         .service
         .start_session(StartSession {
+            mode: Default::default(),
             request_id: new_request_id(),
             category: Some(Category::ProblemSolving),
             count: 1,
@@ -3003,6 +3007,7 @@ async fn only_one_active_session_is_presented() {
     let error = harness
         .service
         .start_session(StartSession {
+            mode: Default::default(),
             request_id: new_request_id(),
             category: Some(Category::ProblemSolving),
             count: 1,

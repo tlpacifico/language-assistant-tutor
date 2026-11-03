@@ -1,3 +1,4 @@
+import FeedbackPanel from "../ai/FeedbackPanel";
 /**
  * Histórico: sessões guiadas, detalhes e treinos da fase 1.
  *
@@ -166,14 +167,12 @@ function QuestionDetailPanel({
         {question.text}
       </p>
       <p className="practice__meta">
-        Categoria: {categoryLabel(question.category)}. Fixada a partir da
-        versão {question.sourceVersion} do banco.
+        Categoria: {categoryLabel(question.category)}. Fixada a partir da versão{" "}
+        {question.sourceVersion} do banco.
       </p>
 
       <section aria-labelledby={`history-recordings-${question.id}`}>
-        <h5 id={`history-recordings-${question.id}`}>
-          Gravações da {label}
-        </h5>
+        <h5 id={`history-recordings-${question.id}`}>Gravações da {label}</h5>
         {recordings.length === 0 ? (
           <p className="practice__hint">Sem gravações guardadas.</p>
         ) : (
@@ -198,7 +197,8 @@ function QuestionDetailPanel({
             recording.transcripts.map((transcript) => (
               <div key={transcript.id} className="practice__field">
                 <p className="practice__meta">
-                  Tomada {recording.ordinal} · {formatMoment(transcript.createdAt)}
+                  Tomada {recording.ordinal} ·{" "}
+                  {formatMoment(transcript.createdAt)}
                 </p>
                 {transcript.status === "no_speech" ? (
                   <p className="practice__hint">
@@ -369,9 +369,7 @@ function LegacyDetailPanel({
       </section>
 
       <section aria-labelledby={`legacy-review-${attempt.id}`}>
-        <h5 id={`legacy-review-${attempt.id}`}>
-          Revisão guardada do treino
-        </h5>
+        <h5 id={`legacy-review-${attempt.id}`}>Revisão guardada do treino</h5>
         {attempt.review ? (
           <>
             <p lang="en">{attempt.review.text}</p>
@@ -614,7 +612,10 @@ export default function History({ client, onResume }: HistoryProps) {
       >
         <h3 id="history-sessions-title">Sessões</h3>
         {sessionsError ? (
-          <div className="practice__notice practice__notice--error" role="alert">
+          <div
+            className="practice__notice practice__notice--error"
+            role="alert"
+          >
             <p>Não foi possível ler o histórico de sessões.</p>
             <p>{sessionsError.message}</p>
             <p className="practice__hint">Código: {sessionsError.code}.</p>
@@ -703,10 +704,42 @@ export default function History({ client, onResume }: HistoryProps) {
                         </div>
                       </div>
                     ) : detail && detail.summary.id === session.id ? (
-                      <SessionDetailView
-                        detail={detail}
-                        onPlay={(recordingId) => void playRecording(recordingId)}
-                      />
+                      <>
+                        {detail.summary.mode === "ai_v3" && (
+                          <FeedbackPanel
+                            client={client}
+                            sessionId={detail.summary.id}
+                          />
+                        )}
+                        <SessionDetailView
+                          detail={detail}
+                          onPlay={(recordingId) =>
+                            void playRecording(recordingId)
+                          }
+                        />
+                        {detail.questions.map((q) =>
+                          q.followUp ? (
+                            <section key={q.question.id}>
+                              <h4>Seguimento de {q.question.text}</h4>
+                              <p>{q.followUp.question.text}</p>
+                              <p>
+                                {q.followUp.confirmation?.text ??
+                                  "Resposta ainda por confirmar"}
+                              </p>
+                              {q.followUp.recordings
+                                .filter((r) => r.state === "ready")
+                                .map((r) => (
+                                  <button
+                                    key={r.id}
+                                    onClick={() => void playRecording(r.id)}
+                                  >
+                                    Ouvir original do seguimento
+                                  </button>
+                                ))}
+                            </section>
+                          ) : null,
+                        )}
+                      </>
                     ) : null
                   ) : null}
                 </li>
@@ -722,11 +755,14 @@ export default function History({ client, onResume }: HistoryProps) {
       >
         <h3 id="history-legacy-title">Treinos da fase 1</h3>
         <p className="practice__hint">
-          Treinos guardados pela versão anterior. A consulta é apenas de
-          leitura e não cria sessões nem confirmações.
+          Treinos guardados pela versão anterior. A consulta é apenas de leitura
+          e não cria sessões nem confirmações.
         </p>
         {legacyError ? (
-          <div className="practice__notice practice__notice--error" role="alert">
+          <div
+            className="practice__notice practice__notice--error"
+            role="alert"
+          >
             <p>Não foi possível ler os treinos anteriores.</p>
             <p>{legacyError.message}</p>
             <p className="practice__hint">Código: {legacyError.code}.</p>

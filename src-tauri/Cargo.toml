@@ -9,6 +9,8 @@ rust-version = "1.99"
 tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
+keyring = { version = "3.6.3", features = ["windows-native"] }
 atomicwrites = "0.4.4"
 cpal = "0.18.2"
 hound = "3.5.1"

@@ -2,7 +2,7 @@
 
 ## Contexto e documentos
 
-Este projeto é um tutor desktop de entrevistas comportamentais em inglês, por voz, baseado na estrutura STAR. O desenvolvimento está organizado em fases; as fases 1 e 2 estão implementadas e verificadas automaticamente, com a validação manual do utilizador ainda pendente. A fase 3 não foi iniciada.
+Este projeto é um tutor desktop de entrevistas comportamentais em inglês, por voz, baseado na estrutura STAR. O desenvolvimento está organizado em fases; as fases 1 e 2 estão implementadas e verificadas automaticamente, com a validação manual do utilizador ainda pendente. A fase 3 foi antecipada por autorização explícita do utilizador em 2026-11-02; implementação e verificação automática não equivalem a aceitação manual.
 
 Antes de trabalhar, consultar os documentos relevantes para a tarefa:
 
@@ -18,6 +18,7 @@ Antes de trabalhar, consultar os documentos relevantes para a tarefa:
 - [Spec da fase 2](docs/superpowers/specs/2026-11-02-phase-2-guided-interview-design.md): entrevistas guiadas, banco de perguntas, confirmação, SQLite e recuperação.
 - [Plano técnico da fase 2](docs/superpowers/plans/2026-11-02-phase-2-guided-interview-implementation.md): dez tarefas, contratos, transações, recuperação e verificações; tarefas 1 a 9 executadas e tarefa 10 parcial (falta a validação manual).
 - [Desenho aprovado](docs/superpowers/specs/2026-11-01-star-interview-tutor-design.md): regras funcionais e técnicas detalhadas.
+- [Spec da fase 3](docs/superpowers/specs/2026-11-02-phase-3-ai-tutor-design.md), [plano](docs/superpowers/plans/2026-11-02-phase-3-ai-tutor-implementation.md), [preparação](docs/phase-3/setup.md) e [validação](docs/phase-3/validation.md): tutor IA, consentimento, credenciais, seguimentos, evidências e recuperação.
 
 As instruções atuais do utilizador têm prioridade. Estes documentos registam as decisões anteriores; mantê-los coerentes quando uma decisão mudar.
 
@@ -83,4 +84,9 @@ A fase 1 **não** está aceite nem concluída no registo de validação: faltam 
 
 A fase 2 está implementada (SQLite com `rusqlite`, banco editável de 20 perguntas, sessões com cópias fixas, artefactos e reconciliação, revisões e confirmações imutáveis, histórico e consulta de leitura dos treinos da fase 1) e a verificação automática está verde: `.\scripts\verify.ps1` com 8/8 checks (151 testes Rust, 53 testes Vitest, 36 testes Python sem a marca `models`, `pip check` limpo), o teste real `-m models` com `2 passed`, o build release `--no-bundle` e o arranque/fecho do binário com código 0. Os dados estão em [docs/phase-2/validation.md](docs/phase-2/validation.md) e [docs/phase-2/setup.md](docs/phase-2/setup.md).
 
-A fase 2 **não** está concluída nem aceite: falta a validação manual descrita na spec §10 e em [docs/phase-2/validation.md](docs/phase-2/validation.md) — sessão real de três perguntas (uma com termos técnicos), audição de perguntas e originais, revisão/confirmação, sair e retomar, histórico, sessão de uma pergunta e outra quantidade, insuficiência numa categoria, edição do banco sem alterar a cópia da sessão, percurso offline pela janela, revisão manual com transcrição indisponível e recuperação de uma falha de escrita. Não marcar a fase como concluída antes dessa validação. A fase 3 (tutor com IA) **não** foi iniciada, e as fases posteriores continuam por planear.
+A fase 2 **não** está concluída nem aceite: falta a validação manual descrita na spec §10 e em [docs/phase-2/validation.md](docs/phase-2/validation.md) — sessão real de três perguntas (uma com termos técnicos), audição de perguntas e originais, revisão/confirmação, sair e retomar, histórico, sessão de uma pergunta e outra quantidade, insuficiência numa categoria, edição do banco sem alterar a cópia da sessão, percurso offline pela janela, revisão manual com transcrição indisponível e recuperação de uma falha de escrita. Não marcar a fase como concluída antes dessa validação. A fase 3 (tutor com IA) foi antecipada por autorização explícita do utilizador e tem implementação e validação registadas em [docs/phase-3/validation.md](docs/phase-3/validation.md); a aceitação manual continua pendente. A fase 4 tem apenas desenho e plano técnico; a fase 5 continua por planear.
+
+A fase 3 tem implementação e verificação automática verde em 2026-11-02: 8/8 checks (175 Rust, 57 Vitest, 36 Python), build release --no-bundle e smoke com dados temporários/saída 0. Ver [validação da fase 3](docs/phase-3/validation.md). Inferência paga, credencial protegida real, áudio real e utilidade semântica continuam por validar. Não marcar a fase como aceite nem iniciar a fase 4 automaticamente.
+
+
+Em 2026-11-03, o utilizador pediu **somente a spec e o plano de implementação da fase 4**: [spec](docs/superpowers/specs/2026-11-03-phase-4-improve-repeat-design.md) e [plano](docs/superpowers/plans/2026-11-03-phase-4-improve-repeat-implementation.md). São documentos para futura implementação; não executar tarefas do plano sem instrução posterior. As aceitações anteriores mantêm o estado registado nas respetivas validações.

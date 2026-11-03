@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "ai-v3-1",
+  "sources": {
+    "question": "Tell me about a time you learned from failure.",
+    "criteria": ["Describe your individual action and learning."],
+    "answers": [
+      {"confirmationId": "confirmed-example", "role": "initial", "text": "I learned to test after a failed deployment."}
+    ]
+  },
+  "followUpDecision": {
+    "schemaVersion": "ai-v3-1",
+    "decision": "ask",
+    "reason": "O efeito concreto não foi identificado no texto.",
+    "missingDimension": "result",
+    "question": "What changed after you started testing earlier?"
+  }
+}

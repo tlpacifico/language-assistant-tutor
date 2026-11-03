@@ -26,6 +26,7 @@ use rusqlite::Connection;
 use crate::domain::{error_code, AppError};
 use crate::interview::Result;
 
+pub(crate) mod ai;
 mod answers;
 mod operations;
 mod questions;
@@ -35,7 +36,7 @@ pub(crate) use answers::PendingRecording;
 pub use questions::*;
 
 /// Versão do esquema escrita em `PRAGMA user_version`.
-pub const DATABASE_VERSION: u32 = 1;
+pub const DATABASE_VERSION: u32 = 2;
 
 /// Esquema inicial da fase 2, aplicado numa única transação.
 pub const MIGRATION_V1: &str = include_str!("migrations/001_guided_interview.sql");
@@ -83,7 +84,36 @@ impl Database {
         configure(&connection)?;
 
         if version < DATABASE_VERSION {
-            migrate(&mut connection, schema)?;
+            connection
+                .execute_batch("PRAGMA foreign_keys=OFF;")
+                .map_err(migration_failed)?;
+            let result = (|| {
+                let tx = connection.transaction().map_err(migration_failed)?;
+                if version == 0 {
+                    tx.execute_batch(schema).map_err(migration_failed)?;
+                }
+                tx.execute_batch(include_str!("migrations/002_ai_tutor.sql"))
+                    .map_err(migration_failed)?;
+                let bad = tx
+                    .prepare("PRAGMA foreign_key_check")
+                    .map_err(migration_failed)?
+                    .exists([])
+                    .map_err(migration_failed)?;
+                if bad {
+                    return Err(AppError::new(
+                        error_code::DATABASE_UNAVAILABLE,
+                        "A migração contém referências inválidas.",
+                        true,
+                    ));
+                }
+                tx.execute_batch("PRAGMA user_version=2;")
+                    .map_err(migration_failed)?;
+                tx.commit().map_err(migration_failed)
+            })();
+            connection
+                .execute_batch("PRAGMA foreign_keys=ON;")
+                .map_err(migration_failed)?;
+            result?;
         }
 
         Ok(Self {
@@ -129,20 +159,6 @@ fn configure(connection: &Connection) -> Result<()> {
              PRAGMA journal_mode = DELETE;",
         )
         .map_err(open_failed)
-}
-
-fn migrate(connection: &mut Connection, schema: &str) -> Result<()> {
-    let transaction = connection.transaction().map_err(migration_failed)?;
-    transaction
-        .execute_batch(schema)
-        .map_err(migration_failed)?;
-    // A versão só é escrita no fim, dentro da mesma transação: uma falha
-    // anterior reverte o esquema, os dados e a versão.
-    transaction
-        .execute_batch(&format!("PRAGMA user_version = {DATABASE_VERSION};"))
-        .map_err(migration_failed)?;
-    transaction.commit().map_err(migration_failed)?;
-    Ok(())
 }
 
 fn open_failed(error: rusqlite::Error) -> AppError {

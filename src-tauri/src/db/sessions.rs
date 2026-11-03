@@ -66,7 +66,11 @@ impl Database {
         if request_id.is_empty() {
             return Err(invalid_request());
         }
-        let payload_hash = start_payload_hash(request.category, request.count)?;
+        let payload_hash = if request.mode == SessionMode::LocalV2 {
+            start_payload_hash(request.category, request.count)?
+        } else {
+            request_hash(&(request.category, request.count, request.mode))?
+        };
         let now = utc_now();
 
         self.with_connection(|connection| {
@@ -96,6 +100,12 @@ impl Database {
                 request.count,
                 &now,
             )?;
+            transaction
+                .execute(
+                    "UPDATE sessions SET mode=?2 WHERE id=?1",
+                    params![session_id, request.mode.as_str()],
+                )
+                .map_err(write_failed)?;
             for (index, source) in drawn.iter().enumerate() {
                 let position = u32::try_from(index + 1)
                     .map_err(|_| read_corrupt("posição da pergunta fora do intervalo"))?;
@@ -206,6 +216,7 @@ impl Database {
                 return Err(stale_progress());
             }
 
+            super::ai::require_advance(&transaction, &request.session_question_id)?;
             let last = progress.position == progress.question_count;
             if last {
                 // Terminar exige todas as perguntas confirmadas, não só a atual.
@@ -491,7 +502,11 @@ fn load_detail(connection: &Connection, session_id: &str) -> Result<Option<Sessi
         let question = session_question(row)?;
         let recordings = super::answers::load_recordings(connection, &question.id)?;
         let confirmation = load_confirmation(connection, &question.id)?;
+        let (follow_up, follow_up_stage) = super::ai::load_follow_up(connection, &question)?;
         questions.push(QuestionDetail {
+            initial_answer_id: question.id.clone(),
+            follow_up,
+            follow_up_stage,
             question,
             recordings,
             confirmation,
@@ -549,6 +564,7 @@ fn summary(row: &Row<'_>) -> Result<SessionSummary> {
     let mode: String = row.get("mode").map_err(read_failed)?;
     let mode = match mode.as_str() {
         "local_v2" => SessionMode::LocalV2,
+        "ai_v3" => SessionMode::AiV3,
         other => {
             return Err(read_corrupt(&format!(
                 "modo de sessão desconhecido «{other}»"

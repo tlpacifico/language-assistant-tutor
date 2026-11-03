@@ -111,7 +111,7 @@ fn expect_trigger_refusal(result: rusqlite::Result<usize>, context: &str) {
 }
 
 #[test]
-fn fresh_database_has_version_one() {
+fn fresh_database_has_version_two() {
     let (_directory, path) = temp_database_path();
     let database = Database::open(path.clone()).expect("uma base nova deve abrir");
 
@@ -201,7 +201,7 @@ fn fresh_database_has_version_one() {
         .expect("ler o esquema criado");
 
     assert_eq!(report.0, i64::from(DATABASE_VERSION));
-    assert_eq!(report.0, 1, "a migração deve fixar user_version = 1");
+    assert_eq!(report.0, 2, "a migração deve fixar user_version = 2");
     assert_eq!(report.1, 1, "foreign_keys deve ficar ativo");
     assert_eq!(report.2, 3000, "busy_timeout deve ser 3000 ms");
     assert_eq!(report.3, 2, "synchronous deve ser FULL (2)");
@@ -223,6 +223,13 @@ fn fresh_database_has_version_one() {
     assert_eq!(
         report.7,
         vec![
+            "ai_attempts",
+            "ai_receipts",
+            "ai_reports",
+            "ai_requests",
+            "ai_settings",
+            "ai_stages",
+            "answer_slots",
             "command_receipts",
             "confirmations",
             "content_seeds",
@@ -234,7 +241,7 @@ fn fresh_database_has_version_one() {
             "sessions",
             "transcripts",
         ],
-        "as dez tabelas da fase 2 devem existir, sem tabelas de fases futuras"
+        "as tabelas das fases 2 e 3 devem existir"
     );
     assert_eq!(
         report.9, 1,

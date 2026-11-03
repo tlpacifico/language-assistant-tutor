@@ -1,3 +1,6 @@
+import { activeAnswer } from "../../lib/interview-contracts";
+import AiStep from "../ai/AiStep";
+import FeedbackPanel from "../ai/FeedbackPanel";
 /**
  * Ecrã da entrevista guiada: pergunta, captura, revisão, confirmação e avanço.
  *
@@ -151,7 +154,7 @@ export default function Interview({
   );
 
   const session = snapshot.activeSession;
-  const current = snapshot.current;
+  const current = activeAnswer(snapshot.current);
   const answer = selectedAnswer(snapshot);
   const question = current?.question ?? null;
   const confirmation = current?.confirmation ?? null;
@@ -254,7 +257,7 @@ export default function Interview({
       const next = await client.advanceSession({
         requestId,
         sessionId,
-        sessionQuestionId: question.id,
+        sessionQuestionId: snapshot.current?.question.id ?? question.id,
         expectedSessionVersion: session.version,
       });
       advanceIntention.current = null;
@@ -277,13 +280,24 @@ export default function Interview({
       <section className="practice__page" aria-labelledby="interview-title">
         <h2 id="interview-title">Entrevista</h2>
         {finishedSession ? (
-          <SessionSummaryPanel detail={finishedSession} />
+          <>
+            <SessionSummaryPanel detail={finishedSession} />
+            {finishedSession.summary.mode === "ai_v3" && (
+              <FeedbackPanel
+                client={client}
+                sessionId={finishedSession.summary.id}
+              />
+            )}
+          </>
         ) : summaryLoading ? (
           <p className="practice__hint" role="status">
             A carregar o resumo da sessão…
           </p>
         ) : summaryError && finishedSessionId ? (
-          <div className="practice__notice practice__notice--error" role="alert">
+          <div
+            className="practice__notice practice__notice--error"
+            role="alert"
+          >
             <p>Não foi possível ler o resumo da sessão concluída.</p>
             <p>{summaryError.message}</p>
             <p className="practice__hint">Código: {summaryError.code}.</p>
@@ -341,6 +355,29 @@ export default function Interview({
   return (
     <section className="practice__page" aria-labelledby="interview-title">
       <h2 id="interview-title">Entrevista</h2>
+      <AiStep client={client} snapshot={snapshot} onSnapshot={onSnapshot} />
+      {snapshot.current?.followUp && (
+        <section className="practice__panel">
+          <h3>Resposta inicial confirmada</h3>
+          <p>{snapshot.current.confirmation?.text}</p>
+          {snapshot.current.recordings
+            .filter((r) => r.state === "ready")
+            .map((r) => (
+              <button
+                key={r.id}
+                disabled={captureBusy}
+                onClick={() =>
+                  void run(() =>
+                    client.playAudio({ type: "recording", recordingId: r.id }),
+                  )
+                }
+              >
+                Ouvir original da resposta inicial
+              </button>
+            ))}
+        </section>
+      )}
+      {snapshot.current?.followUp && <p>Seguimento da pergunta principal</p>}
       <p className="practice__state">
         Pergunta {session.position} de {session.count}
       </p>
@@ -368,11 +405,20 @@ export default function Interview({
           onClick={() =>
             question &&
             void run(() =>
-              client.playAudio({
-                type: "question",
-                sessionId: session.id,
-                sessionQuestionId: question.id,
-              }),
+              client.playAudio(
+                snapshot.current?.question.id !== question.id
+                  ? {
+                      type: "follow_up",
+                      sessionId: session.id,
+                      sessionQuestionId: snapshot.current!.question.id,
+                      answerId: question.id,
+                    }
+                  : {
+                      type: "question",
+                      sessionId: session.id,
+                      sessionQuestionId: question.id,
+                    },
+              ),
             )
           }
           disabled={!question || !canUseAudio}
@@ -427,11 +473,7 @@ export default function Interview({
               Terminar gravação
             </button>
           ) : confirmation === null ? (
-            <button
-              type="button"
-              onClick={requestRecord}
-              disabled={!canRecord}
-            >
+            <button type="button" onClick={requestRecord} disabled={!canRecord}>
               {recordings.length > 0 ? "Gravar novamente" : "Iniciar gravação"}
             </button>
           ) : null}
@@ -554,9 +596,7 @@ export default function Interview({
                 role="alert"
               >
                 <p>{review.error.message}</p>
-                <p className="practice__hint">
-                  Código: {review.error.code}.
-                </p>
+                <p className="practice__hint">Código: {review.error.code}.</p>
               </div>
             ) : null}
 
@@ -639,9 +679,7 @@ export default function Interview({
             {errors.map((error) => (
               <li key={errorKey(error)} role="alert">
                 <p>{error.message}</p>
-                <p className="practice__hint">
-                  Código: {error.code}.
-                </p>
+                <p className="practice__hint">Código: {error.code}.</p>
               </li>
             ))}
           </ul>
@@ -665,7 +703,8 @@ function RecordingItem({
   onPlay: () => void;
   onRetry: () => void;
 }) {
-  const retryable = take.state === "reserved" || take.state === "publish_pending";
+  const retryable =
+    take.state === "reserved" || take.state === "publish_pending";
   return (
     <li className="practice__item">
       <p className="practice__meta">Tomada {take.ordinal}</p>

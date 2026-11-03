@@ -21,7 +21,9 @@
       "position": 2,
       "text": "Describe a time you helped a team work together more effectively.",
       "category": "conflict_collaboration",
-      "competencies": ["Colaboração"],
+      "competencies": [
+        "Colaboração"
+      ],
       "criteria": [
         "Identificar o obstáculo e a contribuição individual.",
         "Contexto: situação e responsabilidade individual.",
@@ -78,10 +80,14 @@
           "version": 1,
           "savedAt": "2026-11-02T09:20:00Z"
         },
-        "warnings": []
+        "warnings": [],
+        "answerId": "b2a7c4d8-1e3f-4a5b-8c6d-7e9f0a1b2c3d"
       }
     ],
-    "confirmation": null
+    "confirmation": null,
+    "followUp": null,
+    "followUpStage": null,
+    "initialAnswerId": "b2a7c4d8-1e3f-4a5b-8c6d-7e9f0a1b2c3d"
   },
   "confirmation": {
     "id": "f6a7b8c9-d0e1-4f2a-9b3c-4d5e6f708192",
@@ -91,7 +97,8 @@
     "sourceTranscriptId": "b8c9d0e1-f2a3-4b4c-9d5e-6f7a8b9c0d1e",
     "origin": "automatic",
     "text": "I disagreed about the release checklist and we agreed on a fix.",
-    "confirmedAt": "2026-11-02T09:09:00Z"
+    "confirmedAt": "2026-11-02T09:09:00Z",
+    "answerId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
   },
   "pendingOperation": {
     "sessionId": "3f0c9d1a-5b7e-4c2a-9d31-8a6e0f4b2c11",
@@ -99,7 +106,8 @@
     "recordingId": "d4e5f6a7-b8c9-4d0e-9f1a-2b3c4d5e6f70",
     "selectionVersion": 1,
     "operationId": "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d",
-    "workerGeneration": 3
+    "workerGeneration": 3,
+    "answerId": null
   },
   "modelJob": {
     "id": "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d",
@@ -111,7 +119,8 @@
       "recordingId": "d4e5f6a7-b8c9-4d0e-9f1a-2b3c4d5e6f70",
       "selectionVersion": 1,
       "operationId": "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d",
-      "workerGeneration": 3
+      "workerGeneration": 3,
+      "answerId": null
     }
   },
   "snapshot": {
@@ -143,6 +152,9 @@
     "modelJob": null,
     "playback": null,
     "warnings": [],
-    "lastError": null
+    "lastError": null,
+    "aiJob": null,
+    "pendingAiPublication": null,
+    "currentAnswer": null
   }
 }

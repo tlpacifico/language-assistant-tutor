@@ -97,6 +97,8 @@ pub struct Question {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartSession {
+    #[serde(default)]
+    pub mode: SessionMode,
     pub request_id: Id,
     pub category: Option<Category>,
     pub count: u32,
@@ -122,14 +124,18 @@ impl SessionStatus {
 /// Modo de realização da sessão. As sessões da fase 1 não pertencem a este modo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SessionMode {
+    #[default]
     LocalV2,
+    AiV3,
 }
 
 impl SessionMode {
     pub const fn as_str(self) -> &'static str {
         match self {
             SessionMode::LocalV2 => "local_v2",
+            SessionMode::AiV3 => "ai_v3",
         }
     }
 }
@@ -174,6 +180,8 @@ pub struct SessionQuestion {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnswerTarget {
+    #[serde(default)]
+    pub answer_id: Option<Id>,
     pub session_id: Id,
     pub session_question_id: Id,
     pub recording_id: Id,
@@ -241,6 +249,7 @@ pub struct ConfirmAnswer {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Confirmation {
+    pub answer_id: Id,
     pub id: Id,
     pub session_question_id: Id,
     pub recording_id: Id,
@@ -268,6 +277,14 @@ pub struct AdvanceSession {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AudioSelection {
+    FollowUp {
+        #[serde(rename = "sessionId")]
+        session_id: Id,
+        #[serde(rename = "sessionQuestionId")]
+        session_question_id: Id,
+        #[serde(rename = "answerId")]
+        answer_id: Id,
+    },
     Question {
         #[serde(rename = "sessionId")]
         session_id: Id,
@@ -311,6 +328,7 @@ impl RecordingState {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingView {
+    pub answer_id: Id,
     pub id: Id,
     pub session_question_id: Id,
     pub ordinal: u32,
@@ -327,6 +345,9 @@ pub struct RecordingView {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuestionDetail {
+    pub follow_up: Option<Box<QuestionDetail>>,
+    pub follow_up_stage: Option<String>,
+    pub initial_answer_id: Id,
     pub question: SessionQuestion,
     pub recordings: Vec<RecordingView>,
     pub confirmation: Option<Confirmation>,
@@ -344,6 +365,8 @@ pub struct SessionDetail {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationTarget {
+    #[serde(default)]
+    pub answer_id: Option<Id>,
     pub session_id: Id,
     pub session_question_id: Id,
     pub recording_id: Option<Id>,
@@ -386,6 +409,9 @@ pub struct ModelJobView {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InterviewSnapshot {
+    pub current_answer: Option<AnswerSlot>,
+    pub ai_job: Option<crate::ai::AiJobView>,
+    pub pending_ai_publication: Option<Id>,
     /// Revisão monotónica em memória; não substitui as versões persistidas.
     pub revision: u64,
     pub database: DatabaseState,
@@ -490,4 +516,25 @@ fn normalize_list(values: Vec<String>, empty_message: &str) -> Result<Vec<String
 
 fn invalid_input(message: &str) -> AppError {
     AppError::new(error_code::INVALID_INPUT, message, false)
+}
+
+impl QuestionDetail {
+    pub fn active(&self) -> &QuestionDetail {
+        if self.confirmation.is_some() {
+            self.follow_up.as_deref().unwrap_or(self)
+        } else {
+            self
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnswerSlot {
+    pub id: Id,
+    pub session_question_id: Id,
+    pub role: String,
+    pub text: String,
+    pub selected_recording_id: Option<Id>,
+    pub selection_version: Version,
 }

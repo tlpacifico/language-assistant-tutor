@@ -71,6 +71,7 @@ use crate::worker::{
     WorkerPort, WorkerRequest, WorkerResult,
 };
 
+mod ai;
 mod interview;
 
 /// Pasta da cache de voz da pergunta, dentro de `phase1`.
@@ -179,6 +180,8 @@ struct PendingPublication {
 /// reler a sessão guardada. A geração do auxiliar e o pedido pendente são
 /// internos e não serializam.
 struct InterviewState {
+    ai_job: Option<crate::ai::AiJobView>,
+    pending_ai_publication: Option<Id>,
     revision: u64,
     database: DatabaseState,
     database_error: Option<AppError>,
@@ -202,6 +205,8 @@ impl InterviewState {
     fn initial() -> Self {
         Self {
             revision: 0,
+            ai_job: None,
+            pending_ai_publication: None,
             database: DatabaseState::Opening,
             database_error: None,
             active_session: None,
@@ -280,6 +285,24 @@ impl InterviewState {
     /// Fotografia do estado observável pela interface.
     fn snapshot(&self) -> InterviewSnapshot {
         InterviewSnapshot {
+            current_answer: self.current.as_ref().map(|q| {
+                let a = q.active();
+                crate::interview::AnswerSlot {
+                    id: a.question.id.clone(),
+                    session_question_id: q.question.id.clone(),
+                    role: if a.question.id == q.question.id {
+                        "initial"
+                    } else {
+                        "follow_up"
+                    }
+                    .into(),
+                    text: a.question.text.clone(),
+                    selected_recording_id: a.question.selected_recording_id.clone(),
+                    selection_version: a.question.selection_version,
+                }
+            }),
+            ai_job: self.ai_job.clone(),
+            pending_ai_publication: self.pending_ai_publication.clone(),
             revision: self.revision,
             database: self.database,
             active_session: self.active_session.clone(),
@@ -288,7 +311,15 @@ impl InterviewState {
             recording_id: self.recording_id.clone(),
             pending_recording_id: self.pending_recording_id.clone(),
             finalizing: self.finalizing,
-            model_job: self.model_job.clone(),
+            model_job: self.model_job.clone().map(|mut j| {
+                j.target.answer_id = Some(j.target.session_question_id.clone());
+                if let Some(q) = &self.current {
+                    if q.active().question.id == j.target.session_question_id {
+                        j.target.session_question_id = q.question.id.clone();
+                    }
+                }
+                j
+            }),
             playback: self.playback,
             warnings: self.warnings.clone(),
             last_error: self.last_error.clone(),
@@ -298,6 +329,10 @@ impl InterviewState {
 
 /// Serviço da fase 2: coordena sessões, captura, SQLite, auxiliar e reprodução.
 pub struct AppService {
+    ai_transport: Arc<dyn crate::ai::AiTransport>,
+    credentials: Arc<dyn crate::ai::CredentialStore>,
+    ai_runtime: Mutex<ai::AiRuntime>,
+    ai_closed: std::sync::atomic::AtomicBool,
     database_path: PathBuf,
     legacy_root: PathBuf,
     artifacts: ArtifactStore,
@@ -337,6 +372,10 @@ impl AppService {
         models_manifest: Option<PathBuf>,
     ) -> Self {
         Self {
+            ai_transport: Arc::new(crate::ai::HttpTransport),
+            credentials: Arc::new(crate::ai::WindowsCredentialStore),
+            ai_runtime: Mutex::new(ai::AiRuntime::default()),
+            ai_closed: std::sync::atomic::AtomicBool::new(false),
             database_path: paths.database,
             legacy_root: paths.legacy,
             artifacts,
@@ -404,6 +443,7 @@ impl AppService {
         let artifacts = self.artifacts.clone();
         let opened = database_task(move || {
             let database = Database::open(path)?;
+            database.recover_ai()?;
             let report = crate::artifacts::reconcile(&database, &artifacts)?;
             let mut active = database.active_session()?;
             if let Some(detail) = active.as_mut() {
@@ -775,6 +815,10 @@ impl AppService {
             }
         }
 
+        if let Ok(db) = self.database() {
+            database_task(move || db.recover_ai()).await?;
+        }
+        self.ai_closed.store(true, Ordering::SeqCst);
         // Nenhum resultado tardio pode voltar a ser aplicado a partir daqui. Um
         // trabalho em curso fica `interrupted` na base, recuperável no arranque.
         self.abandon_model_operation(None).await;
@@ -977,6 +1021,7 @@ impl AppService {
                     let request = SaveReview {
                         request_id: uuid::Uuid::new_v4().to_string(),
                         target: AnswerTarget {
+                            answer_id: None,
                             session_id: target.session_id.clone(),
                             session_question_id: target.session_question_id.clone(),
                             recording_id: recording_id.clone(),
