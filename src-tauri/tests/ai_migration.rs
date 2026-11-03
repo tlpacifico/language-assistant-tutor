@@ -20,7 +20,7 @@ fn populated_v1_migrates_without_loss() {
     std::fs::write(dir.path().join("original.wav"), b"unchanged audio").unwrap();
     drop(c);
     let db = Database::open(path).unwrap();
-    assert_eq!(DATABASE_VERSION, 2);
+    assert_eq!(DATABASE_VERSION, 3);
     db.with_connection(|c| {
         let n: i64 = c
             .query_row(
@@ -59,15 +59,15 @@ fn populated_v1_migrates_without_loss() {
     db.with_connection(|c| {
         assert!(c
             .execute(
-                "INSERT INTO answer_slots VALUES ('bad','a','s2','follow_up','Follow?',NULL,0)",
+                "INSERT INTO answer_slots VALUES ('bad','a','s2','follow_up','Follow?',NULL,0,NULL)",
                 []
             )
             .is_err());
         assert!(c
             .execute("UPDATE confirmations SET text='changed' WHERE id='c'", [])
             .is_err());
-        c.execute("INSERT INTO answer_slots VALUES ('follow','a','s','follow_up','What did you learn?',NULL,0)",[]).unwrap();
-        assert!(c.execute("INSERT INTO answer_slots VALUES ('follow2','a','s','follow_up','Another?',NULL,0)",[]).is_err());
+        c.execute("INSERT INTO answer_slots VALUES ('follow','a','s','follow_up','What did you learn?',NULL,0,NULL)",[]).unwrap();
+        assert!(c.execute("INSERT INTO answer_slots VALUES ('follow2','a','s','follow_up','Another?',NULL,0,NULL)",[]).is_err());
         assert!(c.execute("UPDATE answer_slots SET selected_recording_id='r',selection_version=1 WHERE id='follow'",[]).is_err());
         let count: i64 = c
             .query_row(

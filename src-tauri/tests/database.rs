@@ -201,7 +201,7 @@ fn fresh_database_has_version_two() {
         .expect("ler o esquema criado");
 
     assert_eq!(report.0, i64::from(DATABASE_VERSION));
-    assert_eq!(report.0, 2, "a migração deve fixar user_version = 2");
+    assert_eq!(report.0, 3, "a migração deve fixar user_version = 3");
     assert_eq!(report.1, 1, "foreign_keys deve ficar ativo");
     assert_eq!(report.2, 3000, "busy_timeout deve ser 3000 ms");
     assert_eq!(report.3, 2, "synchronous deve ser FULL (2)");
@@ -233,15 +233,25 @@ fn fresh_database_has_version_two() {
             "command_receipts",
             "confirmations",
             "content_seeds",
+            "evaluation_families",
             "operations",
+            "practice_preferences",
+            "practice_reports",
+            "practices",
+            "preparation_captures",
+            "preparations",
             "questions",
             "recordings",
             "reviews",
+            "rewrite_audio",
+            "rewrites",
             "session_questions",
             "sessions",
+            "stories",
+            "story_versions",
             "transcripts",
         ],
-        "as tabelas das fases 2 e 3 devem existir"
+        "as tabelas das fases 2, 3 e 4 devem existir"
     );
     assert_eq!(
         report.9, 1,
