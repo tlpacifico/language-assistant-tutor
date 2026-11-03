@@ -32,7 +32,7 @@ use hound::{SampleFormat, WavReader};
 use crate::audio::{
     capture_interrupted, normalize_wav, CapturedAudio, RecordingTarget, ORIGINAL_FILE,
 };
-use crate::db::{Database, PendingRecording};
+use crate::db::{Database, PendingRecording, RewriteAudioState};
 use crate::domain::{error_code, AppError, CaptureMeta};
 use crate::interview::{Id, RecordingState, RecordingView, RecoveryReport, Result, SessionDetail};
 
@@ -470,6 +470,60 @@ pub fn reconcile(database: &Database, artifacts: &ArtifactStore) -> Result<Recov
 
     report.interrupted_operations = database.interrupt_running_operations()?;
     Ok(report)
+}
+
+/// Reconcilia os derivados de voz das reformulações com o disco.
+///
+/// Um derivado `ready` ou `pending` cujo ficheiro está em falta, incompleto ou
+/// com caminho inválido passa a `failed` e gera um aviso (o texto guardado da
+/// reformulação não muda e a síntese repete-se localmente, sem API). Um
+/// derivado válido passa a `ready`. Nunca elimina ficheiros.
+pub fn reconcile_rewrite_audio(database: &Database, root: &Path) -> Result<Vec<AppError>> {
+    let store = ArtifactStore::new(root.to_path_buf());
+    let mut warnings = Vec::new();
+    for row in database.list_rewrite_audio()? {
+        let was_ready = row.state == RewriteAudioState::Ready;
+        let problem = match store.resolve(&row.relative_file) {
+            Err(_) => Some(format!(
+                "A referência guardada para a voz da reformulação {} não é válida; o ficheiro não é lido.",
+                row.rewrite_id
+            )),
+            Ok(path) if !path.is_file() => was_ready.then(|| {
+                format!(
+                    "O áudio da sugestão {} não foi encontrado em {}; o texto continua guardado e a voz pode ser gerada de novo.",
+                    row.rewrite_id,
+                    path.display()
+                )
+            }),
+            Ok(path) => match inspect_file(&path) {
+                Ok(_) => {
+                    if row.state != RewriteAudioState::Ready {
+                        database.set_rewrite_audio_state(
+                            &row.rewrite_id,
+                            &row.config_hash,
+                            RewriteAudioState::Ready,
+                        )?;
+                    }
+                    continue;
+                }
+                Err(_) => Some(format!(
+                    "O áudio da sugestão {} está incompleto ou ilegível; foi conservado sem alterações e a voz pode ser gerada de novo.",
+                    row.rewrite_id
+                )),
+            },
+        };
+        if row.state != RewriteAudioState::Failed {
+            database.set_rewrite_audio_state(
+                &row.rewrite_id,
+                &row.config_hash,
+                RewriteAudioState::Failed,
+            )?;
+        }
+        if let Some(message) = problem {
+            warnings.push(artifact_missing(message));
+        }
+    }
+    Ok(warnings)
 }
 
 /// Marcador de arranque da captura de preparação, escrito por substituição atómica.

@@ -828,6 +828,7 @@ r.schema_version
  FROM ai_attempts a
  JOIN ai_requests r ON r.id=a.request_id
  WHERE r.session_id=?1
+ AND r.purpose IN ('follow_up','feedback')
  ORDER BY a.rowid",
                 )
                 .map_err(sql_error)?;

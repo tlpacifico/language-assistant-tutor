@@ -19,10 +19,11 @@ use crate::interview::{
     Question, QuestionInput, SaveReview, SessionDetail, SessionSummary, StartSession, Version,
 };
 use crate::practice::{
-    CaptureOwner, ConfirmPracticeAnswer, CreatePractice, CreateStory, EvaluatePractice,
-    PracticeAnswerTarget, PracticeCommand, PracticeDetail, PracticeReportView, PreparationDecision,
-    ResponseOrigin, RewriteCommand, RewritePreference, RewriteView, SavePracticeReview,
-    SelectStory, SetRewriteLevel, StoryView, UpdateStory,
+    CaptureOwner, ComparisonRequest, ComparisonView, ConfirmPracticeAnswer, CreatePractice,
+    CreateStory, EvaluatePractice, PracticeAnswerTarget, PracticeCommand, PracticeDetail,
+    PracticeReportView, PreparationDecision, ResponseOrigin, RewriteCommand, RewritePreference,
+    RewriteView, SavePracticeReview, SelectStory, SetRewriteLevel, StoryView, TrainingUsageView,
+    UpdateStory,
 };
 use crate::service::AppService;
 
@@ -457,6 +458,24 @@ pub async fn interview_load_practice_report(
     service: State<'_, Arc<AppService>>,
 ) -> std::result::Result<PracticeReportView, AppError> {
     service.load_practice_report(practice_id).await
+}
+
+/// Compara duas respostas confirmadas da mesma pergunta (só leitura local).
+#[tauri::command]
+pub async fn interview_compare_responses(
+    request: ComparisonRequest,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<ComparisonView, AppError> {
+    service.compare_responses(request).await
+}
+
+/// Consumo de treino de uma sessão: entrevista original, prática e combinado.
+#[tauri::command]
+pub async fn interview_load_training_usage(
+    session_id: Id,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<TrainingUsageView, AppError> {
+    service.load_training_usage(session_id).await
 }
 
 /// Preferência local de nível de reformulação.

@@ -17,10 +17,11 @@ use super::*;
 use crate::db::{CommandIdentity, CommandIdentityLocation};
 use crate::interview::{AnswerTarget, SaveReview, Version};
 use crate::practice::{
-    CaptureOwner, ConfirmPracticeAnswer, CreatePractice, CreateStory, EvaluatePractice,
-    PracticeAnswerTarget, PracticeCommand, PracticeDetail, PracticeReportView, PreparationDecision,
-    ReportState, ResolvedAnswer, ResponseOrigin, RewriteCommand, RewritePreference, RewriteView,
-    SavePracticeReview, SelectStory, SetRewriteLevel, StoryView, UpdateStory,
+    CaptureOwner, ComparisonRequest, ComparisonView, ConfirmPracticeAnswer, CreatePractice,
+    CreateStory, EvaluatePractice, PracticeAnswerTarget, PracticeCommand, PracticeDetail,
+    PracticeReportView, PreparationDecision, ReportState, ResolvedAnswer, ResponseOrigin,
+    RewriteCommand, RewritePreference, RewriteView, SavePracticeReview, SelectStory,
+    SetRewriteLevel, StoryView, TrainingUsageView, UpdateStory,
 };
 
 impl AppService {
@@ -701,6 +702,40 @@ impl AppService {
         let database = self.database()?;
         let db = database.clone();
         database_task(move || db.load_practice_report(&practice_id)).await
+    }
+
+    /// Compara localmente duas respostas confirmadas da mesma pergunta.
+    ///
+    /// Só lê dados guardados: nunca cria avaliações nem chama a API. Os avisos
+    /// de ficheiros em falta das gravações dependem do disco e são acrescentados
+    /// à cópia devolvida.
+    pub async fn compare_responses(
+        &self,
+        request: ComparisonRequest,
+    ) -> Result<ComparisonView, AppError> {
+        let database = self.database()?;
+        let db = database.clone();
+        let mut view = database_task(move || db.compare_responses(&request)).await?;
+        let artifacts = self.artifacts.clone();
+        storage_task(move || {
+            for entry in [&mut view.left, &mut view.right] {
+                for answer in &mut entry.answers {
+                    for recording in &mut answer.recordings {
+                        recording.warnings = artifacts.warnings(recording);
+                    }
+                }
+            }
+            Ok(view)
+        })
+        .await
+    }
+
+    /// Consumo de treino de uma sessão, separado entre entrevista original e
+    /// prática posterior. Só lê dados guardados.
+    pub async fn load_training_usage(&self, session_id: Id) -> Result<TrainingUsageView, AppError> {
+        let database = self.database()?;
+        let db = database.clone();
+        database_task(move || db.load_training_usage(&session_id)).await
     }
 
     /// Preferência local de nível, com B1 por omissão.

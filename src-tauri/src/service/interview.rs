@@ -984,6 +984,136 @@ impl AppService {
             } => self.play_question(session_id, session_question_id).await,
             AudioSelection::Recording { recording_id } => self.play_recording(recording_id).await,
             AudioSelection::Legacy { attempt_id } => self.play_legacy(attempt_id).await,
+            AudioSelection::Rewrite { rewrite_id } => self.play_rewrite(rewrite_id).await,
+            AudioSelection::PracticeQuestion { practice_id } => {
+                let database = self.database()?;
+                let db = database.clone();
+                let practice = match database_task(move || db.load_practice(&practice_id)).await {
+                    Ok(practice) => practice,
+                    Err(error) => {
+                        self.record_error(&error);
+                        return Err(error);
+                    }
+                };
+                self.play_question(practice.source_session_id, practice.session_question_id)
+                    .await
+            }
+        }
+    }
+
+    /// Reproduz a voz de uma reformulação guardada.
+    ///
+    /// A única fonte do áudio é `rewrites.spoken_text` (a união dos segmentos
+    /// validados): explicações, alterações e lacunas nunca vão ao Kokoro. O
+    /// derivado vive em `rewrite-cache/<rewriteId>/<hash>.wav` e é indexado em
+    /// `rewrite_audio`; um ficheiro em falta ou uma síntese falhada repetem só
+    /// o trabalho local, nunca um pedido à API.
+    async fn play_rewrite(&self, rewrite_id: Id) -> Result<InterviewSnapshot, AppError> {
+        let database = self.database()?;
+        let db = database.clone();
+        let id = rewrite_id.clone();
+        let voice = match database_task(move || db.load_rewrite_voice(&id)).await {
+            Ok(voice) => voice,
+            Err(error) => {
+                self.record_error(&error);
+                return Err(error);
+            }
+        };
+
+        let config_hash = synthesis_cache_key(&voice.spoken_text);
+        let relative = format!("{REWRITE_CACHE_DIR}/{}/{config_hash}.wav", voice.rewrite_id);
+        let store = ArtifactStore::new(self.legacy_root.clone());
+        let reference = relative.clone();
+        let path = match storage_task(move || store.resolve(&reference)).await {
+            Ok(path) => path,
+            Err(error) => {
+                self.record_error(&error);
+                return Err(error);
+            }
+        };
+        let row = RewriteAudioRow {
+            rewrite_id: voice.rewrite_id.clone(),
+            config_hash: config_hash.clone(),
+            relative_file: relative,
+            text_hash: text_digest(&voice.spoken_text),
+            voice: SYNTHESIS_VOICE.to_owned(),
+            speed: f64::from(SYNTHESIS_SPEED),
+            state: RewriteAudioState::Pending,
+        };
+
+        if path.is_file() {
+            let candidate = path.clone();
+            match storage_task(move || validate_synthesis_wav(&candidate)).await {
+                Ok(()) => {
+                    let ready = RewriteAudioRow {
+                        state: RewriteAudioState::Ready,
+                        ..row
+                    };
+                    let db = database.clone();
+                    if let Err(error) = database_task(move || db.record_rewrite_audio(&ready)).await
+                    {
+                        self.record_error(&error);
+                    }
+                    return self.play_path(PlaybackTarget::Response, path).await;
+                }
+                // Um derivado inválido nunca é reproduzido: volta a sintetizar-se.
+                Err(_) => {
+                    let _ = fs::remove_file(&path);
+                }
+            }
+        }
+
+        // O texto já está guardado; o índice passa a `pending` antes da síntese.
+        let db = database.clone();
+        let pending = row.clone();
+        if let Err(error) = database_task(move || db.record_rewrite_audio(&pending)).await {
+            self.record_error(&error);
+            return Err(error);
+        }
+        let question = match self
+            .find_session_question(&database, &voice.session_id, &voice.session_question_id)
+            .await
+        {
+            Ok(question) => question,
+            Err(error) => {
+                self.fail_rewrite_audio(&database, &row).await;
+                return Err(error);
+            }
+        };
+        let key = RewriteAudioKey {
+            rewrite_id: voice.rewrite_id,
+            config_hash,
+        };
+        match self
+            .start_synthesis(
+                &database,
+                question,
+                voice.spoken_text,
+                path,
+                PlaybackTarget::Response,
+                Some(key),
+            )
+            .await
+        {
+            Ok(snapshot) => Ok(snapshot),
+            Err(error) => {
+                self.fail_rewrite_audio(&database, &row).await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Marca o derivado como `failed` sem apagar o texto nem tocar na rede.
+    async fn fail_rewrite_audio(&self, database: &Database, row: &RewriteAudioRow) {
+        let db = database.clone();
+        let rewrite_id = row.rewrite_id.clone();
+        let config_hash = row.config_hash.clone();
+        if let Err(error) = database_task(move || {
+            db.set_rewrite_audio_state(&rewrite_id, &config_hash, RewriteAudioState::Failed)
+        })
+        .await
+        {
+            self.record_error(&error);
         }
     }
 
@@ -1008,7 +1138,31 @@ impl AppService {
                 }
             }
         }
+        let text = question.text.clone();
+        self.start_synthesis(
+            &database,
+            question,
+            text,
+            cache,
+            PlaybackTarget::Question,
+            None,
+        )
+        .await
+    }
 
+    /// Pede ao auxiliar a síntese de `text` para `cache`, registando a operação.
+    ///
+    /// O resultado só é aceite para este pedido e ficheiro (ver `apply_synthesis`).
+    async fn start_synthesis(
+        &self,
+        database: &Database,
+        question: SessionQuestion,
+        text: String,
+        cache: PathBuf,
+        target: PlaybackTarget,
+        rewrite: Option<RewriteAudioKey>,
+    ) -> Result<InterviewSnapshot, AppError> {
+        let database = database.clone();
         let synthesis = self.lock_state().availability.synthesis.clone();
         if synthesis.status != ComponentStatus::Ready {
             let error = model_missing(synthesis.message.unwrap_or_else(|| {
@@ -1057,7 +1211,7 @@ impl AppService {
         }
 
         let request_id = uuid::Uuid::new_v4().to_string();
-        let params = SynthesizeParams::new(question.text, cache.clone());
+        let params = SynthesizeParams::new(text, cache.clone());
         let request = match WorkerRequest::synthesize(request_id.clone(), params) {
             Ok(request) => request,
             Err(error) => {
@@ -1096,7 +1250,12 @@ impl AppService {
             self.record_error(&error);
             return Err(error);
         }
-        *self.lock_synthesis() = Some((request_id, cache));
+        *self.lock_synthesis() = Some(PendingSynthesis {
+            request_id,
+            path: cache,
+            target,
+            rewrite,
+        });
 
         match worker_task(move || control.submit(request)).await {
             Ok(()) => Ok(self.snapshot()),

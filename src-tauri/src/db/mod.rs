@@ -29,6 +29,7 @@ use crate::interview::Result;
 pub(crate) mod ai;
 mod answers;
 mod operations;
+mod outputs;
 mod practice;
 mod questions;
 mod rewrites;
@@ -37,6 +38,7 @@ mod stories;
 
 pub use ai::{CommandIdentity, CommandIdentityLocation};
 pub(crate) use answers::PendingRecording;
+pub use outputs::{RewriteAudioRow, RewriteAudioState, RewriteVoice};
 pub use questions::*;
 pub use rewrites::ExerciseSources;
 pub use stories::{missing_fields, validate_story_input, PreparationReservation};

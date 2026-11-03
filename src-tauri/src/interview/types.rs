@@ -295,6 +295,16 @@ pub enum AudioSelection {
         #[serde(rename = "recordingId")]
         recording_id: Id,
     },
+    /// Voz da sugestão de reformulação (texto fixo `spokenText`).
+    Rewrite {
+        #[serde(rename = "rewriteId")]
+        rewrite_id: Id,
+    },
+    /// Voz da pergunta fixa de uma prática.
+    PracticeQuestion {
+        #[serde(rename = "practiceId")]
+        practice_id: Id,
+    },
     Legacy {
         #[serde(rename = "attemptId")]
         attempt_id: Id,
