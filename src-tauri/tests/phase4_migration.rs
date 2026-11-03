@@ -768,6 +768,108 @@ fn lookup_command_identity_detects_conflicts() {
     );
 }
 
+#[test]
+fn practice_slot_linkage_is_bidirectional() {
+    let (_directory, path) = temp_path();
+    let database = Database::open(path).expect("abrir em v3");
+
+    // Criação normal: prática e slot coerentes.
+    database
+        .with_connection(|connection| {
+            seed_completed_session(connection);
+            create_practice(&mut *connection, "p1", "att1");
+            Ok(())
+        })
+        .expect("a criação normal é válida");
+
+    // Ligação cruzada: p2 e p3 trocam os answer_id; o slot de cada um aponta
+    // para o outro. Só a FK composta rejeita no commit.
+    database
+        .with_connection(|connection| {
+            let tx = connection.transaction().expect("iniciar transação");
+            tx.execute(
+                "INSERT INTO practices (id, session_question_id, source_session_id, ordinal, answer_id, status, version, created_at, confirmed_at)
+                 VALUES ('p2', 'sq1', 's1', 2, 'att4', 'confirmed', 1, '2026-11-02T10:10:00Z', '2026-11-02T10:20:00Z')",
+                [],
+            )
+            .expect("inserir p2");
+            tx.execute(
+                "INSERT INTO practices (id, session_question_id, source_session_id, ordinal, answer_id, status, version, created_at, confirmed_at)
+                 VALUES ('p3', 'sq1', 's1', 3, 'att3', 'confirmed', 1, '2026-11-02T10:11:00Z', '2026-11-02T10:21:00Z')",
+                [],
+            )
+            .expect("inserir p3");
+            tx.execute(
+                "INSERT INTO answer_slots (id, session_question_id, session_id, role, text, practice_id)
+                 VALUES ('att3', 'sq1', 's1', 'attempt', 'texto', 'p2')",
+                [],
+            )
+            .expect("inserir att3");
+            tx.execute(
+                "INSERT INTO answer_slots (id, session_question_id, session_id, role, text, practice_id)
+                 VALUES ('att4', 'sq1', 's1', 'attempt', 'texto', 'p3')",
+                [],
+            )
+            .expect("inserir att4");
+            let result = tx.commit();
+            assert!(
+                result.is_err(),
+                "a ligação cruzada entre prática e slot é rejeitada no commit"
+            );
+            Ok(())
+        })
+        .expect("verificar a FK composta");
+}
+
+#[test]
+fn rewrite_origin_must_match_request() {
+    let (_directory, path) = temp_path();
+    let database = Database::open(path).expect("abrir em v3");
+
+    database
+        .with_connection(|connection| {
+            seed_completed_session(connection);
+
+            connection
+                .execute(
+                    "INSERT INTO ai_requests (id, purpose, question_id, session_id, origin_key, variant_key, sources_json)
+                     VALUES ('air-rw', 'rewrite', 'sq1', 's1', 'original:sq1', 'b1-v1',
+                             '{\"question\":\"x\",\"criteria\":[],\"answers\":[]}')",
+                    [],
+                )
+                .map_err(to_app_error)?;
+            connection
+                .execute(
+                    "INSERT INTO ai_attempts (id, request_id, generation, command_id, payload_hash, state, settings_json, created_at)
+                     VALUES ('aia-rw', 'air-rw', 1, 'cmd-rw', ?1, 'completed', '{}', '2026-11-02T10:00:00Z')",
+                    [H64],
+                )
+                .map_err(to_app_error)?;
+
+            // Origem diferente da do pedido é rejeitada.
+            let mismatched = connection.execute(
+                "INSERT INTO rewrites (id, request_id, network_attempt_id, origin_key, level, json, spoken_text, created_at)
+                 VALUES ('rw-bad', 'air-rw', 'aia-rw', 'practice:p1', 'B1', '{}', 'texto', '2026-11-02T10:01:00Z')",
+                [],
+            );
+            assert!(
+                mismatched.is_err(),
+                "origem diferente da do pedido é rejeitada"
+            );
+
+            // Origem igual à do pedido é aceite.
+            let matched = connection.execute(
+                "INSERT INTO rewrites (id, request_id, network_attempt_id, origin_key, level, json, spoken_text, created_at)
+                 VALUES ('rw-ok', 'air-rw', 'aia-rw', 'original:sq1', 'B1', '{}', 'texto', '2026-11-02T10:02:00Z')",
+                [],
+            );
+            assert!(matched.is_ok(), "origem coerente é aceite");
+
+            Ok(())
+        })
+        .expect("verificar a coerência da reformulação");
+}
+
 fn to_app_error(error: rusqlite::Error) -> language_assistant_tutor::domain::AppError {
     language_assistant_tutor::domain::AppError::new("TEST_SQLITE", error.to_string(), false)
 }

@@ -30,6 +30,9 @@ CREATE TABLE practices (
     confirmed_at TEXT,
     abandoned_at TEXT,
     UNIQUE (session_question_id, ordinal),
+    -- Alvo da FK composta em answer_slots(practice_id, id): impede trocar o
+    -- answer_id e garante que a prática e o slot apontam um para o outro.
+    UNIQUE (id, answer_id),
     CHECK ((status = 'confirmed') = (confirmed_at IS NOT NULL)),
     CHECK ((status = 'abandoned') = (abandoned_at IS NOT NULL))
 );
@@ -145,6 +148,11 @@ CREATE TABLE answer_slots (
     CHECK ((role = 'attempt') = (practice_id IS NOT NULL)),
     FOREIGN KEY (id, selected_recording_id)
         REFERENCES recordings(session_question_id, id)
+        DEFERRABLE INITIALLY DEFERRED,
+    -- FK composta bidirecional: o slot aponta para a prática e a prática tem de
+    -- apontar o seu answer_id de volta para este slot (impede trocar answer_id).
+    FOREIGN KEY (practice_id, id)
+        REFERENCES practices(id, answer_id)
         DEFERRABLE INITIALLY DEFERRED
 );
 
@@ -390,6 +398,21 @@ CREATE TABLE rewrites (
     spoken_text TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+-- A reformulação tem de corresponder ao pedido: finalidade `rewrite` e origem
+-- idêntica à do pedido. A coerência fina entre `level` e a composição de
+-- `variant_key` fica para a tarefa 5, que define o formato da variante.
+CREATE TRIGGER rewrites_request_coherence
+BEFORE INSERT ON rewrites
+WHEN NOT EXISTS (
+    SELECT 1 FROM ai_requests r
+     WHERE r.id = NEW.request_id
+       AND r.purpose = 'rewrite'
+       AND r.origin_key = NEW.origin_key
+)
+BEGIN
+    SELECT RAISE(ABORT, 'Reformulação não corresponde ao pedido');
+END;
 
 CREATE TRIGGER rewrites_no_update
 BEFORE UPDATE ON rewrites
