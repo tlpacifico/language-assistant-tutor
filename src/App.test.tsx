@@ -308,6 +308,7 @@ function controlledInterviewClient() {
   const transcribeResponse = vi.fn(async () => state());
 
   const client: InterviewClient = {
+    ...fakeInterviewClient().client,
     snapshot: vi.fn(async () => state()),
     listQuestions: vi.fn(async (category) =>
       bank
@@ -543,6 +544,7 @@ describe("App", () => {
       null;
     const base = fakeInterviewClient({ questions: QUESTIONS });
     const client: InterviewClient = {
+    ...fakeInterviewClient().client,
       ...base.client,
       snapshot: async () => {
         throw new Error("IPC indisponível");

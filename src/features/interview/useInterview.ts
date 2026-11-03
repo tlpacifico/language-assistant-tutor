@@ -1,3 +1,4 @@
+import { activeAnswer } from "../../lib/interview-contracts";
 /**
  * Estado local da revisão de uma resposta da entrevista guiada.
  *
@@ -21,6 +22,7 @@ import { toAppError } from "../../lib/app-error";
 import type { InterviewClient } from "../../lib/interview-client";
 import type {
   AnswerTarget,
+  Confirmation,
   ConfirmAnswer,
   Id,
   InterviewSnapshot,
@@ -30,6 +32,12 @@ import type {
   SessionQuestion,
   Version,
 } from "../../lib/interview-contracts";
+import type {
+  ConfirmPracticeAnswer,
+  PracticeAnswerTarget,
+  PracticeDetail,
+  SavePracticeReview,
+} from "../../lib/practice-contracts";
 import { newRequestId } from "../../lib/request-id";
 
 /** Resultado de uma tentativa de guardar a revisão. */
@@ -39,6 +47,49 @@ export type SaveOutcome = "saved" | "pending" | "failed";
 export interface SelectedAnswer {
   question: SessionQuestion;
   recording: RecordingView;
+  /** Prática dona da resposta; nula quando pertence à entrevista. */
+  practice: PracticeDetail | null;
+}
+
+/**
+ * Prática pendente da fotografia, sem simular uma pergunta da entrevista.
+ * Só é considerada quando não existe pergunta corrente de entrevista.
+ */
+export function activePractice(
+  snapshot: InterviewSnapshot | null | undefined,
+): PracticeDetail | null {
+  if (!snapshot || snapshot.current) {
+    return null;
+  }
+  return snapshot.practice?.activePractice ?? null;
+}
+
+/** Cópia mínima da pergunta fixa de uma prática, para o resolvedor comum. */
+function practiceQuestion(practice: PracticeDetail): SessionQuestion {
+  return {
+    id: practice.answer.id,
+    sessionId: practice.sourceSessionId,
+    sourceQuestionId: practice.sessionQuestionId,
+    sourceVersion: 0,
+    position: 0,
+    text: practice.question.text,
+    category: practice.question.category,
+    competencies: practice.question.competencies,
+    criteria: practice.question.criteria,
+    selectedRecordingId: practice.answer.selectedRecordingId,
+    selectionVersion: practice.answer.selectionVersion,
+  };
+}
+
+/** Confirmação da resposta corrente, da entrevista ou da prática. */
+export function confirmationOf(
+  snapshot: InterviewSnapshot | null | undefined,
+): Confirmation | null {
+  const practice = activePractice(snapshot);
+  if (practice) {
+    return practice.confirmation;
+  }
+  return activeAnswer(snapshot?.current)?.confirmation ?? null;
 }
 
 /** Rascunho local de uma gravação, com a versão que lhe corresponde. */
@@ -73,7 +124,12 @@ type Action =
   | { type: "save-failure"; error: AppError }
   | { type: "discard" }
   | { type: "confirm-start" }
-  | { type: "confirm-success"; snapshot: InterviewSnapshot }
+  | {
+      type: "confirm-success";
+      snapshot: InterviewSnapshot;
+      /** Prática confirmada: o texto passa a ser a versão guardada. */
+      confirmedDraft?: { recordingId: Id; text: string };
+    }
   | { type: "confirm-failure"; error: AppError };
 
 const EMPTY_STATE: InterviewState = {
@@ -83,6 +139,22 @@ const EMPTY_STATE: InterviewState = {
   confirming: false,
   error: null,
 };
+
+/** Alvo da resposta de uma prática, com a seleção que o utilizador viu. */
+export function practiceTargetOf(
+  practice: PracticeDetail,
+  recordingId: Id,
+): PracticeAnswerTarget {
+  return {
+    owner: {
+      type: "practice",
+      practiceId: practice.id,
+      answerId: practice.answer.id,
+    },
+    recordingId,
+    selectionVersion: practice.answer.selectionVersion,
+  };
+}
 
 /** Interpretação apresentável de uma falha de validação local. */
 function invalid(message: string): AppError {
@@ -103,7 +175,15 @@ export function latestTranscript(
 export function selectedAnswer(
   snapshot: InterviewSnapshot | null,
 ): SelectedAnswer | null {
-  const current = snapshot?.current;
+  const practice = activePractice(snapshot);
+  if (practice) {
+    const selected = practice.answer.selectedRecordingId;
+    const recording = practice.recordings.find((view) => view.id === selected);
+    return recording
+      ? { question: practiceQuestion(practice), recording, practice }
+      : null;
+  }
+  const current = activeAnswer(snapshot?.current);
   const recordingId = current?.question.selectedRecordingId;
   if (!current || !recordingId) {
     return null;
@@ -112,7 +192,7 @@ export function selectedAnswer(
   if (!recording) {
     return null;
   }
-  return { question: current.question, recording };
+  return { question: current.question, recording, practice: null };
 }
 
 /** Texto automático utilizável como ponto de partida de uma revisão. */
@@ -134,7 +214,8 @@ function seedDraft(recording: RecordingView): Draft {
     version: saved?.version ?? 0,
     sourceTranscriptId:
       saved?.sourceTranscriptId ?? latestTranscript(recording)?.id ?? null,
-    origin: saved?.origin ?? (automatic !== null ? "automatic" : "manual_explicit"),
+    origin:
+      saved?.origin ?? (automatic !== null ? "automatic" : "manual_explicit"),
     savedAt: saved?.savedAt ?? null,
   };
 }
@@ -190,12 +271,7 @@ function reconcileDraft(
   if (saved && saved.version !== draft.version) {
     return { ...fresh, text: saved.text, baseline: saved.text };
   }
-  if (
-    !saved &&
-    draft.version === 0 &&
-    draft.text === "" &&
-    fresh.text !== ""
-  ) {
+  if (!saved && draft.version === 0 && draft.text === "" && fresh.text !== "") {
     return { ...fresh, text: fresh.text, baseline: fresh.text };
   }
   if (draft.version === 0) {
@@ -219,15 +295,11 @@ function reconcileDrafts(
   state: InterviewState,
   snapshot: InterviewSnapshot,
 ): Record<Id, Draft> {
-  const current = snapshot.current;
-  if (!current) {
-    return state.drafts;
-  }
   const answer = selectedAnswer(snapshot);
   if (!answer) {
     return state.drafts;
   }
-  const confirmation = current.confirmation;
+  const confirmation = confirmationOf(snapshot);
   const confirmedHere =
     confirmation !== null && confirmation.recordingId === answer.recording.id
       ? confirmation
@@ -283,7 +355,10 @@ function reducer(state: InterviewState, action: Action): InterviewState {
         return state;
       }
       return {
-        ...withDraft(state, answer.recording.id, { ...draft, text: action.text }),
+        ...withDraft(state, answer.recording.id, {
+          ...draft,
+          text: action.text,
+        }),
         error: null,
       };
     }
@@ -326,13 +401,23 @@ function reducer(state: InterviewState, action: Action): InterviewState {
     }
     case "confirm-start":
       return { ...state, confirming: true, error: null };
-    case "confirm-success":
+    case "confirm-success": {
+      const applied = applySnapshot(state, action.snapshot);
+      const fixed = action.confirmedDraft;
+      const existing = fixed ? applied.drafts[fixed.recordingId] : undefined;
       return {
-        ...applySnapshot(state, action.snapshot),
+        ...(fixed && existing
+          ? withDraft(applied, fixed.recordingId, {
+              ...existing,
+              text: fixed.text,
+              baseline: fixed.text,
+            })
+          : applied),
         saving: false,
         confirming: false,
         error: null,
       };
+    }
     case "confirm-failure":
       return { ...state, confirming: false, error: action.error };
     default:
@@ -406,7 +491,7 @@ export function useInterview(
 
   const answer = selectedAnswer(state.snapshot);
   const draft = answer ? state.drafts[answer.recording.id] : undefined;
-  const confirmation = state.snapshot?.current?.confirmation ?? null;
+  const confirmation = confirmationOf(state.snapshot);
   const confirmed =
     confirmation !== null &&
     answer !== null &&
@@ -425,7 +510,11 @@ export function useInterview(
     (state.snapshot?.recordingId ?? null) !== null ||
     (state.snapshot?.finalizing ?? false);
   const canEdit =
-    answer !== null && !confirmed && !state.confirming && !captureBusy && !locked;
+    answer !== null &&
+    !confirmed &&
+    !state.confirming &&
+    !captureBusy &&
+    !locked;
 
   // O rascunho é alinhado antes de a página ser apresentada: a revisão começa
   // preenchida, sem um instante com o editor vazio.
@@ -462,7 +551,7 @@ export function useInterview(
     if (!selected || !currentDraft || current.confirming || capturing) {
       return;
     }
-    if (current.snapshot?.current?.confirmation) {
+    if (confirmationOf(current.snapshot)) {
       return;
     }
     textRef.current = nextText;
@@ -474,7 +563,7 @@ export function useInterview(
     if (lockedRef.current) {
       return;
     }
-    if (current.confirming || current.snapshot?.current?.confirmation) {
+    if (current.confirming || confirmationOf(current.snapshot)) {
       return;
     }
     const selected = selectedAnswer(current.snapshot);
@@ -510,7 +599,7 @@ export function useInterview(
       });
       return "failed";
     }
-    if (current.snapshot?.current?.confirmation) {
+    if (confirmationOf(current.snapshot)) {
       dispatch({
         type: "save-failure",
         error: invalid("A resposta confirmada é apenas de leitura."),
@@ -526,10 +615,43 @@ export function useInterview(
       return "failed";
     }
 
-    const { question, recording } = selected;
+    const { question, recording, practice } = selected;
+    if (practice) {
+      const practiceTarget = practiceTargetOf(practice, recording.id);
+      const practiceRequest: SavePracticeReview = {
+        requestId: stableRequestId(
+          `save-practice:${practice.id}:${recording.id}:${currentDraft.version}:${text}`,
+        ),
+        target: practiceTarget,
+        expectedReviewVersion: currentDraft.version,
+        sourceTranscriptId: currentDraft.sourceTranscriptId,
+        origin: currentDraft.origin,
+        text,
+      };
+      dispatch({ type: "save-start" });
+      try {
+        const next = await client.savePracticeReview(practiceRequest);
+        intentionRef.current = null;
+        baselineRef.current = text;
+        dispatch({
+          type: "save-success",
+          snapshot: next,
+          recordingId: recording.id,
+          savedText: text,
+        });
+        onSnapshot?.(next);
+        return textRef.current === text ? "saved" : "pending";
+      } catch (error) {
+        dispatch({ type: "save-failure", error: toAppError(error) });
+        return "failed";
+      }
+    }
     const target: AnswerTarget = {
       sessionId: question.sessionId,
-      sessionQuestionId: question.id,
+      sessionQuestionId: current.snapshot?.current?.question.id ?? question.id,
+      ...(current.snapshot?.current?.question.id !== question.id
+        ? { answerId: question.id }
+        : {}),
       recordingId: recording.id,
       selectionVersion: question.selectionVersion,
     };
@@ -596,14 +718,14 @@ export function useInterview(
       ? current.drafts[selected.recording.id]
       : undefined;
     const summary = current.snapshot?.activeSession ?? null;
-    if (!selected || !currentDraft || !summary) {
+    if (!selected || !currentDraft || (!summary && !selected.practice)) {
       dispatch({
         type: "confirm-failure",
         error: invalid("Não existe uma resposta selecionada para confirmar."),
       });
       return false;
     }
-    if (current.snapshot?.current?.confirmation) {
+    if (confirmationOf(current.snapshot)) {
       return true;
     }
     if (current.confirming) {
@@ -618,20 +740,54 @@ export function useInterview(
       return false;
     }
 
-    const { question, recording } = selected;
+    const { question, recording, practice } = selected;
+    if (practice) {
+      const practiceRequest: ConfirmPracticeAnswer = {
+        requestId: stableRequestId(
+          `confirm-practice:${practice.id}:${recording.id}:${currentDraft.version}:${practice.version}:${text}`,
+        ),
+        target: practiceTargetOf(practice, recording.id),
+        expectedReviewVersion: currentDraft.version,
+        expectedPracticeVersion: practice.version,
+        sourceTranscriptId: currentDraft.sourceTranscriptId,
+        origin: currentDraft.origin,
+        text,
+      };
+      dispatch({ type: "confirm-start" });
+      try {
+        await client.confirmPracticeAnswer(practiceRequest);
+        intentionRef.current = null;
+        baselineRef.current = textRef.current;
+        // A confirmação devolve a prática; a fotografia traz o estado neutro.
+        const next = await client.snapshot();
+        dispatch({
+          type: "confirm-success",
+          snapshot: next,
+          confirmedDraft: { recordingId: recording.id, text },
+        });
+        onSnapshot?.(next);
+        return true;
+      } catch (error) {
+        dispatch({ type: "confirm-failure", error: toAppError(error) });
+        return false;
+      }
+    }
     const target: AnswerTarget = {
       sessionId: question.sessionId,
-      sessionQuestionId: question.id,
+      sessionQuestionId: current.snapshot?.current?.question.id ?? question.id,
+      ...(current.snapshot?.current?.question.id !== question.id
+        ? { answerId: question.id }
+        : {}),
       recordingId: recording.id,
       selectionVersion: question.selectionVersion,
     };
     const request: ConfirmAnswer = {
       requestId: stableRequestId(
-        `confirm:${target.sessionId}:${target.sessionQuestionId}:${target.recordingId}:${currentDraft.version}:${summary.version}:${text}`,
+        `confirm:${target.sessionId}:${target.sessionQuestionId}:${target.recordingId}:${currentDraft.version}:${summary?.version ?? 0}:${text}`,
       ),
       target,
       expectedReviewVersion: currentDraft.version,
-      expectedSessionVersion: summary.version,
+      expectedSessionVersion: summary?.version ?? 0,
       sourceTranscriptId: currentDraft.sourceTranscriptId,
       origin: currentDraft.origin,
       text,

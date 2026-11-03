@@ -55,7 +55,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::artifacts::ArtifactStore;
 use crate::audio::{AudioEvent, AudioPort, CapturedAudio, ORIGINAL_FILE};
-use crate::db::Database;
+use crate::db::{Database, RewriteAudioRow, RewriteAudioState};
 use crate::domain::{
     error_code, AppError, Availability, CaptureMeta, ComponentState, ComponentStatus, JobStage,
     OperationKind, PlaybackTarget, RestoreResult, Transcript, TranscriptStatus,
@@ -65,16 +65,33 @@ use crate::interview::{
     QuestionDetail, ReviewOrigin, SaveReview, SessionDetail, SessionSummary,
 };
 use crate::legacy::LegacyStore;
+use crate::practice::{CaptureOwner, PracticeDetail};
 use crate::worker::protocol::SynthesizeParams;
 use crate::worker::{
     HealthResult, SynthesisResult, TranscriptionResult, WorkerClient, WorkerEvent, WorkerMessage,
     WorkerPort, WorkerRequest, WorkerResult,
 };
 
+mod ai;
 mod interview;
+mod practice;
+
+/// Falha de SQLite simulada nos testes, injetada em pontos concretos do arranque
+/// da captura de preparação. Nunca é usada pelo caminho real.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreparationFault {
+    /// A reserva do candidato falha antes de abrir o microfone.
+    ReserveCandidate,
+    /// A marcação `started`/lock falha depois de o microfone abrir.
+    MarkStarted,
+}
 
 /// Pasta da cache de voz da pergunta, dentro de `phase1`.
 pub const QUESTION_CACHE_DIR: &str = "question-cache";
+
+/// Pasta da cache de voz das reformulações, dentro de `phase1`.
+pub const REWRITE_CACHE_DIR: &str = "rewrite-cache";
 
 /// Voz fixa do Kokoro nesta fase.
 pub const SYNTHESIS_VOICE: &str = "af_heart";
@@ -164,6 +181,26 @@ struct CaptureIdentity {
     recording_id: Id,
     session_id: Id,
     session_question_id: Id,
+    /// Dono da captura: a resposta de entrevista ou de prática a que pertence.
+    owner: CaptureOwner,
+}
+
+/// Derivado de voz de uma reformulação associado a uma síntese em curso.
+#[derive(Debug, Clone)]
+struct RewriteAudioKey {
+    rewrite_id: Id,
+    config_hash: String,
+}
+
+/// Síntese em curso: o resultado só é aceite para este pedido e ficheiro.
+#[derive(Debug, Clone)]
+struct PendingSynthesis {
+    request_id: String,
+    path: PathBuf,
+    /// Reprodução a iniciar quando a síntese termina.
+    target: PlaybackTarget,
+    /// Presente quando a voz é de uma reformulação (estado em `rewrite_audio`).
+    rewrite: Option<RewriteAudioKey>,
 }
 
 /// Captura finalizada cuja publicação falhou, à espera de nova tentativa.
@@ -179,6 +216,8 @@ struct PendingPublication {
 /// reler a sessão guardada. A geração do auxiliar e o pedido pendente são
 /// internos e não serializam.
 struct InterviewState {
+    ai_job: Option<crate::ai::AiJobView>,
+    pending_ai_publication: Option<Id>,
     revision: u64,
     database: DatabaseState,
     database_error: Option<AppError>,
@@ -195,6 +234,12 @@ struct InterviewState {
     last_error: Option<AppError>,
     worker_generation: u64,
     active_request: Option<String>,
+    /// Prática pendente aberta, independente do trabalho IA e da entrevista.
+    active_practice: Option<PracticeDetail>,
+    /// Dono da prática pendente, para rotear captura/transcrição.
+    active_owner: Option<CaptureOwner>,
+    /// Preparação de captura pendente (histórias, tarefa 3; neutra nesta tarefa).
+    pending_preparation: Option<Id>,
 }
 
 impl InterviewState {
@@ -202,6 +247,8 @@ impl InterviewState {
     fn initial() -> Self {
         Self {
             revision: 0,
+            ai_job: None,
+            pending_ai_publication: None,
             database: DatabaseState::Opening,
             database_error: None,
             active_session: None,
@@ -216,6 +263,9 @@ impl InterviewState {
             last_error: None,
             worker_generation: 0,
             active_request: None,
+            active_practice: None,
+            active_owner: None,
+            pending_preparation: None,
         }
     }
 
@@ -280,6 +330,25 @@ impl InterviewState {
     /// Fotografia do estado observável pela interface.
     fn snapshot(&self) -> InterviewSnapshot {
         InterviewSnapshot {
+            current_answer: self.current.as_ref().map(|q| {
+                let a = q.active();
+                crate::interview::AnswerSlot {
+                    id: a.question.id.clone(),
+                    session_question_id: q.question.id.clone(),
+                    role: if a.question.id == q.question.id {
+                        "initial"
+                    } else {
+                        "follow_up"
+                    }
+                    .into(),
+                    text: a.question.text.clone(),
+                    selected_recording_id: a.question.selected_recording_id.clone(),
+                    selection_version: a.question.selection_version,
+                    practice_id: None,
+                }
+            }),
+            ai_job: self.ai_job.clone(),
+            pending_ai_publication: self.pending_ai_publication.clone(),
             revision: self.revision,
             database: self.database,
             active_session: self.active_session.clone(),
@@ -288,16 +357,34 @@ impl InterviewState {
             recording_id: self.recording_id.clone(),
             pending_recording_id: self.pending_recording_id.clone(),
             finalizing: self.finalizing,
-            model_job: self.model_job.clone(),
+            model_job: self.model_job.clone().map(|mut j| {
+                j.target.answer_id = Some(j.target.session_question_id.clone());
+                if let Some(q) = &self.current {
+                    if q.active().question.id == j.target.session_question_id {
+                        j.target.session_question_id = q.question.id.clone();
+                    }
+                }
+                j
+            }),
             playback: self.playback,
             warnings: self.warnings.clone(),
             last_error: self.last_error.clone(),
+            practice: crate::practice::ExerciseSnapshot {
+                revision: self.revision,
+                active_practice: self.active_practice.clone(),
+                active_owner: self.active_owner.clone(),
+                pending_preparation: self.pending_preparation.clone(),
+            },
         }
     }
 }
 
 /// Serviço da fase 2: coordena sessões, captura, SQLite, auxiliar e reprodução.
 pub struct AppService {
+    ai_transport: Arc<dyn crate::ai::AiTransport>,
+    credentials: Arc<dyn crate::ai::CredentialStore>,
+    ai_runtime: Mutex<ai::AiRuntime>,
+    ai_closed: std::sync::atomic::AtomicBool,
     database_path: PathBuf,
     legacy_root: PathBuf,
     artifacts: ArtifactStore,
@@ -315,11 +402,13 @@ pub struct AppService {
     pending_publish: Mutex<Option<PendingPublication>>,
     /// Pedido `health` em curso, para reportar uma falha de verificação.
     health_request: Mutex<Option<String>>,
-    /// Caminho de cache esperado do pedido de síntese em curso.
-    synthesis: Mutex<Option<(String, PathBuf)>>,
+    /// Pedido de síntese em curso: identidade, cache esperada e destino.
+    synthesis: Mutex<Option<PendingSynthesis>>,
     /// Coordenador serial: uma transição de cada vez.
     transitions: tokio::sync::Mutex<()>,
     listener: Mutex<Option<SnapshotListener>>,
+    /// Falha de SQLite simulada nos testes; ausente no caminho real.
+    fault: Mutex<Option<PreparationFault>>,
 }
 
 impl AppService {
@@ -337,6 +426,10 @@ impl AppService {
         models_manifest: Option<PathBuf>,
     ) -> Self {
         Self {
+            ai_transport: Arc::new(crate::ai::HttpTransport),
+            credentials: Arc::new(crate::ai::WindowsCredentialStore),
+            ai_runtime: Mutex::new(ai::AiRuntime::default()),
+            ai_closed: std::sync::atomic::AtomicBool::new(false),
             database_path: paths.database,
             legacy_root: paths.legacy,
             artifacts,
@@ -353,12 +446,19 @@ impl AppService {
             synthesis: Mutex::new(None),
             transitions: tokio::sync::Mutex::new(()),
             listener: Mutex::new(None),
+            fault: Mutex::new(None),
         }
     }
 
     /// Regista o destinatário das fotografias (o emissor de `interview://snapshot`).
     pub fn subscribe(&self, listener: SnapshotListener) {
         *self.lock_listener() = Some(listener);
+    }
+
+    /// Injeta (ou remove) uma falha de SQLite simulada, apenas para os testes.
+    #[doc(hidden)]
+    pub fn inject_preparation_fault(&self, fault: Option<PreparationFault>) {
+        *self.lock_fault() = fault;
     }
 
     /// Fotografia atual, sem alterar nem publicar.
@@ -402,19 +502,29 @@ impl AppService {
 
         let path = self.database_path.clone();
         let artifacts = self.artifacts.clone();
+        let legacy_root = self.legacy_root.clone();
         let opened = database_task(move || {
             let database = Database::open(path)?;
-            let report = crate::artifacts::reconcile(&database, &artifacts)?;
+            database.recover_ai()?;
+            let mut report = crate::artifacts::reconcile(&database, &artifacts)?;
+            report
+                .warnings
+                .extend(crate::artifacts::reconcile_rewrite_audio(
+                    &database,
+                    &legacy_root,
+                )?);
+            let uncertain = crate::artifacts::reconcile_preparations(&database, &artifacts)?;
             let mut active = database.active_session()?;
             if let Some(detail) = active.as_mut() {
                 artifacts.annotate(detail);
             }
-            Ok((database, report, active))
+            let pending_practice = database.pending_practice()?;
+            Ok((database, report, active, pending_practice, uncertain))
         })
         .await;
 
         match opened {
-            Ok((database, report, active)) => {
+            Ok((database, report, active, pending_practice, uncertain)) => {
                 *self.lock_database() = Some(database);
                 Ok(self.commit(|state| {
                     state.database = DatabaseState::Ready;
@@ -422,6 +532,12 @@ impl AppService {
                     state.warnings = report.warnings;
                     state.last_error = None;
                     state.apply_detail(active);
+                    state.active_practice = pending_practice.clone();
+                    state.active_owner = pending_practice.map(|practice| CaptureOwner::Practice {
+                        practice_id: practice.id,
+                        answer_id: practice.answer.id,
+                    });
+                    state.pending_preparation = uncertain.into_iter().next();
                 }))
             }
             Err(error) => {
@@ -472,8 +588,17 @@ impl AppService {
         database: &Database,
     ) -> Result<InterviewSnapshot, AppError> {
         let detail = self.load_active_detail(database).await?;
+        // A prática pendente acompanha a releitura: publicação, transcrição e
+        // revisão alteram as gravações que a interface apresenta.
+        let pending_db = database.clone();
+        let practice = database_task(move || pending_db.pending_practice()).await?;
         Ok(self.commit(|state| {
             state.apply_detail(detail);
+            state.active_owner = practice.as_ref().map(|p| CaptureOwner::Practice {
+                practice_id: p.id.clone(),
+                answer_id: p.answer.id.clone(),
+            });
+            state.active_practice = practice;
             state.last_error = None;
         }))
     }
@@ -748,6 +873,15 @@ impl AppService {
             return Err(error);
         }
 
+        // Uma escrita de metadados de preparação pendente não pode ser perdida
+        // com o fecho: resolve-se primeiro, sem indicar sucesso em silêncio.
+        if self.lock_state().pending_preparation.is_some() {
+            let error =
+                storage_error("Há uma escrita de preparação pendente. Resolva-a antes de fechar.");
+            self.record_error(&error);
+            return Err(error);
+        }
+
         let capturing = self.lock_state().recording_id.is_some();
         if capturing {
             let audio = Arc::clone(&self.audio);
@@ -775,10 +909,14 @@ impl AppService {
             }
         }
 
+        if let Ok(db) = self.database() {
+            database_task(move || db.recover_ai()).await?;
+        }
+        self.ai_closed.store(true, Ordering::SeqCst);
         // Nenhum resultado tardio pode voltar a ser aplicado a partir daqui. Um
         // trabalho em curso fica `interrupted` na base, recuperável no arranque.
         self.abandon_model_operation(None).await;
-        *self.lock_synthesis() = None;
+        self.discard_pending_synthesis().await;
         self.commit(|state| {
             state.finish_model_job();
             state.finalizing = false;
@@ -977,6 +1115,7 @@ impl AppService {
                     let request = SaveReview {
                         request_id: uuid::Uuid::new_v4().to_string(),
                         target: AnswerTarget {
+                            answer_id: None,
                             session_id: target.session_id.clone(),
                             session_question_id: target.session_question_id.clone(),
                             recording_id: recording_id.clone(),
@@ -1032,18 +1171,19 @@ impl AppService {
             return;
         }
 
-        let expected = {
+        let pending = {
             let mut pending = self.lock_synthesis();
             match pending.as_ref() {
-                Some((id, _)) if id == request_id => pending.take().map(|(_, path)| path),
+                Some(item) if item.request_id == request_id => pending.take(),
                 _ => None,
             }
         };
-        let Some(expected) = expected else {
+        let Some(pending) = pending else {
             self.abandon_model_operation(None).await;
             self.commit(|state| state.finish_model_job());
             return;
         };
+        let expected = pending.path.clone();
 
         let candidate = expected.clone();
         let provided = result.audio_path.clone();
@@ -1068,6 +1208,8 @@ impl AppService {
         .await;
         if let Err(error) = validation {
             let _ = fs::remove_file(&expected);
+            self.mark_rewrite_audio(pending.rewrite.as_ref(), RewriteAudioState::Failed)
+                .await;
             self.abandon_model_operation(Some(&error)).await;
             let shown = error.clone();
             self.commit(|state| {
@@ -1080,6 +1222,19 @@ impl AppService {
         // A síntese ficou concluída; a reprodução que se segue pertence ao
         // áudio, não muda o estado da operação.
         self.complete_model_operation().await;
+        self.mark_rewrite_audio(pending.rewrite.as_ref(), RewriteAudioState::Ready)
+            .await;
+
+        // Uma síntese tardia nunca toca por cima de uma captura: o derivado fica
+        // guardado e a reprodução é pedida de novo pelo utilizador.
+        let capturing = {
+            let state = self.lock_state();
+            state.recording_id.is_some() || state.finalizing
+        };
+        if capturing {
+            self.commit(|state| state.finish_model_job());
+            return;
+        }
 
         // A síntese pode terminar enquanto um áudio está a ser ouvido; a
         // reprodução automática da pergunta substitui a reprodução em curso.
@@ -1100,9 +1255,10 @@ impl AppService {
         let audio = Arc::clone(&self.audio);
         match audio_task(move || audio.play(expected)).await {
             Ok(()) => {
+                let target = pending.target;
                 self.commit(|state| {
                     state.finish_model_job();
-                    state.playback = Some(PlaybackTarget::Question);
+                    state.playback = Some(target);
                 });
             }
             Err(error) => {
@@ -1112,6 +1268,35 @@ impl AppService {
                     state.last_error = Some(error);
                 });
             }
+        }
+    }
+
+    /// Esquece a síntese em curso; uma voz de reformulação fica `failed` (o texto
+    /// guardado não muda e a síntese pode ser repetida localmente).
+    async fn discard_pending_synthesis(&self) {
+        let pending = self.lock_synthesis().take();
+        if let Some(pending) = pending {
+            self.mark_rewrite_audio(pending.rewrite.as_ref(), RewriteAudioState::Failed)
+                .await;
+        }
+    }
+
+    /// Atualiza o estado do derivado de voz de uma reformulação, se for o caso.
+    async fn mark_rewrite_audio(&self, key: Option<&RewriteAudioKey>, state: RewriteAudioState) {
+        let Some(key) = key else {
+            return;
+        };
+        let Ok(database) = self.database() else {
+            return;
+        };
+        let rewrite_id = key.rewrite_id.clone();
+        let config_hash = key.config_hash.clone();
+        if let Err(error) = database_task(move || {
+            database.set_rewrite_audio_state(&rewrite_id, &config_hash, state)
+        })
+        .await
+        {
+            self.record_error(&error);
         }
     }
 
@@ -1138,7 +1323,7 @@ impl AppService {
             return;
         };
         if kind == OperationKind::Synthesize {
-            *self.lock_synthesis() = None;
+            self.discard_pending_synthesis().await;
         }
         self.abandon_model_operation(Some(&error)).await;
 
@@ -1348,7 +1533,7 @@ impl AppService {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
-    fn lock_synthesis(&self) -> std::sync::MutexGuard<'_, Option<(String, PathBuf)>> {
+    fn lock_synthesis(&self) -> std::sync::MutexGuard<'_, Option<PendingSynthesis>> {
         self.synthesis
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -1356,6 +1541,12 @@ impl AppService {
 
     fn lock_listener(&self) -> std::sync::MutexGuard<'_, Option<SnapshotListener>> {
         self.listener
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    fn lock_fault(&self) -> std::sync::MutexGuard<'_, Option<PreparationFault>> {
+        self.fault
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
     }
@@ -1473,6 +1664,14 @@ impl AppService {
 // ---------------------------------------------------------------------------
 // Cache da pergunta
 // ---------------------------------------------------------------------------
+
+/// SHA-256 hexadecimal de um texto (índice `rewrite_audio.text_hash`).
+pub(crate) fn text_digest(text: &str) -> String {
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 
 /// Texto exato da chave da cache, igual ao do auxiliar Python.
 pub fn synthesis_payload(text: &str) -> String {

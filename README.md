@@ -1,12 +1,13 @@
 # language-assistant-tutor
 
 Tutor desktop de entrevistas comportamentais em inglês, por voz, baseado na
-estrutura STAR. Este repositório contém a implementação das **fases 1 e 2**:
+estrutura STAR. Este repositório contém a implementação das **fases 1 a 4**:
 uma aplicação Tauri 2 + React/TypeScript que prepara uma entrevista guiada com
 um banco de 20 perguntas, grava as respostas, reproduz o áudio, transcreve
 localmente com faster-whisper, permite rever e confirmar cada texto e guarda o
-histórico em SQLite. Tudo corre no computador; nenhuma gravação ou transcrição é
-enviada para serviços externos.
+histórico em SQLite. O modo local funciona no computador. O modo opcional com IA
+envia apenas o texto confirmado necessário para seguimentos e feedback através
+da API paga do OpenCode; as gravações permanecem locais.
 
 O contexto do produto, a stack e o plano das fases estão em
 [`docs/`](docs/) e em [`AGENTS.md`](AGENTS.md). A preparação real do ambiente
@@ -15,6 +16,17 @@ de aceitação da fase 1 em [`docs/phase-1/validation.md`](docs/phase-1/validati
 A fase 2 está documentada em [`docs/phase-2/setup.md`](docs/phase-2/setup.md)
 (execução e dados) e [`docs/phase-2/validation.md`](docs/phase-2/validation.md)
 (matriz F2-01 a F2-16).
+
+A fase 3 acrescenta configuração protegida, seguimentos únicos, feedback com
+fontes verificadas e consumo/custos observáveis. Ver [preparação](docs/phase-3/setup.md)
+e [validação](docs/phase-3/validation.md). Foi antecipada por autorização do
+utilizador; as aceitações manuais das três fases continuam pendentes.
+
+A fase 4 acrescenta reformulação B1/B2/C1 com voz Kokoro, novas tentativas
+(práticas) com avaliação própria, comparação local e histórias locais de apoio.
+Ver [preparação](docs/phase-4/setup.md) e [validação](docs/phase-4/validation.md).
+Está implementada e verificada automaticamente, mas **não aceite**: falta o
+roteiro manual F4-16 e a inferência paga real.
 
 ## Requisitos (Windows)
 
@@ -106,8 +118,8 @@ de cada caminho.
 
 `.\scripts\verify.ps1` executa typecheck, testes React, build Vite,
 `cargo fmt --check`, `clippy -D warnings`, testes Rust, pytest sem a marca
-`models` e `pip check`. Resultado real da verificação da fase 2: 8/8 checks com
-saída 0 (151 testes Rust, 53 Vitest, 36 pytest sem `models`); a duração depende
+`models` e `pip check`. Resultado real da verificação da fase 4: 8/8 checks com
+saída 0 (246 testes Rust, 97 Vitest, 36 pytest sem `models`); a duração depende
 da cache de compilação e do Vitest a frio. O teste com a marca
 `models` é executado à parte, porque exige pesos preparados e um manifesto
 indicado por `LANGUAGE_TUTOR_MODELS_MANIFEST`; nesta máquina deu `2 passed`,
@@ -129,9 +141,10 @@ src/features/questions/       Banco de perguntas editável
 src/features/interview/       Captura, revisão, confirmação e avanço
 src/features/navigation/      Decisão guardar/descartar/cancelar (navegar e fechar)
 src/features/history/         Histórico de sessões e treinos da fase 1
-src/features/practice/        practice.css partilhado pela interface nova
+src/features/practice/        Treino posterior: prática, reformulação, comparação, consumo
+src/features/stories/         Banco de histórias locais e apoio à preparação
 src-tauri/src/                Domínio, SQLite, artefactos, áudio, worker, serviço, comandos
-src-tauri/tests/              151 testes de domínio, base, artefactos, áudio, worker, sessões, serviço
+src-tauri/tests/              246 testes de domínio, base, artefactos, áudio, worker, sessões, serviço
 contracts/                    Exemplos partilhados dos contratos v1 e v2
 config/audio.example.json     Configuração pessoal documentada (não versionar a real)
 audio-worker/                 Auxiliar Python (faster-whisper + Kokoro)
@@ -171,5 +184,7 @@ revisão/confirmação, sair e retomar, histórico, sessão de uma pergunta,
 insuficiência, edição do banco, percurso offline e recuperação). Ver
 [`docs/phase-2/validation.md`](docs/phase-2/validation.md).
 
-A fase 3 (tutor com IA) **não** foi iniciada. O âmbito da fase 2 está em
-[`docs/superpowers/specs/2026-11-02-phase-2-guided-interview-design.md`](docs/superpowers/specs/2026-11-02-phase-2-guided-interview-design.md).
+A fase 3 (tutor com IA) está implementada e verificada automaticamente; a aceitação manual e a inferência paga real continuam pendentes. Ver [validação da fase 3](docs/phase-3/validation.md).
+
+
+A fase 4 está apenas documentada na [spec](docs/superpowers/specs/2026-11-03-phase-4-improve-repeat-design.md) e no [plano técnico](docs/superpowers/plans/2026-11-03-phase-4-improve-repeat-implementation.md), a pedido do utilizador em 2026-11-03. A implementação não está autorizada neste pedido nem foi iniciada.

@@ -393,7 +393,7 @@ fn parse_seed(json: &str) -> Result<Vec<SeedQuestion>> {
 /// A fase 1 não traz uma biblioteca de datas; esta é a mesma conversão civil
 /// privada de `service::utc_now`, que este módulo não pode reutilizar sem
 /// depender do serviço.
-pub(super) fn utc_now() -> String {
+pub(crate) fn utc_now() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();

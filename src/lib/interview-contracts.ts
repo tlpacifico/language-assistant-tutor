@@ -77,6 +77,7 @@ export interface Question extends QuestionInput {
 
 /** Pedido de início de sessão. `category` nulo significa «todas as categorias». */
 export interface StartSession {
+  mode?: SessionMode;
   requestId: Id;
   category: Category | null;
   count: number;
@@ -85,7 +86,7 @@ export interface StartSession {
 export type SessionStatus = "in_progress" | "completed";
 
 /** Modo de realização da sessão. As sessões da fase 1 não pertencem a este modo. */
-export type SessionMode = "local_v2";
+export type SessionMode = "local_v2" | "ai_v3";
 
 /** Resumo observável de uma sessão. */
 export interface SessionSummary {
@@ -121,6 +122,7 @@ export interface SessionQuestion {
 
 /** Alvo exato de uma resposta. Nunca aceita caminhos de ficheiro do frontend. */
 export interface AnswerTarget {
+  answerId?: Id;
   sessionId: Id;
   sessionQuestionId: Id;
   recordingId: Id;
@@ -134,8 +136,11 @@ export interface AnswerTarget {
  * nunca chegam da interface. A variante `legacy` lê um treino da fase 1.
  */
 export type AudioSelection =
+  | { type: "follow_up"; sessionId: Id; sessionQuestionId: Id; answerId: Id }
   | { type: "question"; sessionId: Id; sessionQuestionId: Id }
   | { type: "recording"; recordingId: Id }
+  | { type: "rewrite"; rewriteId: Id }
+  | { type: "practice_question"; practiceId: Id }
   | { type: "legacy"; attemptId: Id };
 
 export type ReviewOrigin = "automatic" | "manual_explicit";
@@ -211,6 +216,9 @@ export interface RecordingView {
 
 /** Pergunta de uma sessão com as gravações e a confirmação, se existir. */
 export interface QuestionDetail {
+  initialAnswerId?: Id;
+  followUp?: QuestionDetail | null;
+  followUpStage?: string | null;
   question: SessionQuestion;
   recordings: RecordingView[];
   confirmation: Confirmation | null;
@@ -224,6 +232,7 @@ export interface SessionDetail {
 
 /** Identidade do trabalho a que um resultado pertence. */
 export interface OperationTarget {
+  answerId?: Id | null;
   sessionId: Id;
   sessionQuestionId: Id;
   recordingId: Id | null;
@@ -246,6 +255,16 @@ export interface ModelJobView {
 
 /** Fotografia do estado da entrevista observável pela interface. */
 export interface InterviewSnapshot {
+  currentAnswer?: {
+    id: Id;
+    sessionQuestionId: Id;
+    role: "initial" | "follow_up" | "attempt";
+    text: string;
+    selectedRecordingId: Id | null;
+    selectionVersion: number;
+  } | null;
+  aiJob?: import("./ai-contracts").AiJobView | null;
+  pendingAiPublication?: Id | null;
   /** Revisão monotónica em memória; não substitui as versões persistidas. */
   revision: number;
   database: DatabaseState;
@@ -263,6 +282,8 @@ export interface InterviewSnapshot {
   playback: PlaybackTarget | null;
   warnings: AppError[];
   lastError: AppError | null;
+  /** Estado de prática; neutro enquanto nenhuma prática está aberta. */
+  practice: import("./practice-contracts").ExerciseSnapshot;
 }
 
 /** Resultado da recuperação no arranque. */
@@ -270,4 +291,13 @@ export interface RecoveryReport {
   published: Id[];
   warnings: AppError[];
   interruptedOperations: Id[];
+}
+
+/** Alvo corrente; o pai conserva sempre a identidade e o progresso principal. */
+export function activeAnswer(
+  detail: QuestionDetail | null | undefined,
+): QuestionDetail | null {
+  return detail?.confirmation && detail.followUp
+    ? detail.followUp
+    : (detail ?? null);
 }

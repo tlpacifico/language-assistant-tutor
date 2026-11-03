@@ -56,6 +56,7 @@ impl Harness {
         let detail = self
             .database
             .start_session(StartSession {
+                mode: Default::default(),
                 request_id: "req-artifacts".to_owned(),
                 category: None,
                 count: 1,
@@ -134,6 +135,7 @@ fn target_of(
     operation: &str,
 ) -> OperationTarget {
     OperationTarget {
+        answer_id: None,
         session_id: session.to_owned(),
         session_question_id: question.to_owned(),
         recording_id: Some(recording.to_owned()),

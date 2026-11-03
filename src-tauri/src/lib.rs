@@ -16,6 +16,7 @@
 //! uma falha é recuperável sem fechar a janela. Sem Python ou modelos, a
 //! captura, a reprodução e a revisão continuam a funcionar.
 
+pub mod ai;
 pub mod artifacts;
 pub mod audio;
 pub mod commands;
@@ -23,6 +24,7 @@ pub mod db;
 pub mod domain;
 pub mod interview;
 pub mod legacy;
+pub mod practice;
 pub mod service;
 pub mod storage;
 pub mod worker;
@@ -128,6 +130,16 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::interview_ai_load_ai_settings,
+            commands::interview_ai_save_ai_settings,
+            commands::interview_ai_save_ai_key,
+            commands::interview_ai_remove_ai_key,
+            commands::interview_ai_accept_ai_consent,
+            commands::interview_ai_request_follow_up,
+            commands::interview_ai_waive_follow_up,
+            commands::interview_ai_generate_feedback,
+            commands::interview_ai_load_feedback,
+            commands::interview_ai_retry_ai_publication,
             commands::interview_snapshot,
             commands::interview_list_questions,
             commands::interview_create_question,
@@ -150,6 +162,29 @@ pub fn run() {
             commands::interview_restart_worker,
             commands::interview_prepare_close,
             commands::interview_retry_database,
+            commands::interview_create_practice,
+            commands::interview_load_practice,
+            commands::interview_list_practices,
+            commands::interview_abandon_practice,
+            commands::interview_start_practice_recording,
+            commands::interview_save_practice_review,
+            commands::interview_confirm_practice_answer,
+            commands::interview_transcribe_practice_response,
+            commands::interview_list_stories,
+            commands::interview_create_story,
+            commands::interview_update_story,
+            commands::interview_load_preparation,
+            commands::interview_select_story,
+            commands::interview_resolve_preparation,
+            commands::interview_retry_preparation_publication,
+            commands::interview_request_rewrite,
+            commands::interview_list_rewrites,
+            commands::interview_evaluate_practice,
+            commands::interview_load_practice_report,
+            commands::interview_load_rewrite_preference,
+            commands::interview_set_rewrite_level,
+            commands::interview_compare_responses,
+            commands::interview_load_training_usage,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao arrancar a aplicação Tauri");

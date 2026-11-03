@@ -50,6 +50,7 @@ export default function SessionSetup({
   snapshot: InterviewSnapshot;
   onStarted: (snapshot: InterviewSnapshot) => void;
 }) {
+  const [mode, setMode] = useState<"local_v2" | "ai_v3">("local_v2");
   const [category, setCategory] = useState<Category | null>(null);
   const [countText, setCountText] = useState(String(DEFAULT_COUNT));
   const [questions, setQuestions] = useState<Question[] | null>(null);
@@ -137,6 +138,7 @@ export default function SessionSetup({
       intention.current = { requestId: newRequestId(), category, count };
     }
     const request: StartSession = {
+      mode,
       requestId: intention.current.requestId,
       category,
       count,
@@ -195,92 +197,113 @@ export default function SessionSetup({
           </div>
         </div>
       ) : (
-        <form
-          className="practice__form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void start();
-          }}
-        >
-          <div className="practice__field">
-            <label htmlFor="setup-category">Categoria</label>
+        <>
+          <label>
+            Modo de treino
             <select
-              id="setup-category"
-              className="practice__select"
-              value={category ?? ""}
-              onChange={(event) => {
-                const next = event.target.value;
-                setCategory(next === "" ? null : (next as Category));
-                setStartError(null);
+              value={mode}
+              onChange={(e) => {
+                setMode(e.target.value as "local_v2" | "ai_v3");
+                intention.current = null;
               }}
               disabled={starting}
             >
-              <option value="">Todas as categorias</option>
-              {(Object.keys(CATEGORY_LABELS) as Category[]).map((value) => (
-                <option key={value} value={value}>
-                  {CATEGORY_LABELS[value]}
-                </option>
-              ))}
+              <option value="local_v2">Local, sem IA</option>
+              <option value="ai_v3">
+                Tutor com IA — envia texto confirmado
+              </option>
             </select>
-          </div>
-
-          <div className="practice__field">
-            <label htmlFor="setup-count">Quantidade de perguntas</label>
-            <input
-              id="setup-count"
-              className="practice__input"
-              type="number"
-              min={1}
-              step={1}
-              inputMode="numeric"
-              value={countText}
-              onChange={(event) => {
-                setCountText(event.target.value);
-                setStartError(null);
-              }}
-              disabled={starting || loading}
-              aria-invalid={quantityError !== null}
-              aria-describedby={[
-                "setup-eligible",
-                quantityError ? "setup-count-error" : null,
-                suggestionTooHigh ? "setup-count-warning" : null,
-              ]
-                .filter(Boolean)
-                .join(" ")}
-            />
-            <p className="practice__hint" id="setup-eligible">
-              {loading
-                ? "A carregar perguntas…"
-                : `${questionsLabel(eligible)} para esta escolha.`}
-            </p>
-          </div>
-
-          {quantityError ? (
-            <p className="practice__error-text" id="setup-count-error">
-              {quantityError}
-            </p>
-          ) : null}
-
-          {suggestionTooHigh ? (
-            <p className="practice__warning" id="setup-count-warning">
-              Só existem {eligible} perguntas elegíveis. Ajuste a quantidade
-              antes de iniciar a entrevista.
-            </p>
-          ) : null}
-
-          <div className="practice__actions">
-            <button type="submit" disabled={!canStart}>
-              {starting ? "A iniciar entrevista…" : "Iniciar entrevista"}
-            </button>
-          </div>
-
-          {startError ? (
-            <div className="practice__notice practice__notice--error" role="alert">
-              <p>{startError.message}</p>
-              <p className="practice__hint">Código: {startError.code}.</p>
+          </label>
+          <form
+            className="practice__form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void start();
+            }}
+          >
+            <div className="practice__field">
+              <label htmlFor="setup-category">Categoria</label>
+              <select
+                id="setup-category"
+                className="practice__select"
+                value={category ?? ""}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setCategory(next === "" ? null : (next as Category));
+                  setStartError(null);
+                }}
+                disabled={starting}
+              >
+                <option value="">Todas as categorias</option>
+                {(Object.keys(CATEGORY_LABELS) as Category[]).map((value) => (
+                  <option key={value} value={value}>
+                    {CATEGORY_LABELS[value]}
+                  </option>
+                ))}
+              </select>
             </div>
-          ) : null}
-        </form>
+
+            <div className="practice__field">
+              <label htmlFor="setup-count">Quantidade de perguntas</label>
+              <input
+                id="setup-count"
+                className="practice__input"
+                type="number"
+                min={1}
+                step={1}
+                inputMode="numeric"
+                value={countText}
+                onChange={(event) => {
+                  setCountText(event.target.value);
+                  setStartError(null);
+                }}
+                disabled={starting || loading}
+                aria-invalid={quantityError !== null}
+                aria-describedby={[
+                  "setup-eligible",
+                  quantityError ? "setup-count-error" : null,
+                  suggestionTooHigh ? "setup-count-warning" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              />
+              <p className="practice__hint" id="setup-eligible">
+                {loading
+                  ? "A carregar perguntas…"
+                  : `${questionsLabel(eligible)} para esta escolha.`}
+              </p>
+            </div>
+
+            {quantityError ? (
+              <p className="practice__error-text" id="setup-count-error">
+                {quantityError}
+              </p>
+            ) : null}
+
+            {suggestionTooHigh ? (
+              <p className="practice__warning" id="setup-count-warning">
+                Só existem {eligible} perguntas elegíveis. Ajuste a quantidade
+                antes de iniciar a entrevista.
+              </p>
+            ) : null}
+
+            <div className="practice__actions">
+              <button type="submit" disabled={!canStart}>
+                {starting ? "A iniciar entrevista…" : "Iniciar entrevista"}
+              </button>
+            </div>
+
+            {startError ? (
+              <div
+                className="practice__notice practice__notice--error"
+                role="alert"
+              >
+                <p>{startError.message}</p>
+                <p className="practice__hint">Código: {startError.code}.</p>
+              </div>
+            ) : null}
+          </form>
+        </>
       )}
     </section>
   );

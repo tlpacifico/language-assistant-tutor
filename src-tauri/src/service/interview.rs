@@ -14,7 +14,8 @@
 use super::*;
 use crate::interview::{
     AdvanceSession, AudioSelection, Category, ConfirmAnswer, Question, QuestionInput,
-    RecordingState, SessionDetail, SessionQuestion, SessionStatus, StartSession, Version,
+    RecordingState, RecordingView, SessionDetail, SessionQuestion, SessionStatus, StartSession,
+    Version,
 };
 use crate::worker::protocol::TranscribeParams;
 
@@ -46,8 +47,12 @@ impl AppService {
     ///
     /// Editar durante uma captura é permitido (como na fase 1); durante a
     /// finalização a escrita é recusada para não competir com a publicação.
-    pub async fn save_review(&self, request: SaveReview) -> Result<InterviewSnapshot, AppError> {
+    pub async fn save_review(
+        &self,
+        mut request: SaveReview,
+    ) -> Result<InterviewSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
+        request.target = self.resolve_answer_target(request.target).await?;
         let finalizing = self.lock_state().finalizing;
         if finalizing {
             let error = AppError::busy(
@@ -74,9 +79,10 @@ impl AppService {
     /// seleção nem transcrição.
     pub async fn confirm_answer(
         &self,
-        request: ConfirmAnswer,
+        mut request: ConfirmAnswer,
     ) -> Result<InterviewSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
+        request.target = self.resolve_answer_target(request.target).await?;
         let capture_busy = {
             let state = self.lock_state();
             state.recording_id.is_some() || state.finalizing
@@ -256,10 +262,10 @@ impl AppService {
             self.record_error(&error);
             return Err(error);
         };
-        let Some(question) = detail
+        let Some(entry) = detail
             .questions
             .iter()
-            .find(|question| question.question.id == session_question_id)
+            .find(|question| question.active().question.id == session_question_id)
         else {
             let error = stale_source(
                 "A pergunta indicada não pertence à entrevista em curso. Atualize a página.",
@@ -267,6 +273,8 @@ impl AppService {
             self.record_error(&error);
             return Err(error);
         };
+        let question = entry.active();
+        let main_question_id = entry.question.id.clone();
         let confirmed = question.confirmation.is_some();
         let position = question.question.position;
         let selection_version = question.question.selection_version;
@@ -317,8 +325,13 @@ impl AppService {
         let recording_id = reserved.id.clone();
         let identity = CaptureIdentity {
             recording_id: recording_id.clone(),
-            session_id,
-            session_question_id,
+            session_id: session_id.clone(),
+            session_question_id: session_question_id.clone(),
+            owner: CaptureOwner::Interview {
+                session_id,
+                session_question_id: main_question_id,
+                answer_id: session_question_id,
+            },
         };
 
         let artifacts = self.artifacts.clone();
@@ -511,7 +524,10 @@ impl AppService {
             self.record_error(&error);
         }
 
-        if transcribe && self.transcriber_ready() {
+        if transcribe
+            && matches!(identity.owner, CaptureOwner::Interview { .. })
+            && self.transcriber_ready()
+        {
             if let Some(target) = self.automatic_target() {
                 // A resposta já está publicada: uma falha do auxiliar fica
                 // visível e o áudio conserva-se para repetir.
@@ -525,7 +541,8 @@ impl AppService {
     /// Alvo da transcrição automática: a gravação selecionada de uma pergunta
     /// publicada e ainda não confirmada.
     fn automatic_target(&self) -> Option<AnswerTarget> {
-        let current = self.lock_state().current.clone()?;
+        let detail = self.lock_state().current.clone()?;
+        let current = detail.active().clone();
         if current.confirmation.is_some() {
             return None;
         }
@@ -538,6 +555,7 @@ impl AppService {
             return None;
         }
         Some(AnswerTarget {
+            answer_id: None,
             session_id: current.question.session_id,
             session_question_id: current.question.id,
             recording_id: recording.id.clone(),
@@ -638,6 +656,7 @@ impl AppService {
         &self,
         target: AnswerTarget,
     ) -> Result<InterviewSnapshot, AppError> {
+        let target = self.resolve_answer_target(target).await?;
         let _transition = self.transitions.lock().await;
         self.submit_transcription_locked(target).await
     }
@@ -686,7 +705,8 @@ impl AppService {
         let Some(question) = detail
             .questions
             .iter()
-            .find(|question| question.question.id == target.session_question_id)
+            .find(|question| question.active().question.id == target.session_question_id)
+            .map(|q| q.active())
         else {
             let error = stale_source(
                 "A pergunta da transcrição não pertence a esta entrevista. Atualize a página.",
@@ -735,6 +755,19 @@ impl AppService {
             self.record_error(&error);
             return Err(error);
         }
+        self.dispatch_transcription(target, recording.clone()).await
+    }
+
+    /// Submete a transcrição de uma gravação já validada, partilhada entre a
+    /// entrevista e a prática.
+    ///
+    /// O alvo e a gravação já foram validados pelo chamador; aqui verificam-se a
+    /// ocupação, o auxiliar, o modelo e preparam-se o áudio e a operação.
+    pub(super) async fn dispatch_transcription(
+        &self,
+        target: AnswerTarget,
+        recording: RecordingView,
+    ) -> Result<InterviewSnapshot, AppError> {
         let normalized_file = recording.normalized_file.clone();
         let original_file = recording.original_file.clone();
         let duration_ms = recording
@@ -773,6 +806,7 @@ impl AppService {
                 return Err(error);
             }
         };
+        let database = self.database()?;
         let audio_path = match self
             .transcription_audio(&database, &target, normalized_file, original_file)
             .await
@@ -799,6 +833,7 @@ impl AppService {
             kind: OperationKind::Transcribe,
             stage: JobStage::Loading,
             target: OperationTarget {
+                answer_id: None,
                 session_id: target.session_id.clone(),
                 session_question_id: target.session_question_id.clone(),
                 recording_id: Some(target.recording_id.clone()),
@@ -926,12 +961,159 @@ impl AppService {
         }
 
         match target {
+            AudioSelection::FollowUp {
+                session_id,
+                session_question_id,
+                answer_id,
+            } => {
+                let database = self.database()?;
+                let sid = session_id.clone();
+                let main = session_question_id.clone();
+                let aid = answer_id.clone();
+                let valid=database_task(move||database.with_connection(|c|c.query_row("SELECT EXISTS(SELECT 1 FROM answer_slots WHERE id=?1 AND session_question_id=?2 AND session_id=?3 AND role='follow_up')",rusqlite::params![aid,main,sid],|r|r.get::<_,bool>(0)).map_err(crate::db::ai::sql_error))).await?;
+                if !valid {
+                    return Err(crate::ai::failure(
+                        "Seguimento não pertence à pergunta indicada.",
+                    ));
+                }
+                self.play_question(session_id, answer_id).await
+            }
             AudioSelection::Question {
                 session_id,
                 session_question_id,
             } => self.play_question(session_id, session_question_id).await,
             AudioSelection::Recording { recording_id } => self.play_recording(recording_id).await,
             AudioSelection::Legacy { attempt_id } => self.play_legacy(attempt_id).await,
+            AudioSelection::Rewrite { rewrite_id } => self.play_rewrite(rewrite_id).await,
+            AudioSelection::PracticeQuestion { practice_id } => {
+                let database = self.database()?;
+                let db = database.clone();
+                let practice = match database_task(move || db.load_practice(&practice_id)).await {
+                    Ok(practice) => practice,
+                    Err(error) => {
+                        self.record_error(&error);
+                        return Err(error);
+                    }
+                };
+                self.play_question(practice.source_session_id, practice.session_question_id)
+                    .await
+            }
+        }
+    }
+
+    /// Reproduz a voz de uma reformulação guardada.
+    ///
+    /// A única fonte do áudio é `rewrites.spoken_text` (a união dos segmentos
+    /// validados): explicações, alterações e lacunas nunca vão ao Kokoro. O
+    /// derivado vive em `rewrite-cache/<rewriteId>/<hash>.wav` e é indexado em
+    /// `rewrite_audio`; um ficheiro em falta ou uma síntese falhada repetem só
+    /// o trabalho local, nunca um pedido à API.
+    async fn play_rewrite(&self, rewrite_id: Id) -> Result<InterviewSnapshot, AppError> {
+        let database = self.database()?;
+        let db = database.clone();
+        let id = rewrite_id.clone();
+        let voice = match database_task(move || db.load_rewrite_voice(&id)).await {
+            Ok(voice) => voice,
+            Err(error) => {
+                self.record_error(&error);
+                return Err(error);
+            }
+        };
+
+        let config_hash = synthesis_cache_key(&voice.spoken_text);
+        let relative = format!("{REWRITE_CACHE_DIR}/{}/{config_hash}.wav", voice.rewrite_id);
+        let store = ArtifactStore::new(self.legacy_root.clone());
+        let reference = relative.clone();
+        let path = match storage_task(move || store.resolve(&reference)).await {
+            Ok(path) => path,
+            Err(error) => {
+                self.record_error(&error);
+                return Err(error);
+            }
+        };
+        let row = RewriteAudioRow {
+            rewrite_id: voice.rewrite_id.clone(),
+            config_hash: config_hash.clone(),
+            relative_file: relative,
+            text_hash: text_digest(&voice.spoken_text),
+            voice: SYNTHESIS_VOICE.to_owned(),
+            speed: f64::from(SYNTHESIS_SPEED),
+            state: RewriteAudioState::Pending,
+        };
+
+        if path.is_file() {
+            let candidate = path.clone();
+            match storage_task(move || validate_synthesis_wav(&candidate)).await {
+                Ok(()) => {
+                    let ready = RewriteAudioRow {
+                        state: RewriteAudioState::Ready,
+                        ..row
+                    };
+                    let db = database.clone();
+                    if let Err(error) = database_task(move || db.record_rewrite_audio(&ready)).await
+                    {
+                        self.record_error(&error);
+                    }
+                    return self.play_path(PlaybackTarget::Response, path).await;
+                }
+                // Um derivado inválido nunca é reproduzido: volta a sintetizar-se.
+                Err(_) => {
+                    let _ = fs::remove_file(&path);
+                }
+            }
+        }
+
+        // O texto já está guardado; o índice passa a `pending` antes da síntese.
+        let db = database.clone();
+        let pending = row.clone();
+        if let Err(error) = database_task(move || db.record_rewrite_audio(&pending)).await {
+            self.record_error(&error);
+            return Err(error);
+        }
+        let question = match self
+            .find_session_question(&database, &voice.session_id, &voice.session_question_id)
+            .await
+        {
+            Ok(question) => question,
+            Err(error) => {
+                self.fail_rewrite_audio(&database, &row).await;
+                return Err(error);
+            }
+        };
+        let key = RewriteAudioKey {
+            rewrite_id: voice.rewrite_id,
+            config_hash,
+        };
+        match self
+            .start_synthesis(
+                &database,
+                question,
+                voice.spoken_text,
+                path,
+                PlaybackTarget::Response,
+                Some(key),
+            )
+            .await
+        {
+            Ok(snapshot) => Ok(snapshot),
+            Err(error) => {
+                self.fail_rewrite_audio(&database, &row).await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Marca o derivado como `failed` sem apagar o texto nem tocar na rede.
+    async fn fail_rewrite_audio(&self, database: &Database, row: &RewriteAudioRow) {
+        let db = database.clone();
+        let rewrite_id = row.rewrite_id.clone();
+        let config_hash = row.config_hash.clone();
+        if let Err(error) = database_task(move || {
+            db.set_rewrite_audio_state(&rewrite_id, &config_hash, RewriteAudioState::Failed)
+        })
+        .await
+        {
+            self.record_error(&error);
         }
     }
 
@@ -956,7 +1138,31 @@ impl AppService {
                 }
             }
         }
+        let text = question.text.clone();
+        self.start_synthesis(
+            &database,
+            question,
+            text,
+            cache,
+            PlaybackTarget::Question,
+            None,
+        )
+        .await
+    }
 
+    /// Pede ao auxiliar a síntese de `text` para `cache`, registando a operação.
+    ///
+    /// O resultado só é aceite para este pedido e ficheiro (ver `apply_synthesis`).
+    async fn start_synthesis(
+        &self,
+        database: &Database,
+        question: SessionQuestion,
+        text: String,
+        cache: PathBuf,
+        target: PlaybackTarget,
+        rewrite: Option<RewriteAudioKey>,
+    ) -> Result<InterviewSnapshot, AppError> {
+        let database = database.clone();
         let synthesis = self.lock_state().availability.synthesis.clone();
         if synthesis.status != ComponentStatus::Ready {
             let error = model_missing(synthesis.message.unwrap_or_else(|| {
@@ -1005,7 +1211,7 @@ impl AppService {
         }
 
         let request_id = uuid::Uuid::new_v4().to_string();
-        let params = SynthesizeParams::new(question.text, cache.clone());
+        let params = SynthesizeParams::new(text, cache.clone());
         let request = match WorkerRequest::synthesize(request_id.clone(), params) {
             Ok(request) => request,
             Err(error) => {
@@ -1018,6 +1224,7 @@ impl AppService {
             kind: OperationKind::Synthesize,
             stage: JobStage::Loading,
             target: OperationTarget {
+                answer_id: None,
                 session_id: question.session_id,
                 session_question_id: question.id,
                 recording_id: None,
@@ -1043,7 +1250,12 @@ impl AppService {
             self.record_error(&error);
             return Err(error);
         }
-        *self.lock_synthesis() = Some((request_id, cache));
+        *self.lock_synthesis() = Some(PendingSynthesis {
+            request_id,
+            path: cache,
+            target,
+            rewrite,
+        });
 
         match worker_task(move || control.submit(request)).await {
             Ok(()) => Ok(self.snapshot()),
@@ -1073,7 +1285,7 @@ impl AppService {
             .lock_state()
             .current
             .as_ref()
-            .map(|detail| detail.question.clone());
+            .map(|detail| detail.active().question.clone());
         if let Some(question) = current {
             if question.session_id == session_id && question.id == session_question_id {
                 return Ok(question);
@@ -1093,8 +1305,8 @@ impl AppService {
         detail
             .questions
             .into_iter()
-            .find(|detail| detail.question.id == session_question_id)
-            .map(|detail| detail.question)
+            .flat_map(|d|{let mut v=vec![d.question];if let Some(f)=d.follow_up{v.push(f.question);}v})
+            .find(|q|q.id==session_question_id)
             .ok_or_else(|| {
                 stale_source(
                     "A pergunta indicada não pertence a esta entrevista. Atualize a página e tente novamente.",

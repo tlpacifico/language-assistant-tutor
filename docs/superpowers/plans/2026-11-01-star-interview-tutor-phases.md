@@ -1,7 +1,7 @@
 # Plano das fases — Tutor de entrevistas STAR
 
 Data: 2026-11-01  
-Estado: divisão em fases aprovada; fases 1 e 2 implementadas e verificadas automaticamente, com a validação manual do utilizador pendente em ambos os registos; fase 3 não iniciada.
+Estado: divisão em fases aprovada; fases 1 e 2 implementadas e verificadas automaticamente, com a validação manual do utilizador pendente em ambos os registos; fase 3 antecipada por autorização do utilizador; aceitação manual pendente; fase 4 implementada e verificada automaticamente, aceitação pendente.
 
 ## Objetivo
 
@@ -69,7 +69,7 @@ O [desenho aprovado do MVP](../specs/2026-11-01-star-interview-tutor-design.md) 
 
 **Plano técnico:** [Implementação da fase 2](2026-11-02-phase-2-guided-interview-implementation.md), com as tarefas 1 a 9 executadas e a tarefa 10 parcial (falta a validação manual).
 
-**Estado:** implementação completa e verificada automaticamente em 2026-11-02. `.\scripts\verify.ps1` deu 8/8 checks (151 testes Rust, 50 Vitest, 36 pytest sem `models`), o teste real `-m models` deu `2 passed`, o build release `--no-bundle` e o arranque/fecho do binário terminaram com código 0. A matriz F2-01 a F2-16 e a evidência estão em [docs/phase-2/validation.md](../../phase-2/validation.md); os critérios manuais continuam pendentes e não são dados como concluídos. A fase 3 **não** foi iniciada.
+**Estado:** implementação completa e verificada automaticamente em 2026-11-02. `.\scripts\verify.ps1` deu 8/8 checks (151 testes Rust, 50 Vitest, 36 pytest sem `models`), o teste real `-m models` deu `2 passed`, o build release `--no-bundle` e o arranque/fecho do binário terminaram com código 0. A matriz F2-01 a F2-16 e a evidência estão em [docs/phase-2/validation.md](../../phase-2/validation.md); os critérios manuais continuam pendentes e não são dados como concluídos. A fase 3 foi antecipada por autorização explícita do utilizador, mantendo as aceitações anteriores pendentes.
 
 ### Entregas
 
@@ -96,6 +96,12 @@ O [desenho aprovado do MVP](../specs/2026-11-01-star-interview-tutor-design.md) 
 **Progresso em 2026-11-02:** as entregas acima estão implementadas (SQLite com `rusqlite`, banco editável, sessões com cópias fixas, artefactos e reconciliação, revisões e confirmações imutáveis, histórico e consulta de leitura dos treinos da fase 1) e a automação está verde. Os critérios de conclusão continuam **por marcar**: dependem da validação manual do utilizador descrita em [docs/phase-2/validation.md](../../phase-2/validation.md), secção 4. Não marcar a fase como concluída antes dessa evidência.
 
 ## Fase 3 — Tutor com IA
+
+**Spec:** [Tutor com IA](../specs/2026-11-02-phase-3-ai-tutor-design.md).
+
+**Plano técnico:** [Implementação da fase 3](2026-11-02-phase-3-ai-tutor-implementation.md).
+
+**Estado:** implementação antecipada por autorização explícita do utilizador em 2026-11-02. Ver [preparação](../../phase-3/setup.md) e [validação](../../phase-3/validation.md). As aceitações manuais de todas as fases anteriores continuam pendentes.
 
 **Objetivo:** acrescentar seguimentos úteis e feedback específico, preservando o controlo da entrevista na aplicação.
 
@@ -126,6 +132,8 @@ O [desenho aprovado do MVP](../specs/2026-11-01-star-interview-tutor-design.md) 
 **Fica para depois:** reformulação com áudio, comparação de tentativas e banco de histórias pessoais.
 
 ## Fase 4 — Melhorar e repetir
+
+**Estado (2026-11-03):** [spec](../specs/2026-11-03-phase-4-improve-repeat-design.md) e [plano técnico](2026-11-03-phase-4-improve-repeat-implementation.md) executados por autorização do utilizador; implementação verificada automaticamente (8/8 checks: 246 Rust, 97 Vitest, 36 pytest). Ver [preparação](../../phase-4/setup.md) e [validação](../../phase-4/validation.md). **Não aceite**: faltam o roteiro manual F4-16 e a inferência paga real; os critérios de conclusão abaixo continuam por validar com o utilizador.
 
 **Objetivo:** fechar o ciclo de aprendizagem com sugestões concretas e prática autónoma.
 
@@ -184,4 +192,4 @@ O [desenho aprovado do MVP](../specs/2026-11-01-star-interview-tutor-design.md) 
 
 ## Próximo passo
 
-A implementação e a verificação automática da fase 1 estão registadas em [validação da fase 1](../../phase-1/validation.md); os critérios manuais aí pendentes não são considerados concluídos sem evidência. O mesmo vale para a fase 2: implementação e automação estão registadas em [validação da fase 2](../../phase-2/validation.md), com a matriz F2-01 a F2-16 e a lista do que falta validar com o utilizador. O próximo passo é a validação manual das fases 1 e 2; a fase 3 (tutor com IA) **não** foi iniciada nem planeada em detalhe.
+A implementação e a verificação automática da fase 1 estão registadas em [validação da fase 1](../../phase-1/validation.md); os critérios manuais aí pendentes não são considerados concluídos sem evidência. O mesmo vale para a fase 2: implementação e automação estão registadas em [validação da fase 2](../../phase-2/validation.md), com a matriz F2-01 a F2-16 e a lista do que falta validar com o utilizador. O utilizador autorizou antecipar a fase 3; a implementação e a evidência estão nos documentos acima. O próximo passo é a validação manual das fases 1, 2 e 3 e o exercício da integração paga real. A pedido do utilizador em 2026-11-03, a fase 4 foi especificada, planeada e implementada, com verificação automática verde; a aceitação manual e a inferência paga real continuam pendentes e a fase 5 não foi iniciada. Nada disto constitui aceitação das fases anteriores.

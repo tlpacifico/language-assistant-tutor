@@ -1,3 +1,4 @@
+import AiSettings from "./features/ai/AiSettings";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -16,7 +17,10 @@ import type {
   GuardRequest,
   GuardSource,
 } from "./features/navigation/NavigationGuard";
+import Practice from "./features/practice/Practice";
 import QuestionBank from "./features/questions/QuestionBank";
+import StoryBank from "./features/stories/StoryBank";
+import { PendingPreparationNotice } from "./features/stories/StorySupport";
 import SessionSetup from "./features/sessions/SessionSetup";
 import "./features/practice/practice.css";
 
@@ -42,13 +46,22 @@ const DATABASE_LABELS: Record<InterviewSnapshot["database"], string> = {
 };
 
 /** Páginas da aplicação, sem router nem gestor global de estado. */
-type Page = "setup" | "bank" | "interview" | "history";
+type Page =
+  | "setup"
+  | "bank"
+  | "stories"
+  | "interview"
+  | "history"
+  | "practice"
+  | "ai";
 
 const PAGES: Array<{ id: Page; label: string }> = [
   { id: "setup", label: "Preparação" },
   { id: "bank", label: "Banco de perguntas" },
+  { id: "stories", label: "Histórias" },
   { id: "interview", label: "Entrevista" },
   { id: "history", label: "Histórico" },
+  { id: "ai", label: "Configuração IA" },
 ];
 
 /** Motivo apresentado quando uma página é pedida durante captura/finalização. */
@@ -113,6 +126,7 @@ export default function App({
   const [actionError, setActionError] = useState<AppError | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [page, setPage] = useState<Page>("setup");
+  const [practiceId, setPracticeId] = useState<string | null>(null);
   const [navigationBlocked, setNavigationBlocked] = useState(false);
   const [guardRequest, setGuardRequest] = useState<GuardRequest | null>(null);
   const [bankGuard, setBankGuard] = useState<GuardSource | null>(null);
@@ -211,8 +225,7 @@ export default function App({
       });
       return;
     }
-    const anyDirty =
-      review.dirty || (bankGuardRef.current?.dirty ?? false);
+    const anyDirty = review.dirty || (bankGuardRef.current?.dirty ?? false);
     if (!anyDirty) {
       void proceed();
       return;
@@ -233,7 +246,14 @@ export default function App({
     // A entrevista é sempre um destino seguro: é onde vivem a captura e o
     // botão de terminar. Sem esta exceção, ficar noutra página durante uma
     // captura tornaria o botão inacessível.
-    if (busy && next !== "interview") {
+    // Com uma captura de prática, a página da prática é o destino seguro.
+    const safeHome: Page =
+      snapshot?.current || snapshot?.activeSession
+        ? "interview"
+        : snapshot?.practice?.activePractice
+          ? "practice"
+          : "interview";
+    if (busy && next !== safeHome) {
       // A captura e a finalização não podem ser interrompidas por navegação.
       setNavigationBlocked(true);
       return;
@@ -266,6 +286,22 @@ export default function App({
     requestDecision("navigate", () => setPage("interview"));
   }
 
+  /**
+   * Abre uma prática (nova, pendente ou já feita). Pode ser pedida com a
+   * revisão por guardar: a decisão partilhada resolve-a antes de mudar.
+   */
+  function openPractice(id: string): void {
+    if (busy) {
+      setNavigationBlocked(true);
+      return;
+    }
+    setNavigationBlocked(false);
+    requestDecision("navigate", () => {
+      setPracticeId(id);
+      setPage("practice");
+    });
+  }
+
   async function closeNow(): Promise<void> {
     if (closingRef.current) {
       return;
@@ -280,8 +316,7 @@ export default function App({
       // Lido no momento do fecho: uma edição feita durante a escrita conta pela
       // versão mais recente do rascunho, não pela fotografia anterior.
       const stillDirty =
-        reviewRef.current.isDirty() ||
-        (bankGuardRef.current?.dirty ?? false);
+        reviewRef.current.isDirty() || (bankGuardRef.current?.dirty ?? false);
       if (stillDirty) {
         // Uma edição que tenha escapado ao bloqueio do editor não pode ser
         // perdida em `destroy`: a janela fica e a decisão reaparece.
@@ -400,9 +435,7 @@ export default function App({
     }
   }
 
-  async function run(
-    action: () => Promise<InterviewSnapshot>,
-  ): Promise<void> {
+  async function run(action: () => Promise<InterviewSnapshot>): Promise<void> {
     setActionError(null);
     try {
       applySnapshot(await action());
@@ -414,10 +447,21 @@ export default function App({
   const database = snapshot?.database ?? "opening";
   const databaseMessage = snapshot?.lastError?.message ?? null;
   const pendingRecordingId = snapshot?.pendingRecordingId ?? null;
+  const pendingPracticeId = snapshot?.practice?.activePractice?.id ?? null;
 
   let content: ReactNode;
-  if (page === "history") {
-    content = <History client={activeClient} onResume={resumeSession} />;
+  if (page === "ai") {
+    content = <AiSettings client={activeClient} />;
+  } else if (page === "history") {
+    content = (
+      <History
+        client={activeClient}
+        onResume={resumeSession}
+        snapshot={snapshot}
+        onSnapshot={applySnapshot}
+        onOpenPractice={openPractice}
+      />
+    );
   } else if (!snapshot) {
     content = (
       <p className="practice__hint">A carregar o estado da aplicação…</p>
@@ -438,6 +482,32 @@ export default function App({
         client={activeClient}
         reportGuard={reportBankGuard}
         onReplaceDraft={(proceed) => requestDecision("switch", proceed)}
+      />
+    );
+  } else if (page === "stories") {
+    content = (
+      <StoryBank
+        client={activeClient}
+        reportGuard={reportBankGuard}
+        onReplaceDraft={(proceed) => requestDecision("switch", proceed)}
+      />
+    );
+  } else if (page === "practice" && practiceId !== null) {
+    content = (
+      <Practice
+        client={activeClient}
+        snapshot={snapshot}
+        onSnapshot={applySnapshot}
+        review={review}
+        practiceId={practiceId}
+        requestDecision={requestDecision}
+        closing={closing}
+        onRecordingPending={setRecordPending}
+        onBack={() => requestDecision("navigate", () => setPage("history"))}
+        onOpenPractice={(id) => {
+          setPracticeId(id);
+          setPage("practice");
+        }}
       />
     );
   } else if (page === "interview") {
@@ -468,7 +538,9 @@ export default function App({
   return (
     <main className="practice" aria-labelledby="app-title">
       <header className="practice__header">
-        <p className="practice__eyebrow">Entrevistas comportamentais em inglês</p>
+        <p className="practice__eyebrow">
+          Entrevistas comportamentais em inglês
+        </p>
         <h1 className="practice__question" id="app-title">
           Tutor de entrevistas
         </h1>
@@ -505,6 +577,28 @@ export default function App({
       {closing ? (
         <div className="practice__notice" role="status">
           <p>A preparar o fecho da aplicação…</p>
+        </div>
+      ) : null}
+
+      {snapshot ? (
+        <PendingPreparationNotice
+          client={activeClient}
+          snapshot={snapshot}
+          onSnapshot={applySnapshot}
+        />
+      ) : null}
+
+      {pendingPracticeId && page !== "practice" ? (
+        <div className="practice__notice" role="status">
+          <p>
+            Existe uma prática pendente. Retome-a, confirme-a ou abandone-a
+            antes de começar uma entrevista ou outra prática.
+          </p>
+          <div className="practice__actions">
+            <button type="button" onClick={() => openPractice(pendingPracticeId)}>
+              Retomar prática pendente
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -580,7 +674,9 @@ export default function App({
                       {STATUS_LABELS[component.status] ?? component.status}
                     </span>
                     {component.message ? (
-                      <span className="practice__hint">{component.message}</span>
+                      <span className="practice__hint">
+                        {component.message}
+                      </span>
                     ) : null}
                   </>
                 ) : (
