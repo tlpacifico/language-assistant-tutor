@@ -29,17 +29,25 @@ use crate::interview::Result;
 pub(crate) mod ai;
 mod answers;
 mod operations;
+mod practice;
 mod questions;
 mod sessions;
 
+pub use ai::{CommandIdentity, CommandIdentityLocation};
 pub(crate) use answers::PendingRecording;
 pub use questions::*;
 
 /// Versão do esquema escrita em `PRAGMA user_version`.
-pub const DATABASE_VERSION: u32 = 2;
+pub const DATABASE_VERSION: u32 = 3;
 
 /// Esquema inicial da fase 2, aplicado numa única transação.
 pub const MIGRATION_V1: &str = include_str!("migrations/001_guided_interview.sql");
+
+/// Migração da fase 3 (tutor de IA).
+pub const MIGRATION_V2: &str = include_str!("migrations/002_ai_tutor.sql");
+
+/// Migração da fase 4 (melhorar e repetir).
+pub const MIGRATION_V3: &str = include_str!("migrations/003_improve_repeat.sql");
 
 /// Ligação SQLite partilhável. Os clones referem a mesma ligação protegida.
 #[derive(Clone)]
@@ -62,9 +70,22 @@ impl Database {
 
     /// Abre a base com um esquema explícito, sem aplicar o banco de perguntas.
     ///
-    /// A abertura real usa sempre [`MIGRATION_V1`]; os testes de rollback
-    /// injetam um esquema inválido para provar que a transação reverte.
+    /// A abertura real usa sempre [`MIGRATION_V1`], [`MIGRATION_V2`] e
+    /// [`MIGRATION_V3`]; os testes de rollback injetam um esquema inválido para
+    /// provar que a transação reverte.
     pub fn open_with_schema(path: PathBuf, schema: &str) -> Result<Self> {
+        Self::open_with_migrations(path, schema, MIGRATION_V2, MIGRATION_V3)
+    }
+
+    /// Abre a base com as três migrações explícitas, sem aplicar o banco de perguntas.
+    ///
+    /// Suporta vazio→v1→v2→v3, v1→v2→v3 e v2→v3, cada abertura numa única
+    /// transação. A versão é lida antes de qualquer escrita; uma versão futura é
+    /// recusada sem alterar nada. As chaves estrangeiras ficam desativadas
+    /// apenas durante a transação de migração e voltam a ativar-se em todos os
+    /// caminhos; `foreign_key_check` é verificada antes do commit. Uma falha
+    /// reverte dados e `user_version`.
+    pub fn open_with_migrations(path: PathBuf, v1: &str, v2: &str, v3: &str) -> Result<Self> {
         let mut connection = Connection::open(&path).map_err(open_failed)?;
 
         // A versão é lida antes de qualquer alteração persistente.
@@ -90,10 +111,14 @@ impl Database {
             let result = (|| {
                 let tx = connection.transaction().map_err(migration_failed)?;
                 if version == 0 {
-                    tx.execute_batch(schema).map_err(migration_failed)?;
+                    tx.execute_batch(v1).map_err(migration_failed)?;
                 }
-                tx.execute_batch(include_str!("migrations/002_ai_tutor.sql"))
-                    .map_err(migration_failed)?;
+                if version <= 1 {
+                    tx.execute_batch(v2).map_err(migration_failed)?;
+                }
+                if version <= 2 {
+                    tx.execute_batch(v3).map_err(migration_failed)?;
+                }
                 let bad = tx
                     .prepare("PRAGMA foreign_key_check")
                     .map_err(migration_failed)?
@@ -106,7 +131,7 @@ impl Database {
                         true,
                     ));
                 }
-                tx.execute_batch("PRAGMA user_version=2;")
+                tx.execute_batch(&format!("PRAGMA user_version={DATABASE_VERSION};"))
                     .map_err(migration_failed)?;
                 tx.commit().map_err(migration_failed)
             })();

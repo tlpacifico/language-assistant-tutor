@@ -24,6 +24,7 @@ pub mod db;
 pub mod domain;
 pub mod interview;
 pub mod legacy;
+pub mod practice;
 pub mod service;
 pub mod storage;
 pub mod worker;

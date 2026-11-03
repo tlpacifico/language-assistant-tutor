@@ -155,6 +155,12 @@
     "lastError": null,
     "aiJob": null,
     "pendingAiPublication": null,
-    "currentAnswer": null
+    "currentAnswer": null,
+    "practice": {
+      "revision": 0,
+      "activePractice": null,
+      "activeOwner": null,
+      "pendingPreparation": null
+    }
   }
 }

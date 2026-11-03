@@ -314,15 +314,21 @@ json=excluded.json",
             let req = Uuid::new_v4().to_string();
             tx.execute(
                 "INSERT OR IGNORE INTO ai_requests(id,
-purpose,
-question_id,
-session_id,
-sources_json)
+ purpose,
+ question_id,
+ session_id,
+ practice_id,
+ origin_key,
+ variant_key,
+ sources_json)
  VALUES (?1,
-?2,
-?3,
-?4,
-?5)",
+ ?2,
+ ?3,
+ ?4,
+ NULL,
+ 'original:' || ?3,
+ 'default',
+ ?5)",
                 params![
                     req,
                     purpose,
@@ -787,4 +793,110 @@ fn self_sources(q: &QuestionDetail) -> Vec<Value> {
         ));
     }
     v
+}
+
+/// Local onde um identificador de comando já foi visto.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandIdentityLocation {
+    AiAttempt,
+    AiReceipt,
+    CommandReceipt,
+}
+
+/// Identidade de um `requestId` já aplicado, para o preflight de comandos.
+///
+/// `Found` indica a única ocorrência e o seu conteúdo; `Conflict` indica mais de
+/// uma ocorrência histórica, que é recusada em vez de escolhida arbitrariamente.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandIdentity {
+    NotFound,
+    Found {
+        location: CommandIdentityLocation,
+        kind: Option<String>,
+        payload_hash: String,
+    },
+    Conflict,
+}
+
+/// Consulta o `requestId` em `ai_attempts.command_id`, `ai_receipts.id` e
+/// `command_receipts.request_id`, dentro da transação de quem reserva/muta.
+///
+/// Mais de uma ocorrência é devolvida como [`CommandIdentity::Conflict`]. A
+/// decisão de reutilizar o efeito original (mesma tabela/kind/hash) ou recusar
+/// (conteúdo diferente) pertence ao chamador, que conhece o kind/hash esperados.
+pub(crate) fn lookup_command_identity(
+    connection: &Connection,
+    request_id: &str,
+) -> Result<CommandIdentity> {
+    let attempt_hash: Option<String> = connection
+        .query_row(
+            "SELECT payload_hash FROM ai_attempts WHERE command_id = ?1",
+            [request_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(sql_error)?;
+    let receipt: Option<(String, String)> = connection
+        .query_row(
+            "SELECT kind, payload_hash FROM ai_receipts WHERE id = ?1",
+            [request_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(sql_error)?;
+    let command: Option<(String, String)> = connection
+        .query_row(
+            "SELECT kind, payload_hash FROM command_receipts WHERE request_id = ?1",
+            [request_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(sql_error)?;
+
+    let mut occurrences = 0usize;
+    if attempt_hash.is_some() {
+        occurrences += 1;
+    }
+    if receipt.is_some() {
+        occurrences += 1;
+    }
+    if command.is_some() {
+        occurrences += 1;
+    }
+    if occurrences > 1 {
+        return Ok(CommandIdentity::Conflict);
+    }
+    if let Some(hash) = attempt_hash {
+        return Ok(CommandIdentity::Found {
+            location: CommandIdentityLocation::AiAttempt,
+            kind: None,
+            payload_hash: hash,
+        });
+    }
+    if let Some((kind, hash)) = receipt {
+        return Ok(CommandIdentity::Found {
+            location: CommandIdentityLocation::AiReceipt,
+            kind: Some(kind),
+            payload_hash: hash,
+        });
+    }
+    if let Some((kind, hash)) = command {
+        return Ok(CommandIdentity::Found {
+            location: CommandIdentityLocation::CommandReceipt,
+            kind: Some(kind),
+            payload_hash: hash,
+        });
+    }
+    Ok(CommandIdentity::NotFound)
+}
+
+impl Database {
+    /// Preflight de um identificador de comando, fora de uma transação.
+    ///
+    /// Consulta a identidade de um `requestId` já aplicado sem escrever. A
+    /// variante transacional é [`lookup_command_identity`], usada pelos
+    /// escritores antes de reservar ou mutar.
+    pub fn lookup_command_identity(&self, request_id: &str) -> Result<CommandIdentity> {
+        self.with_connection(|c| lookup_command_identity(c, request_id))
+    }
 }

@@ -426,6 +426,8 @@ pub struct InterviewSnapshot {
     pub playback: Option<PlaybackTarget>,
     pub warnings: Vec<AppError>,
     pub last_error: Option<AppError>,
+    /// Estado de prática; neutro enquanto nenhuma prática está aberta.
+    pub practice: crate::practice::ExerciseSnapshot,
 }
 
 /// Resultado da recuperação no arranque.
@@ -537,4 +539,7 @@ pub struct AnswerSlot {
     pub text: String,
     pub selected_recording_id: Option<Id>,
     pub selection_version: Version,
+    /// Prática a que pertence a tentativa (`attempt`); nulo para inicial/seguimento.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub practice_id: Option<Id>,
 }

@@ -299,6 +299,7 @@ impl InterviewState {
                     text: a.question.text.clone(),
                     selected_recording_id: a.question.selected_recording_id.clone(),
                     selection_version: a.question.selection_version,
+                    practice_id: None,
                 }
             }),
             ai_job: self.ai_job.clone(),
@@ -323,6 +324,7 @@ impl InterviewState {
             playback: self.playback,
             warnings: self.warnings.clone(),
             last_error: self.last_error.clone(),
+            practice: crate::practice::ExerciseSnapshot::neutral(),
         }
     }
 }
