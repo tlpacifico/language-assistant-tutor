@@ -38,6 +38,9 @@ pub fn failure(message: &str) -> AppError {
     AppError::new(code, message, true)
 }
 pub const SCHEMA: &str = "ai-v3-1";
+
+/// Versão do prompt de avaliação de prática (papel `attempt`, uma confirmação).
+pub const PRACTICE_FEEDBACK_PROMPT_VERSION: &str = "practice-feedback-v1";
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Tariff {

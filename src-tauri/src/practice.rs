@@ -446,6 +446,17 @@ pub struct RewritePreference {
     pub updated_at: String,
 }
 
+/// Pedido para alterar a preferência local de nível de reformulação.
+///
+/// Idempotente por `requestId`; a mudança não altera reformulações anteriores.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetRewriteLevel {
+    pub request_id: Id,
+    pub expected_version: Version,
+    pub level: RewriteLevel,
+}
+
 /// Resposta confirmada de uma origem, com as gravações e a confirmação.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

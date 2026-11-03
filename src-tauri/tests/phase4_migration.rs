@@ -833,7 +833,7 @@ fn rewrite_origin_must_match_request() {
             connection
                 .execute(
                     "INSERT INTO ai_requests (id, purpose, question_id, session_id, origin_key, variant_key, sources_json)
-                     VALUES ('air-rw', 'rewrite', 'sq1', 's1', 'original:sq1', 'b1-v1',
+                     VALUES ('air-rw', 'rewrite', 'sq1', 's1', 'original:sq1', 'rewrite:B1:v1:star-text-v1:ai-v3-1',
                              '{\"question\":\"x\",\"criteria\":[],\"answers\":[]}')",
                     [],
                 )

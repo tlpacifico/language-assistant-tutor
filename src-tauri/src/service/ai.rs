@@ -63,7 +63,7 @@ impl AppService {
         }
         Ok(target)
     }
-    fn ai_busy(&self) -> bool {
+    pub(super) fn ai_busy(&self) -> bool {
         if self.ai_closed.load(Ordering::SeqCst) {
             return true;
         }
@@ -179,7 +179,7 @@ impl AppService {
         .await?;
         Ok(v)
     }
-    async fn ai_configuration(&self) -> Result<(AiSettingsView, String)> {
+    pub(super) async fn ai_configuration(&self) -> Result<(AiSettingsView, String)> {
         let v = self.load_ai_settings().await?;
         if !v
             .consent
@@ -232,7 +232,7 @@ impl AppService {
         }
         Ok(self.snapshot())
     }
-    fn ai_job(&self, a: &ReservedAttempt) {
+    pub(super) fn ai_job(&self, a: &ReservedAttempt) {
         self.commit(|s| {
             s.ai_job = Some(AiJobView {
                 attempt_id: a.id.clone(),
@@ -243,7 +243,7 @@ impl AppService {
             })
         });
     }
-    async fn run_attempt(&self, db: Database, a: ReservedAttempt, key: String) -> bool {
+    pub(super) async fn run_attempt(&self, db: Database, a: ReservedAttempt, key: String) -> bool {
         // A admissão ao transporte é serializada com o fecho, incluindo o
         // intervalo entre reservar um pedido e iniciar a chamada. A guarda
         // termina antes de aguardar a rede.
@@ -255,7 +255,7 @@ impl AppService {
             self.ai_transport.complete(TransportRequest {
                 settings: a.settings.clone(),
                 key,
-                task: AiTask::from_purpose(&a.purpose),
+                task: a.task.clone(),
                 sources: a.sources.clone(),
             })
         };

@@ -110,11 +110,63 @@ pub struct ReservedAttempt {
     pub request_id: String,
     pub question_id: String,
     pub session_id: String,
+    /// Prática de origem, quando a finalidade parte de uma prática.
+    pub practice_id: Option<String>,
     pub purpose: String,
+    /// Tarefa tipada, construída com nível/rubrica reais no caminho novo.
+    pub task: AiTask,
     pub generation: u64,
+    pub origin_key: String,
+    pub variant_key: String,
+    pub prompt_version: String,
+    pub rubric_version: String,
+    pub schema_version: String,
     pub sources: AiSources,
     pub settings: AiSettingsView,
 }
+
+/// Resultado validado por finalidade, pronto a aplicar no alvo correto.
+enum AiOutcome {
+    FollowUp(Value),
+    Feedback(Value),
+    PracticeFeedback(Value),
+    Rewrite {
+        raw: String,
+        spoken_text: String,
+        level: crate::practice::RewriteLevel,
+    },
+}
+
+/// Valida o conteúdo remoto contra a tarefa e as fontes da tentativa.
+///
+/// Preserva o comportamento da fase 3 (seguimento vs. feedback) e acrescenta a
+/// avaliação de prática (papel `attempt`) e a reformulação (`rewrite-v1`).
+fn validate_outcome(a: &ReservedAttempt, result: &Result<RemoteCompletion>) -> Result<AiOutcome> {
+    let r = result.as_ref().map_err(Clone::clone)?;
+    if r.invalid {
+        return Err(failure("A resposta foi truncada ou recusada."));
+    }
+    match a.purpose.as_str() {
+        "follow_up" => validate_follow_up(&r.content).map(AiOutcome::FollowUp),
+        "practice_feedback" => {
+            validate_feedback(&r.content, &a.sources).map(AiOutcome::PracticeFeedback)
+        }
+        "rewrite" => {
+            let level = match a.task {
+                AiTask::Rewrite { level, .. } => level,
+                _ => return Err(failure("Reformulação sem nível pedido.")),
+            };
+            let validated = validate_rewrite(&r.content, &a.sources, level)?;
+            Ok(AiOutcome::Rewrite {
+                raw: r.content.clone(),
+                spoken_text: validated.spoken_text,
+                level,
+            })
+        }
+        _ => validate_feedback(&r.content, &a.sources).map(AiOutcome::Feedback),
+    }
+}
+
 impl Database {
     pub fn ai_settings(&self) -> Result<AiSettingsView> {
         self.with_connection(|c| {
@@ -396,8 +448,15 @@ reason=NULL",
                 request_id,
                 question_id: command.session_question_id.clone(),
                 session_id: command.session_id.clone(),
+                practice_id: None,
                 purpose: purpose.into(),
+                task: AiTask::from_purpose(purpose),
                 generation: generation as u64,
+                origin_key: format!("original:{}", command.session_question_id),
+                variant_key: "default".into(),
+                prompt_version: "v1".into(),
+                rubric_version: "star-text-v1".into(),
+                schema_version: SCHEMA.into(),
                 sources,
                 settings: settings.clone(),
             }))
@@ -494,16 +553,7 @@ reason=excluded.reason",
     }
     pub fn finish_ai(&self, a: &ReservedAttempt, result: &Result<RemoteCompletion>) -> Result<()> {
         let usage = result.as_ref().map(|r| r.usage.clone()).unwrap_or_default();
-        let validated = result.as_ref().map_err(Clone::clone).and_then(|r| {
-            if r.invalid {
-                return Err(failure("A resposta foi truncada ou recusada."));
-            }
-            if a.purpose == "follow_up" {
-                validate_follow_up(&r.content)
-            } else {
-                validate_feedback(&r.content, &a.sources)
-            }
-        });
+        let validated = validate_outcome(a, result);
         self.with_connection(|c| {
             let tx = c.transaction().map_err(sql_error)?;
             let state: String = tx
@@ -523,8 +573,19 @@ reason=excluded.reason",
                 .optional()
                 .map_err(sql_error)?
                 .unwrap_or(false)
-            } else {
+            } else if a.purpose == "feedback" {
                 true
+            } else {
+                // Uma geração antiga não substitui um resultado mais recente do
+                // mesmo pedido lógico: só a geração atual aplica resultado.
+                tx.query_row(
+                    "SELECT generation=?2 FROM ai_requests WHERE id=?1",
+                    params![a.request_id, a.generation as i64],
+                    |r| r.get::<_, bool>(0),
+                )
+                .optional()
+                .map_err(sql_error)?
+                .unwrap_or(false)
             };
             let final_state = if !current {
                 "discarded"
@@ -562,7 +623,7 @@ returned_model=?7
             .map_err(sql_error)?;
             if current {
                 match &validated {
-                    Ok(v) if a.purpose == "follow_up" => {
+                    Ok(AiOutcome::FollowUp(v)) => {
                         let stage = if v["decision"] == "ask" {
                             let id = Uuid::new_v4().to_string();
                             tx.execute(
@@ -594,10 +655,89 @@ text)
                         )
                         .map_err(sql_error)?;
                     }
-                    Ok(v) => {
+                    Ok(AiOutcome::Feedback(v)) => {
                         tx.execute(
                             "INSERT INTO ai_reports VALUES(?1,?2,?3)",
                             params![a.question_id, a.id, serde_json::to_string(v).unwrap()],
+                        )
+                        .map_err(sql_error)?;
+                    }
+                    Ok(AiOutcome::PracticeFeedback(v)) => {
+                        let practice_id = a.practice_id.as_deref().ok_or_else(|| {
+                            failure("Avaliação de prática sem prática de origem.")
+                        })?;
+                        tx.execute(
+                            "INSERT INTO practice_reports
+ (practice_id,
+ network_attempt_id,
+ rubric_version,
+ prompt_version,
+ schema_version,
+ json)
+ VALUES (?1,
+ ?2,
+ ?3,
+ ?4,
+ ?5,
+ ?6)",
+                            params![
+                                practice_id,
+                                a.id,
+                                a.rubric_version,
+                                a.prompt_version,
+                                a.schema_version,
+                                serde_json::to_string(v).unwrap()
+                            ],
+                        )
+                        .map_err(sql_error)?;
+                        tx.execute(
+                            "INSERT OR IGNORE INTO evaluation_families
+ (session_question_id,
+ rubric_version,
+ schema_version,
+ created_at)
+ VALUES (?1,
+ ?2,
+ ?3,
+ ?4)",
+                            params![a.question_id, a.rubric_version, a.schema_version, utc_now()],
+                        )
+                        .map_err(sql_error)?;
+                    }
+                    Ok(AiOutcome::Rewrite {
+                        raw,
+                        spoken_text,
+                        level,
+                    }) => {
+                        let rewrite_id = Uuid::new_v4().to_string();
+                        tx.execute(
+                            "INSERT INTO rewrites
+ (id,
+ request_id,
+ network_attempt_id,
+ origin_key,
+ level,
+ json,
+ spoken_text,
+ created_at)
+ VALUES (?1,
+ ?2,
+ ?3,
+ ?4,
+ ?5,
+ ?6,
+ ?7,
+ ?8)",
+                            params![
+                                rewrite_id,
+                                a.request_id,
+                                a.id,
+                                a.origin_key,
+                                level.as_str(),
+                                raw,
+                                spoken_text,
+                                utc_now()
+                            ],
                         )
                         .map_err(sql_error)?;
                     }

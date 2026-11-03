@@ -176,6 +176,12 @@ pub fn run() {
             commands::interview_select_story,
             commands::interview_resolve_preparation,
             commands::interview_retry_preparation_publication,
+            commands::interview_request_rewrite,
+            commands::interview_list_rewrites,
+            commands::interview_evaluate_practice,
+            commands::interview_load_practice_report,
+            commands::interview_load_rewrite_preference,
+            commands::interview_set_rewrite_level,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao arrancar a aplicação Tauri");

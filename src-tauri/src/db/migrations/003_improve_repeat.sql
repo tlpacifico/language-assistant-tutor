@@ -400,8 +400,7 @@ CREATE TABLE rewrites (
 );
 
 -- A reformulação tem de corresponder ao pedido: finalidade `rewrite` e origem
--- idêntica à do pedido. A coerência fina entre `level` e a composição de
--- `variant_key` fica para a tarefa 5, que define o formato da variante.
+-- idêntica à do pedido.
 CREATE TRIGGER rewrites_request_coherence
 BEFORE INSERT ON rewrites
 WHEN NOT EXISTS (
@@ -412,6 +411,22 @@ WHEN NOT EXISTS (
 )
 BEGIN
     SELECT RAISE(ABORT, 'Reformulação não corresponde ao pedido');
+END;
+
+-- A coerência entre `level` e a composição de `variant_key` (definida na tarefa
+-- 5 como `rewrite:<nível>:<prompt>:<rubrica>:<esquema>`): o nível gravado tem de
+-- ser exatamente o que compõe a variante do pedido.
+CREATE TRIGGER rewrites_level_coherence
+BEFORE INSERT ON rewrites
+WHEN NOT EXISTS (
+    SELECT 1 FROM ai_requests r
+     WHERE r.id = NEW.request_id
+       AND r.purpose = 'rewrite'
+       AND r.variant_key = 'rewrite:' || NEW.level || ':' || r.prompt_version
+                            || ':' || r.rubric_version || ':' || r.schema_version
+)
+BEGIN
+    SELECT RAISE(ABORT, 'Nível da reformulação não corresponde à variante do pedido');
 END;
 
 CREATE TRIGGER rewrites_no_update

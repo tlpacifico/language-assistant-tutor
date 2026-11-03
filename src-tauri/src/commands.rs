@@ -19,9 +19,10 @@ use crate::interview::{
     Question, QuestionInput, SaveReview, SessionDetail, SessionSummary, StartSession, Version,
 };
 use crate::practice::{
-    CaptureOwner, ConfirmPracticeAnswer, CreatePractice, CreateStory, PracticeAnswerTarget,
-    PracticeCommand, PracticeDetail, PreparationDecision, SavePracticeReview, SelectStory,
-    StoryView, UpdateStory,
+    CaptureOwner, ConfirmPracticeAnswer, CreatePractice, CreateStory, EvaluatePractice,
+    PracticeAnswerTarget, PracticeCommand, PracticeDetail, PracticeReportView, PreparationDecision,
+    ResponseOrigin, RewriteCommand, RewritePreference, RewriteView, SavePracticeReview,
+    SelectStory, SetRewriteLevel, StoryView, UpdateStory,
 };
 use crate::service::AppService;
 
@@ -420,4 +421,57 @@ pub async fn interview_ai_retry_ai_publication(
     service: State<'_, Arc<AppService>>,
 ) -> std::result::Result<InterviewSnapshot, AppError> {
     service.retry_ai_publication(id).await
+}
+
+/// Pede (ou reutiliza) uma reformulação para uma origem e um nível.
+#[tauri::command]
+pub async fn interview_request_rewrite(
+    request: RewriteCommand,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<RewriteView, AppError> {
+    service.request_rewrite(request).await
+}
+
+/// Lista as reformulações de uma origem.
+#[tauri::command]
+pub async fn interview_list_rewrites(
+    origin: ResponseOrigin,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<Vec<RewriteView>, AppError> {
+    service.list_rewrites(origin).await
+}
+
+/// Pede (ou reutiliza) a avaliação de uma prática confirmada.
+#[tauri::command]
+pub async fn interview_evaluate_practice(
+    request: EvaluatePractice,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<PracticeReportView, AppError> {
+    service.evaluate_practice(request).await
+}
+
+/// Relatório de avaliação de uma prática.
+#[tauri::command]
+pub async fn interview_load_practice_report(
+    practice_id: Id,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<PracticeReportView, AppError> {
+    service.load_practice_report(practice_id).await
+}
+
+/// Preferência local de nível de reformulação.
+#[tauri::command]
+pub async fn interview_load_rewrite_preference(
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<RewritePreference, AppError> {
+    service.load_rewrite_preference().await
+}
+
+/// Altera a preferência local de nível de reformulação.
+#[tauri::command]
+pub async fn interview_set_rewrite_level(
+    request: SetRewriteLevel,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<RewritePreference, AppError> {
+    service.set_rewrite_level(request).await
 }

@@ -14,11 +14,13 @@
 //! `InterviewState.active_owner`, sem tocar em `active_session` nem `current`.
 
 use super::*;
+use crate::db::{CommandIdentity, CommandIdentityLocation};
 use crate::interview::{AnswerTarget, SaveReview, Version};
 use crate::practice::{
-    CaptureOwner, ConfirmPracticeAnswer, CreatePractice, CreateStory, PracticeAnswerTarget,
-    PracticeCommand, PracticeDetail, PreparationDecision, ResolvedAnswer, SavePracticeReview,
-    SelectStory, StoryView, UpdateStory,
+    CaptureOwner, ConfirmPracticeAnswer, CreatePractice, CreateStory, EvaluatePractice,
+    PracticeAnswerTarget, PracticeCommand, PracticeDetail, PracticeReportView, PreparationDecision,
+    ReportState, ResolvedAnswer, ResponseOrigin, RewriteCommand, RewritePreference, RewriteView,
+    SavePracticeReview, SelectStory, SetRewriteLevel, StoryView, UpdateStory,
 };
 
 impl AppService {
@@ -533,6 +535,190 @@ impl AppService {
         let db = database.clone();
         let rid = recording_id.to_owned();
         database_task(move || db.mark_preparation_started(&rid)).await
+    }
+
+    // -- reformulação, avaliação e preferência de nível ---------------------
+
+    /// Recusa um `requestId` já usado noutro caminho (prática, configuração,
+    /// consentimento ou comando da entrevista), antes de qualquer reutilização.
+    async fn refuse_colliding_request(&self, request_id: &str) -> Result<(), AppError> {
+        let database = self.database()?;
+        let db = database.clone();
+        let rid = request_id.to_owned();
+        let identity = database_task(move || db.lookup_command_identity(&rid)).await?;
+        match identity {
+            CommandIdentity::Conflict
+            | CommandIdentity::Found {
+                location:
+                    CommandIdentityLocation::AiReceipt | CommandIdentityLocation::CommandReceipt,
+                ..
+            } => Err(AppError::new(
+                error_code::STALE_SOURCE,
+                "Este pedido já foi usado com outro conteúdo. Repita a operação a partir do estado atual.",
+                false,
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// Pede (ou reutiliza) uma reformulação para uma origem e um nível.
+    ///
+    /// A variante válida existente é devolvida sem rede; uma reserva nova ocupa
+    /// o runtime de IA único e publica o resultado imutável quando chegar.
+    pub async fn request_rewrite(
+        self: &Arc<Self>,
+        command: RewriteCommand,
+    ) -> Result<RewriteView, AppError> {
+        let _transition = self.transitions.lock().await;
+        let database = self.database()?;
+        self.refuse_colliding_request(&command.request_id).await?;
+
+        let origin = command.origin.clone();
+        let level = command.level;
+        let existing = {
+            let db = database.clone();
+            let origin = origin.clone();
+            database_task(move || db.list_rewrites(&origin)).await?
+        };
+        if let Some(view) = existing
+            .iter()
+            .find(|view| view.level == level && view.state == ReportState::Ready)
+        {
+            return Ok(view.clone());
+        }
+        if self.ai_busy() {
+            return Err(AppError::busy(
+                "Existe um pedido IA ou resultado por guardar.",
+            ));
+        }
+        let (settings, key) = self.ai_configuration().await?;
+        let reserve_db = database.clone();
+        let reserved = command.clone();
+        let config = settings.clone();
+        let attempt = database_task(move || reserve_db.request_rewrite(&reserved, &config)).await?;
+        if let Some(attempt) = attempt {
+            self.ai_runtime
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .busy = true;
+            self.ai_job(&attempt);
+            let service = Arc::clone(self);
+            let run_db = database.clone();
+            tokio::spawn(async move {
+                service.run_attempt(run_db, attempt, key).await;
+                service
+                    .ai_runtime
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .busy = false;
+                service.commit(|s| s.ai_job = None);
+            });
+        }
+        let db = database.clone();
+        let origin = origin.clone();
+        let list = database_task(move || db.list_rewrites(&origin)).await?;
+        list.into_iter()
+            .find(|view| view.level == level)
+            .ok_or_else(|| {
+                AppError::new(
+                    error_code::STALE_SOURCE,
+                    "A reformulação pedida não está disponível. Repita a operação.",
+                    false,
+                )
+            })
+    }
+
+    /// Lista as reformulações de uma origem, uma por nível já pedido.
+    pub async fn list_rewrites(
+        &self,
+        origin: ResponseOrigin,
+    ) -> Result<Vec<RewriteView>, AppError> {
+        let database = self.database()?;
+        let db = database.clone();
+        database_task(move || db.list_rewrites(&origin)).await
+    }
+
+    /// Pede (ou reutiliza) a avaliação de uma prática confirmada.
+    ///
+    /// O relatório válido existente é devolvido sem rede; uma reserva nova ocupa
+    /// o runtime de IA único e publica o relatório imutável quando chegar.
+    pub async fn evaluate_practice(
+        self: &Arc<Self>,
+        command: EvaluatePractice,
+    ) -> Result<PracticeReportView, AppError> {
+        let _transition = self.transitions.lock().await;
+        let database = self.database()?;
+        self.refuse_colliding_request(&command.request_id).await?;
+        let practice_id = command.practice_id.clone();
+
+        let existing = {
+            let db = database.clone();
+            let pid = practice_id.clone();
+            database_task(move || db.load_practice_report(&pid)).await?
+        };
+        if existing.state == ReportState::Ready {
+            return Ok(existing);
+        }
+        if self.ai_busy() {
+            return Err(AppError::busy(
+                "Existe um pedido IA ou resultado por guardar.",
+            ));
+        }
+        let (settings, key) = self.ai_configuration().await?;
+        let reserve_db = database.clone();
+        let reserved = command.clone();
+        let config = settings.clone();
+        let attempt =
+            database_task(move || reserve_db.evaluate_practice(&reserved, &config)).await?;
+        if let Some(attempt) = attempt {
+            self.ai_runtime
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .busy = true;
+            self.ai_job(&attempt);
+            let service = Arc::clone(self);
+            let run_db = database.clone();
+            tokio::spawn(async move {
+                service.run_attempt(run_db, attempt, key).await;
+                service
+                    .ai_runtime
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .busy = false;
+                service.commit(|s| s.ai_job = None);
+            });
+        }
+        let db = database.clone();
+        let pid = practice_id.clone();
+        database_task(move || db.load_practice_report(&pid)).await
+    }
+
+    /// Relatório de avaliação de uma prática, com tentativas e consumo.
+    pub async fn load_practice_report(
+        &self,
+        practice_id: Id,
+    ) -> Result<PracticeReportView, AppError> {
+        let database = self.database()?;
+        let db = database.clone();
+        database_task(move || db.load_practice_report(&practice_id)).await
+    }
+
+    /// Preferência local de nível, com B1 por omissão.
+    pub async fn load_rewrite_preference(&self) -> Result<RewritePreference, AppError> {
+        let database = self.database()?;
+        let db = database.clone();
+        database_task(move || db.load_rewrite_preference()).await
+    }
+
+    /// Altera a preferência local de nível; não altera reformulações anteriores.
+    pub async fn set_rewrite_level(
+        &self,
+        request: SetRewriteLevel,
+    ) -> Result<RewritePreference, AppError> {
+        let _transition = self.transitions.lock().await;
+        let database = self.database()?;
+        let db = database.clone();
+        database_task(move || db.set_rewrite_level(request)).await
     }
 }
 
