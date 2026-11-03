@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 4,
+  "sources": {
+    "question": "Tell me about a time your team handled a setback.",
+    "criteria": ["Explicar a responsabilidade individual.", "Explicar o desfecho ou a aprendizagem."],
+    "answers": [
+      {
+        "confirmationId": "conf-attempt",
+        "role": "attempt",
+        "text": "I am not sure we would have recovered, but about 30% of the team stayed late and I coordinated the rollback, so we lost only a few customers and learned to test earlier."
+      }
+    ]
+  },
+  "rewrite": {
+    "schemaVersion": "rewrite-v1",
+    "level": "B1",
+    "segments": [
+      {
+        "id": "seg1",
+        "text": "I am not sure we would have recovered.",
+        "evidence": [
+          {"confirmationId": "conf-attempt", "role": "attempt", "quote": "I am not sure we would have recovered"}
+        ]
+      },
+      {
+        "id": "seg2",
+        "text": "I coordinated the rollback while part of the team stayed late.",
+        "evidence": [
+          {"confirmationId": "conf-attempt", "role": "attempt", "quote": "I coordinated the rollback"},
+          {"confirmationId": "conf-attempt", "role": "attempt", "quote": "about 30% of the team stayed late"}
+        ]
+      },
+      {
+        "id": "seg3",
+        "text": "We lost only a few customers and learned to test earlier.",
+        "evidence": [
+          {"confirmationId": "conf-attempt", "role": "attempt", "quote": "we lost only a few customers"},
+          {"confirmationId": "conf-attempt", "role": "attempt", "quote": "learned to test earlier"}
+        ]
+      }
+    ],
+    "necessaryChanges": [
+      {
+        "source": {"confirmationId": "conf-attempt", "role": "attempt", "quote": "about 30% of the team stayed late"},
+        "segmentIds": ["seg2"],
+        "explanation": "A percentagem exata é um pormenor dispensável ao nível B1; simplificou-se sem alterar o facto."
+      }
+    ],
+    "optionalStyle": [
+      {
+        "source": {"confirmationId": "conf-attempt", "role": "attempt", "quote": "I am not sure we would have recovered"},
+        "segmentIds": ["seg1"],
+        "explanation": "A incerteza foi preservada; pode preferir uma formulação mais direta."
+      }
+    ],
+    "missingInformation": [
+      {
+        "dimension": "result",
+        "assessedConfirmationIds": ["conf-attempt"],
+        "preparationQuestion": "What exactly improved after you started testing earlier?",
+        "explanation": "O texto indica aprendizagem mas não o efeito concreto dessa mudança."
+      }
+    ]
+  }
+}
