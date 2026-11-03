@@ -91,7 +91,7 @@ struct StoredTranscript {
 }
 
 /// Estado da pergunta relevante para guardar, confirmar e avançar.
-struct ReviewTarget {
+pub(super) struct ReviewTarget {
     session_id: Id,
     selection_version: Version,
     selected_recording_id: Option<Id>,
@@ -905,7 +905,10 @@ fn load_transcripts(connection: &Connection, recording_id: &str) -> Result<Vec<T
     Ok(transcripts)
 }
 
-fn load_review(connection: &Connection, recording_id: &str) -> Result<Option<ReviewDraft>> {
+pub(super) fn load_review(
+    connection: &Connection,
+    recording_id: &str,
+) -> Result<Option<ReviewDraft>> {
     let row = connection
         .query_row(
             "SELECT recording_id, version, source_transcript_id, origin, text, saved_at
@@ -1122,7 +1125,7 @@ fn find_review_target(
 }
 
 /// Valida a pergunta, a sessão, a confirmação e a versão de seleção do alvo.
-fn require_review_target(
+pub(super) fn require_review_target(
     connection: &Connection,
     request: &AnswerTarget,
     expected_session: Option<Version>,
@@ -1145,7 +1148,7 @@ fn require_review_target(
 }
 
 /// Exige que a gravação do alvo seja a selecionada e tenha um original finalizado.
-fn require_selected_recording(
+pub(super) fn require_selected_recording(
     connection: &Connection,
     request: &AnswerTarget,
     question: &ReviewTarget,
@@ -1169,7 +1172,7 @@ fn require_selected_recording(
 }
 
 /// A transcrição de origem, quando indicada, tem de pertencer à gravação.
-fn require_transcript_owner(
+pub(super) fn require_transcript_owner(
     connection: &Connection,
     recording_id: &str,
     source_transcript_id: Option<&str>,
@@ -1192,7 +1195,7 @@ fn require_transcript_owner(
 }
 
 /// Acrescenta uma versão de revisão; as anteriores nunca são alteradas.
-fn insert_review(
+pub(super) fn insert_review(
     connection: &Connection,
     recording_id: &str,
     version: Version,

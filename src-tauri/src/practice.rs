@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
 use crate::ai::{NormalizedUsage, SessionUsage};
-use crate::interview::{AnswerSlot, Category, Confirmation, Id, RecordingView, Version};
+use crate::interview::{
+    AnswerSlot, Category, Confirmation, Id, RecordingView, ReviewOrigin, Version,
+};
 
 /// Origem de uma resposta confirmada.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,6 +193,31 @@ pub struct PracticeAnswerTarget {
     pub owner: CaptureOwner,
     pub recording_id: Id,
     pub selection_version: Version,
+}
+
+/// Pedido para guardar a revisão de uma tentativa de prática.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavePracticeReview {
+    pub request_id: Id,
+    pub target: PracticeAnswerTarget,
+    pub expected_review_version: Version,
+    pub source_transcript_id: Option<Id>,
+    pub origin: ReviewOrigin,
+    pub text: String,
+}
+
+/// Pedido para confirmar a tentativa de uma prática, tornando-a imutável.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmPracticeAnswer {
+    pub request_id: Id,
+    pub target: PracticeAnswerTarget,
+    pub expected_review_version: Version,
+    pub expected_practice_version: Version,
+    pub source_transcript_id: Option<Id>,
+    pub origin: ReviewOrigin,
+    pub text: String,
 }
 
 /// Fotografia do estado de prática observável pela interface.

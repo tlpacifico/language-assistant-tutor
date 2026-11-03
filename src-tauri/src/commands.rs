@@ -18,6 +18,10 @@ use crate::interview::{
     AdvanceSession, AnswerTarget, AudioSelection, Category, ConfirmAnswer, Id, InterviewSnapshot,
     Question, QuestionInput, SaveReview, SessionDetail, SessionSummary, StartSession, Version,
 };
+use crate::practice::{
+    CaptureOwner, ConfirmPracticeAnswer, CreatePractice, PracticeAnswerTarget, PracticeCommand,
+    PracticeDetail, SavePracticeReview,
+};
 use crate::service::AppService;
 
 /// Fotografia atual, sem alterar o estado.
@@ -212,6 +216,81 @@ pub async fn interview_retry_database(
     service: State<'_, Arc<AppService>>,
 ) -> Result<InterviewSnapshot, AppError> {
     service.retry_database().await
+}
+
+/// Cria uma prática a partir de uma pergunta confirmada de uma sessão concluída.
+#[tauri::command]
+pub async fn interview_create_practice(
+    request: CreatePractice,
+    service: State<'_, Arc<AppService>>,
+) -> Result<PracticeDetail, AppError> {
+    service.create_practice(request).await
+}
+
+/// Lê uma prática completa, sem alterar o estado.
+#[tauri::command]
+pub async fn interview_load_practice(
+    practice_id: Id,
+    service: State<'_, Arc<AppService>>,
+) -> Result<PracticeDetail, AppError> {
+    service.load_practice(practice_id).await
+}
+
+/// Lista as práticas de uma pergunta da sessão.
+#[tauri::command]
+pub async fn interview_list_practices(
+    session_question_id: Id,
+    service: State<'_, Arc<AppService>>,
+) -> Result<Vec<PracticeDetail>, AppError> {
+    service.list_practices(session_question_id).await
+}
+
+/// Abandona uma prática pendente, conservando revisões e gravações.
+#[tauri::command]
+pub async fn interview_abandon_practice(
+    request: PracticeCommand,
+    service: State<'_, Arc<AppService>>,
+) -> Result<PracticeDetail, AppError> {
+    service.abandon_practice(request).await
+}
+
+/// Reserva a gravação da tentativa e abre o microfone.
+#[tauri::command]
+pub async fn interview_start_practice_recording(
+    owner: CaptureOwner,
+    expected_selection: Version,
+    service: State<'_, Arc<AppService>>,
+) -> Result<InterviewSnapshot, AppError> {
+    service
+        .start_practice_recording(owner, expected_selection)
+        .await
+}
+
+/// Guarda uma revisão da tentativa de prática, sem confirmar.
+#[tauri::command]
+pub async fn interview_save_practice_review(
+    request: SavePracticeReview,
+    service: State<'_, Arc<AppService>>,
+) -> Result<InterviewSnapshot, AppError> {
+    service.save_practice_review(request).await
+}
+
+/// Confirma a tentativa de prática, tornando-a imutável.
+#[tauri::command]
+pub async fn interview_confirm_practice_answer(
+    request: ConfirmPracticeAnswer,
+    service: State<'_, Arc<AppService>>,
+) -> Result<PracticeDetail, AppError> {
+    service.confirm_practice_answer(request).await
+}
+
+/// Transcreve a gravação selecionada da tentativa de prática.
+#[tauri::command]
+pub async fn interview_transcribe_practice_response(
+    target: PracticeAnswerTarget,
+    service: State<'_, Arc<AppService>>,
+) -> Result<InterviewSnapshot, AppError> {
+    service.transcribe_practice_response(target).await
 }
 
 use crate::ai::*;

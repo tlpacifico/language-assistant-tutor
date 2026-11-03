@@ -14,7 +14,8 @@
 use super::*;
 use crate::interview::{
     AdvanceSession, AudioSelection, Category, ConfirmAnswer, Question, QuestionInput,
-    RecordingState, SessionDetail, SessionQuestion, SessionStatus, StartSession, Version,
+    RecordingState, RecordingView, SessionDetail, SessionQuestion, SessionStatus, StartSession,
+    Version,
 };
 use crate::worker::protocol::TranscribeParams;
 
@@ -261,11 +262,10 @@ impl AppService {
             self.record_error(&error);
             return Err(error);
         };
-        let Some(question) = detail
+        let Some(entry) = detail
             .questions
             .iter()
             .find(|question| question.active().question.id == session_question_id)
-            .map(|q| q.active())
         else {
             let error = stale_source(
                 "A pergunta indicada não pertence à entrevista em curso. Atualize a página.",
@@ -273,6 +273,8 @@ impl AppService {
             self.record_error(&error);
             return Err(error);
         };
+        let question = entry.active();
+        let main_question_id = entry.question.id.clone();
         let confirmed = question.confirmation.is_some();
         let position = question.question.position;
         let selection_version = question.question.selection_version;
@@ -323,8 +325,13 @@ impl AppService {
         let recording_id = reserved.id.clone();
         let identity = CaptureIdentity {
             recording_id: recording_id.clone(),
-            session_id,
-            session_question_id,
+            session_id: session_id.clone(),
+            session_question_id: session_question_id.clone(),
+            owner: CaptureOwner::Interview {
+                session_id,
+                session_question_id: main_question_id,
+                answer_id: session_question_id,
+            },
         };
 
         let artifacts = self.artifacts.clone();
@@ -517,7 +524,10 @@ impl AppService {
             self.record_error(&error);
         }
 
-        if transcribe && self.transcriber_ready() {
+        if transcribe
+            && matches!(identity.owner, CaptureOwner::Interview { .. })
+            && self.transcriber_ready()
+        {
             if let Some(target) = self.automatic_target() {
                 // A resposta já está publicada: uma falha do auxiliar fica
                 // visível e o áudio conserva-se para repetir.
@@ -745,6 +755,19 @@ impl AppService {
             self.record_error(&error);
             return Err(error);
         }
+        self.dispatch_transcription(target, recording.clone()).await
+    }
+
+    /// Submete a transcrição de uma gravação já validada, partilhada entre a
+    /// entrevista e a prática.
+    ///
+    /// O alvo e a gravação já foram validados pelo chamador; aqui verificam-se a
+    /// ocupação, o auxiliar, o modelo e preparam-se o áudio e a operação.
+    pub(super) async fn dispatch_transcription(
+        &self,
+        target: AnswerTarget,
+        recording: RecordingView,
+    ) -> Result<InterviewSnapshot, AppError> {
         let normalized_file = recording.normalized_file.clone();
         let original_file = recording.original_file.clone();
         let duration_ms = recording
@@ -783,6 +806,7 @@ impl AppService {
                 return Err(error);
             }
         };
+        let database = self.database()?;
         let audio_path = match self
             .transcription_audio(&database, &target, normalized_file, original_file)
             .await

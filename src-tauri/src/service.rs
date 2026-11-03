@@ -65,6 +65,7 @@ use crate::interview::{
     QuestionDetail, ReviewOrigin, SaveReview, SessionDetail, SessionSummary,
 };
 use crate::legacy::LegacyStore;
+use crate::practice::{CaptureOwner, PracticeDetail};
 use crate::worker::protocol::SynthesizeParams;
 use crate::worker::{
     HealthResult, SynthesisResult, TranscriptionResult, WorkerClient, WorkerEvent, WorkerMessage,
@@ -73,6 +74,7 @@ use crate::worker::{
 
 mod ai;
 mod interview;
+mod practice;
 
 /// Pasta da cache de voz da pergunta, dentro de `phase1`.
 pub const QUESTION_CACHE_DIR: &str = "question-cache";
@@ -165,6 +167,8 @@ struct CaptureIdentity {
     recording_id: Id,
     session_id: Id,
     session_question_id: Id,
+    /// Dono da captura: a resposta de entrevista ou de prática a que pertence.
+    owner: CaptureOwner,
 }
 
 /// Captura finalizada cuja publicação falhou, à espera de nova tentativa.
@@ -198,6 +202,12 @@ struct InterviewState {
     last_error: Option<AppError>,
     worker_generation: u64,
     active_request: Option<String>,
+    /// Prática pendente aberta, independente do trabalho IA e da entrevista.
+    active_practice: Option<PracticeDetail>,
+    /// Dono da prática pendente, para rotear captura/transcrição.
+    active_owner: Option<CaptureOwner>,
+    /// Preparação de captura pendente (histórias, tarefa 3; neutra nesta tarefa).
+    pending_preparation: Option<Id>,
 }
 
 impl InterviewState {
@@ -221,6 +231,9 @@ impl InterviewState {
             last_error: None,
             worker_generation: 0,
             active_request: None,
+            active_practice: None,
+            active_owner: None,
+            pending_preparation: None,
         }
     }
 
@@ -324,7 +337,12 @@ impl InterviewState {
             playback: self.playback,
             warnings: self.warnings.clone(),
             last_error: self.last_error.clone(),
-            practice: crate::practice::ExerciseSnapshot::neutral(),
+            practice: crate::practice::ExerciseSnapshot {
+                revision: self.revision,
+                active_practice: self.active_practice.clone(),
+                active_owner: self.active_owner.clone(),
+                pending_preparation: self.pending_preparation.clone(),
+            },
         }
     }
 }
@@ -451,12 +469,13 @@ impl AppService {
             if let Some(detail) = active.as_mut() {
                 artifacts.annotate(detail);
             }
-            Ok((database, report, active))
+            let pending_practice = database.pending_practice()?;
+            Ok((database, report, active, pending_practice))
         })
         .await;
 
         match opened {
-            Ok((database, report, active)) => {
+            Ok((database, report, active, pending_practice)) => {
                 *self.lock_database() = Some(database);
                 Ok(self.commit(|state| {
                     state.database = DatabaseState::Ready;
@@ -464,6 +483,11 @@ impl AppService {
                     state.warnings = report.warnings;
                     state.last_error = None;
                     state.apply_detail(active);
+                    state.active_practice = pending_practice.clone();
+                    state.active_owner = pending_practice.map(|practice| CaptureOwner::Practice {
+                        practice_id: practice.id,
+                        answer_id: practice.answer.id,
+                    });
                 }))
             }
             Err(error) => {
