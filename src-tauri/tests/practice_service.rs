@@ -1115,6 +1115,13 @@ async fn snapshot_practice_follows_publication_and_preparation_is_readable() {
         .practice
         .active_practice
         .expect("prática pendente na fotografia");
-    assert_eq!(active.recordings.len(), 1, "a publicação reflete-se na fotografia");
-    assert!(stopped.current.is_none(), "sem pergunta de entrevista fictícia");
+    assert_eq!(
+        active.recordings.len(),
+        1,
+        "a publicação reflete-se na fotografia"
+    );
+    assert!(
+        stopped.current.is_none(),
+        "sem pergunta de entrevista fictícia"
+    );
 }
