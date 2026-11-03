@@ -19,8 +19,9 @@ use crate::interview::{
     Question, QuestionInput, SaveReview, SessionDetail, SessionSummary, StartSession, Version,
 };
 use crate::practice::{
-    CaptureOwner, ConfirmPracticeAnswer, CreatePractice, PracticeAnswerTarget, PracticeCommand,
-    PracticeDetail, SavePracticeReview,
+    CaptureOwner, ConfirmPracticeAnswer, CreatePractice, CreateStory, PracticeAnswerTarget,
+    PracticeCommand, PracticeDetail, PreparationDecision, SavePracticeReview, SelectStory,
+    StoryView, UpdateStory,
 };
 use crate::service::AppService;
 
@@ -291,6 +292,64 @@ pub async fn interview_transcribe_practice_response(
     service: State<'_, Arc<AppService>>,
 ) -> Result<InterviewSnapshot, AppError> {
     service.transcribe_practice_response(target).await
+}
+
+/// Lista as histórias locais, opcionalmente filtradas por competência.
+#[tauri::command]
+pub async fn interview_list_stories(
+    competency: Option<String>,
+    service: State<'_, Arc<AppService>>,
+) -> Result<Vec<StoryView>, AppError> {
+    service.list_stories(competency).await
+}
+
+/// Cria uma história local.
+#[tauri::command]
+pub async fn interview_create_story(
+    request: CreateStory,
+    service: State<'_, Arc<AppService>>,
+) -> Result<StoryView, AppError> {
+    service.create_story(request).await
+}
+
+/// Edita uma história local com versão esperada.
+#[tauri::command]
+pub async fn interview_update_story(
+    request: UpdateStory,
+    service: State<'_, Arc<AppService>>,
+) -> Result<StoryView, AppError> {
+    service.update_story(request).await
+}
+
+/// Seleciona (ou remove) o apoio de história de uma resposta.
+#[tauri::command]
+pub async fn interview_select_story(
+    request: SelectStory,
+    service: State<'_, Arc<AppService>>,
+) -> Result<InterviewSnapshot, AppError> {
+    service.select_story(request).await
+}
+
+/// Resolve explicitamente uma preparação interrompida.
+#[tauri::command]
+pub async fn interview_resolve_preparation(
+    recording_id: Id,
+    request_id: Id,
+    decision: PreparationDecision,
+    service: State<'_, Arc<AppService>>,
+) -> Result<InterviewSnapshot, AppError> {
+    service
+        .resolve_preparation(recording_id, request_id, decision)
+        .await
+}
+
+/// Repete a publicação local dos metadados da preparação.
+#[tauri::command]
+pub async fn interview_retry_preparation_publication(
+    recording_id: Id,
+    service: State<'_, Arc<AppService>>,
+) -> Result<InterviewSnapshot, AppError> {
+    service.retry_preparation_publication(recording_id).await
 }
 
 use crate::ai::*;

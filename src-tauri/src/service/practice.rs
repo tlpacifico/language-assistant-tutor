@@ -16,8 +16,9 @@
 use super::*;
 use crate::interview::{AnswerTarget, SaveReview, Version};
 use crate::practice::{
-    CaptureOwner, ConfirmPracticeAnswer, CreatePractice, PracticeAnswerTarget, PracticeCommand,
-    PracticeDetail, ResolvedAnswer, SavePracticeReview,
+    CaptureOwner, ConfirmPracticeAnswer, CreatePractice, CreateStory, PracticeAnswerTarget,
+    PracticeCommand, PracticeDetail, PreparationDecision, ResolvedAnswer, SavePracticeReview,
+    SelectStory, StoryView, UpdateStory,
 };
 
 impl AppService {
@@ -67,6 +68,94 @@ impl AppService {
         let detail = database_task(move || db.abandon_practice(request)).await?;
         self.set_active_practice(None);
         Ok(detail)
+    }
+
+    // -- histórias e apoio ---------------------------------------------------
+
+    /// Lista as histórias locais, opcionalmente filtradas por competência.
+    pub async fn list_stories(
+        &self,
+        competency: Option<String>,
+    ) -> Result<Vec<StoryView>, AppError> {
+        let database = self.database()?;
+        let db = database.clone();
+        database_task(move || db.list_stories(competency.as_deref())).await
+    }
+
+    /// Cria uma história local, idempotente por `requestId`.
+    pub async fn create_story(&self, request: CreateStory) -> Result<StoryView, AppError> {
+        let database = self.database()?;
+        let db = database.clone();
+        database_task(move || db.create_story(request)).await
+    }
+
+    /// Edita uma história local com versão esperada; `story_versions` é append-only.
+    pub async fn update_story(&self, request: UpdateStory) -> Result<StoryView, AppError> {
+        let database = self.database()?;
+        let db = database.clone();
+        database_task(move || db.update_story(request)).await
+    }
+
+    /// Seleciona (ou remove) o apoio de história de uma resposta, antes da captura.
+    pub async fn select_story(&self, request: SelectStory) -> Result<InterviewSnapshot, AppError> {
+        let _transition = self.transitions.lock().await;
+        let database = self.database()?;
+        let db = database.clone();
+        database_task(move || db.select_story(request)).await?;
+        self.refresh_practice_state().await?;
+        Ok(self.snapshot())
+    }
+
+    /// Resolve explicitamente uma preparação interrompida (`keep` ou `did_not_start`).
+    pub async fn resolve_preparation(
+        &self,
+        recording_id: Id,
+        request_id: Id,
+        decision: PreparationDecision,
+    ) -> Result<InterviewSnapshot, AppError> {
+        let _transition = self.transitions.lock().await;
+        let database = self.database()?;
+        let db = database.clone();
+        let rid = recording_id.clone();
+        database_task(move || db.resolve_preparation(&rid, &request_id, decision)).await?;
+        self.clear_pending_preparation();
+        self.refresh_practice_state().await?;
+        Ok(self.snapshot())
+    }
+
+    /// Repete a publicação local dos metadados da preparação, consolidando o
+    /// mesmo snapshot sem consultar a versão atual da história.
+    pub async fn retry_preparation_publication(
+        &self,
+        recording_id: Id,
+    ) -> Result<InterviewSnapshot, AppError> {
+        let _transition = self.transitions.lock().await;
+        let database = self.database()?;
+        let db = database.clone();
+        let rid = recording_id.clone();
+        let location = database_task(move || db.preparation_capture_location(&rid))
+            .await?
+            .ok_or_else(|| {
+                stale_source("A captura de preparação indicada não existe. Atualize o estado.")
+            })?;
+        let (session_id, slot_id) = location;
+        let artifacts = self.artifacts.clone();
+        let sid = session_id.clone();
+        let sqid = slot_id.clone();
+        let rid = recording_id.clone();
+        let target = database_task(move || artifacts.reserve(&sid, &sqid, &rid)).await?;
+        let directory = target.directory.clone();
+        let rid = recording_id.clone();
+        storage_task(move || {
+            crate::artifacts::write_preparation_marker(&directory, &rid, "started")
+        })
+        .await?;
+        let db = database.clone();
+        let rid = recording_id.clone();
+        database_task(move || db.mark_preparation_started(&rid)).await?;
+        self.clear_pending_preparation();
+        self.refresh_practice_state().await?;
+        Ok(self.snapshot())
     }
 
     // -- captura ------------------------------------------------------------
@@ -161,6 +250,35 @@ impl AppService {
                 }
             };
         let recording_id = reserved.id.clone();
+
+        // Reserva o candidato imutável do apoio (ou ausência) antes do microfone.
+        // Uma falha aqui não abre o microfone; um apoio já fixado deixa gravar.
+        let fault = *self.lock_fault();
+        let reservation = match fault {
+            Some(PreparationFault::ReserveCandidate) => {
+                let error = storage_error(
+                    "Não foi possível guardar o apoio antes de gravar; o microfone não foi aberto.",
+                );
+                self.record_error(&error);
+                return Err(error);
+            }
+            _ => {
+                let db = database.clone();
+                let aid = slot_id.clone();
+                let rid = recording_id.clone();
+                match database_task(move || db.reserve_preparation_candidate(&aid, &rid)).await {
+                    Ok(reservation) => reservation,
+                    Err(error) => {
+                        let db = database.clone();
+                        let id = recording_id.clone();
+                        let _ = database_task(move || db.mark_interrupted(&id)).await;
+                        self.record_error(&error);
+                        return Err(error);
+                    }
+                }
+            }
+        };
+
         let identity = CaptureIdentity {
             recording_id: recording_id.clone(),
             session_id: source_session_id,
@@ -178,6 +296,9 @@ impl AppService {
                 let db = database.clone();
                 let id = recording_id.clone();
                 let _ = database_task(move || db.mark_interrupted(&id)).await;
+                let db = database.clone();
+                let id = recording_id.clone();
+                let _ = database_task(move || db.mark_preparation_failed(&id)).await;
                 self.record_error(&error);
                 return Err(error);
             }
@@ -188,17 +309,32 @@ impl AppService {
         match audio_task(move || audio.start_capture(target)).await {
             Ok(()) => {
                 *self.lock_capture() = Some(identity);
-                Ok(self.commit(|state| {
-                    state.recording_id = Some(recording_id);
+                self.commit(|state| {
+                    state.recording_id = Some(recording_id.clone());
                     state.playback = None;
                     state.last_error = None;
-                }))
+                });
+                // Marca o arranque sem parar a captura se a escrita falhar: a
+                // pendência fica visível e o Terminar continua disponível.
+                if let crate::db::PreparationReservation::Reserved { .. } = &reservation {
+                    if let Err(error) = self
+                        .finalize_preparation_start(&database, &recording_id, &directory)
+                        .await
+                    {
+                        self.commit(|state| state.pending_preparation = Some(recording_id.clone()));
+                        self.record_error(&error);
+                    }
+                }
+                Ok(self.snapshot())
             }
             Err(error) => {
                 let _ = fs::remove_dir(&directory);
                 let db = database.clone();
                 let id = recording_id.clone();
                 let _ = database_task(move || db.mark_interrupted(&id)).await;
+                let db = database.clone();
+                let id = recording_id.clone();
+                let _ = database_task(move || db.mark_preparation_failed(&id)).await;
                 self.commit(|state| {
                     state.playback = None;
                     state.last_error = Some(error.clone());
@@ -358,6 +494,33 @@ impl AppService {
         let pending = database_task(move || db.pending_practice()).await?;
         self.set_active_practice(pending);
         Ok(())
+    }
+
+    /// Limpa a pendência de metadados de preparação da fotografia.
+    fn clear_pending_preparation(&self) {
+        self.commit(|state| state.pending_preparation = None);
+    }
+
+    /// Marca o arranque da captura (marcador de ficheiro + SQLite), sem parar a
+    /// captura se a escrita falhar: devolve o erro para o chamador expor a pendência.
+    async fn finalize_preparation_start(
+        &self,
+        database: &Database,
+        recording_id: &str,
+        directory: &Path,
+    ) -> Result<(), AppError> {
+        let rid = recording_id.to_owned();
+        let dir = directory.to_owned();
+        storage_task(move || crate::artifacts::write_preparation_marker(&dir, &rid, "started"))
+            .await?;
+        if *self.lock_fault() == Some(PreparationFault::MarkStarted) {
+            return Err(storage_error(
+                "Não foi possível guardar o arranque do apoio; a gravação continua ativa e pode ser terminada.",
+            ));
+        }
+        let db = database.clone();
+        let rid = recording_id.to_owned();
+        database_task(move || db.mark_preparation_started(&rid)).await
     }
 }
 

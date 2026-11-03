@@ -76,6 +76,17 @@ mod ai;
 mod interview;
 mod practice;
 
+/// Falha de SQLite simulada nos testes, injetada em pontos concretos do arranque
+/// da captura de preparação. Nunca é usada pelo caminho real.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreparationFault {
+    /// A reserva do candidato falha antes de abrir o microfone.
+    ReserveCandidate,
+    /// A marcação `started`/lock falha depois de o microfone abrir.
+    MarkStarted,
+}
+
 /// Pasta da cache de voz da pergunta, dentro de `phase1`.
 pub const QUESTION_CACHE_DIR: &str = "question-cache";
 
@@ -375,6 +386,8 @@ pub struct AppService {
     /// Coordenador serial: uma transição de cada vez.
     transitions: tokio::sync::Mutex<()>,
     listener: Mutex<Option<SnapshotListener>>,
+    /// Falha de SQLite simulada nos testes; ausente no caminho real.
+    fault: Mutex<Option<PreparationFault>>,
 }
 
 impl AppService {
@@ -412,12 +425,19 @@ impl AppService {
             synthesis: Mutex::new(None),
             transitions: tokio::sync::Mutex::new(()),
             listener: Mutex::new(None),
+            fault: Mutex::new(None),
         }
     }
 
     /// Regista o destinatário das fotografias (o emissor de `interview://snapshot`).
     pub fn subscribe(&self, listener: SnapshotListener) {
         *self.lock_listener() = Some(listener);
+    }
+
+    /// Injeta (ou remove) uma falha de SQLite simulada, apenas para os testes.
+    #[doc(hidden)]
+    pub fn inject_preparation_fault(&self, fault: Option<PreparationFault>) {
+        *self.lock_fault() = fault;
     }
 
     /// Fotografia atual, sem alterar nem publicar.
@@ -465,17 +485,18 @@ impl AppService {
             let database = Database::open(path)?;
             database.recover_ai()?;
             let report = crate::artifacts::reconcile(&database, &artifacts)?;
+            let uncertain = crate::artifacts::reconcile_preparations(&database, &artifacts)?;
             let mut active = database.active_session()?;
             if let Some(detail) = active.as_mut() {
                 artifacts.annotate(detail);
             }
             let pending_practice = database.pending_practice()?;
-            Ok((database, report, active, pending_practice))
+            Ok((database, report, active, pending_practice, uncertain))
         })
         .await;
 
         match opened {
-            Ok((database, report, active, pending_practice)) => {
+            Ok((database, report, active, pending_practice, uncertain)) => {
                 *self.lock_database() = Some(database);
                 Ok(self.commit(|state| {
                     state.database = DatabaseState::Ready;
@@ -488,6 +509,7 @@ impl AppService {
                         practice_id: practice.id,
                         answer_id: practice.answer.id,
                     });
+                    state.pending_preparation = uncertain.into_iter().next();
                 }))
             }
             Err(error) => {
@@ -810,6 +832,15 @@ impl AppService {
                 "A gravação interrompida ainda está a ser recuperada. Tente fechar novamente.",
                 true,
             );
+            self.record_error(&error);
+            return Err(error);
+        }
+
+        // Uma escrita de metadados de preparação pendente não pode ser perdida
+        // com o fecho: resolve-se primeiro, sem indicar sucesso em silêncio.
+        if self.lock_state().pending_preparation.is_some() {
+            let error =
+                storage_error("Há uma escrita de preparação pendente. Resolva-a antes de fechar.");
             self.record_error(&error);
             return Err(error);
         }
@@ -1427,6 +1458,12 @@ impl AppService {
 
     fn lock_listener(&self) -> std::sync::MutexGuard<'_, Option<SnapshotListener>> {
         self.listener
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    fn lock_fault(&self) -> std::sync::MutexGuard<'_, Option<PreparationFault>> {
+        self.fault
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
     }

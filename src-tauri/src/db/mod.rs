@@ -32,10 +32,12 @@ mod operations;
 mod practice;
 mod questions;
 mod sessions;
+mod stories;
 
 pub use ai::{CommandIdentity, CommandIdentityLocation};
 pub(crate) use answers::PendingRecording;
 pub use questions::*;
+pub use stories::{missing_fields, validate_story_input, PreparationReservation};
 
 /// Versão do esquema escrita em `PRAGMA user_version`.
 pub const DATABASE_VERSION: u32 = 3;

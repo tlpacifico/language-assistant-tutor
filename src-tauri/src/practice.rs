@@ -360,6 +360,48 @@ pub struct StoryView {
     pub updated_at: String,
 }
 
+/// Pedido para criar uma história local.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateStory {
+    pub request_id: Id,
+    pub input: StoryInput,
+}
+
+/// Pedido para editar uma história existente, com a versão esperada.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateStory {
+    pub request_id: Id,
+    pub id: Id,
+    pub expected_version: Version,
+    pub input: StoryInput,
+}
+
+/// Pedido para selecionar (ou remover) o apoio de história de uma resposta.
+///
+/// Só é aceite antes da primeira captura bem-sucedida; a versão da história é
+/// confirmada no commit para um cliente antigo não escolher conteúdo diferente.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectStory {
+    pub request_id: Id,
+    pub owner: CaptureOwner,
+    pub expected_preparation_version: Version,
+    pub story_id: Option<Id>,
+    pub expected_story_version: Option<Version>,
+}
+
+/// Decisão explícita sobre uma preparação interrompida no arranque.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreparationDecision {
+    /// «Manter este apoio e continuar»: fixa o candidato.
+    Keep,
+    /// «O microfone não chegou a iniciar»: liberta a seleção, conservando auditoria.
+    DidNotStart,
+}
+
 /// Preferência local de nível de reformulação.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

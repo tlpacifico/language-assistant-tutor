@@ -23,8 +23,10 @@
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
+use atomicwrites::{AllowOverwrite, AtomicFile};
 use hound::{SampleFormat, WavReader};
 
 use crate::audio::{
@@ -32,10 +34,13 @@ use crate::audio::{
 };
 use crate::db::{Database, PendingRecording};
 use crate::domain::{error_code, AppError, CaptureMeta};
-use crate::interview::{RecordingState, RecordingView, RecoveryReport, Result, SessionDetail};
+use crate::interview::{Id, RecordingState, RecordingView, RecoveryReport, Result, SessionDetail};
 
 /// Nome do derivado normalizado dentro da pasta da gravação.
 pub const NORMALIZED_FILE: &str = "normalized.wav";
+
+/// Marcador de arranque da captura de preparação, dentro da pasta da gravação.
+pub const PREPARATION_START_FILE: &str = "preparation-start.json";
 
 /// Nível de pastas dentro da raiz gerida: sessão, pergunta da sessão, gravação.
 const DEPTH: usize = 3;
@@ -465,6 +470,87 @@ pub fn reconcile(database: &Database, artifacts: &ArtifactStore) -> Result<Recov
 
     report.interrupted_operations = database.interrupt_running_operations()?;
     Ok(report)
+}
+
+/// Marcador de arranque da captura de preparação, escrito por substituição atómica.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PreparationStartMarker {
+    #[serde(rename = "recordingId")]
+    recording_id: String,
+    state: String,
+}
+
+/// Escreve o resultado de arranque (`started` | `failed`) na pasta da gravação.
+pub fn write_preparation_marker(directory: &Path, recording_id: &str, state: &str) -> Result<()> {
+    let marker = PreparationStartMarker {
+        recording_id: recording_id.to_owned(),
+        state: state.to_owned(),
+    };
+    let bytes = serde_json::to_vec_pretty(&marker).map_err(|error| {
+        AppError::new(
+            error_code::STORAGE_WRITE_FAILED,
+            format!("Não foi possível preparar o marcador de preparação: {error}."),
+            false,
+        )
+    })?;
+    let path = directory.join(PREPARATION_START_FILE);
+    AtomicFile::new(&path, AllowOverwrite)
+        .write(|file| {
+            file.write_all(&bytes)?;
+            file.flush()
+        })
+        .map_err(|error| {
+            AppError::new(
+                error_code::STORAGE_WRITE_FAILED,
+                format!("Não foi possível guardar o marcador de preparação: {error}."),
+                true,
+            )
+        })
+}
+
+/// Lê o estado do marcador de arranque; `None` quando não existe ou é ilegível.
+fn read_preparation_marker(directory: &Path) -> Option<String> {
+    let text = fs::read_to_string(directory.join(PREPARATION_START_FILE)).ok()?;
+    let marker: PreparationStartMarker = serde_json::from_str(&text).ok()?;
+    Some(marker.state)
+}
+
+/// Consolida ou liberta as preparações pendentes deixadas por um encerramento
+/// abrupto, devolvendo as gravações cuja resolução fica `start_uncertain`.
+///
+/// O marcador `started` (ou um `original.wav` finalizado) consolida o snapshot
+/// candidato; `failed` liberta a preparação; pendência sem evidência suficiente
+/// passa a `start_uncertain` e exige resolução explícita. Nunca apaga ficheiros.
+pub fn reconcile_preparations(database: &Database, artifacts: &ArtifactStore) -> Result<Vec<Id>> {
+    let mut uncertain = Vec::new();
+    for capture in database.pending_preparation_captures()? {
+        let directory = match artifacts.directory(
+            &capture.session_id,
+            &capture.session_question_id,
+            &capture.recording_id,
+        ) {
+            Ok(directory) => directory,
+            Err(_) => continue,
+        };
+        let marker_state = read_preparation_marker(&directory);
+        let has_original = directory.join(ORIGINAL_FILE).is_file();
+        match marker_state.as_deref() {
+            Some("failed") => {
+                let _ = database.mark_preparation_failed(&capture.recording_id);
+            }
+            Some("started") => {
+                let _ = database.mark_preparation_started(&capture.recording_id);
+            }
+            _ if has_original => {
+                let _ = database.mark_preparation_started(&capture.recording_id);
+            }
+            _ => {
+                let _ = database.mark_preparation_uncertain(&capture.recording_id);
+                uncertain.push(capture.recording_id);
+            }
+        }
+    }
+    Ok(uncertain)
 }
 
 /// Referência relativa de um ficheiro dentro da pasta de uma gravação.

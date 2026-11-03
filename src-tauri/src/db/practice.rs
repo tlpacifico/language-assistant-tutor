@@ -11,6 +11,7 @@ use uuid::Uuid;
 use super::ai::{lookup_command_identity, CommandIdentity, CommandIdentityLocation};
 use super::answers::{self, request_hash};
 use super::questions::{json_list, parse_category, utc_now};
+use super::stories::load_preparation_in;
 use super::Database;
 use crate::domain::{error_code, AppError};
 use crate::interview::{
@@ -18,9 +19,8 @@ use crate::interview::{
     RecordingView, Result, ReviewOrigin, Version,
 };
 use crate::practice::{
-    ArtifactParent, CaptureOwner, ConfirmPracticeAnswer, CreatePractice, LockState,
-    PracticeCommand, PracticeDetail, PracticeStatus, PreparationView, QuestionView, ResolvedAnswer,
-    SupportKind,
+    ArtifactParent, CaptureOwner, ConfirmPracticeAnswer, CreatePractice, PracticeCommand,
+    PracticeDetail, PracticeStatus, QuestionView, ResolvedAnswer,
 };
 
 impl Database {
@@ -536,7 +536,7 @@ struct StoredPractice {
     status: String,
 }
 
-fn resolve_capture_owner_in(
+pub(super) fn resolve_capture_owner_in(
     connection: &Connection,
     owner: &CaptureOwner,
 ) -> Result<ResolvedAnswer> {
@@ -879,22 +879,8 @@ fn load_practice_detail(
         },
         recordings,
         confirmation,
-        preparation: neutral_preparation(answer_id),
+        preparation: load_preparation_in(connection, &answer_id)?,
     }))
-}
-
-/// Preparação neutra de uma tentativa sem apoio de história (tarefa 3).
-fn neutral_preparation(answer_id: Id) -> PreparationView {
-    PreparationView {
-        answer_id,
-        version: 0,
-        lock_state: LockState::Editable,
-        selected_story_id: None,
-        selected_story_version: None,
-        snapshot: None,
-        support: SupportKind::None,
-        locked_capture_id: None,
-    }
 }
 
 fn parse_status(value: &str) -> Result<PracticeStatus> {

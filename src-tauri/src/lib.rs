@@ -170,6 +170,12 @@ pub fn run() {
             commands::interview_save_practice_review,
             commands::interview_confirm_practice_answer,
             commands::interview_transcribe_practice_response,
+            commands::interview_list_stories,
+            commands::interview_create_story,
+            commands::interview_update_story,
+            commands::interview_select_story,
+            commands::interview_resolve_preparation,
+            commands::interview_retry_preparation_publication,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao arrancar a aplicação Tauri");
