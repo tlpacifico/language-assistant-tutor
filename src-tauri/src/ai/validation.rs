@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::{json, Value};
 use std::collections::HashSet;
-const DIMENSIONS: [&str; 6] = [
+pub(super) const DIMENSIONS: [&str; 6] = [
     "relevance",
     "situation",
     "individual_responsibility",
@@ -9,7 +9,7 @@ const DIMENSIONS: [&str; 6] = [
     "result",
     "learning",
 ];
-fn object(v: &Value, keys: &[&str]) -> Result<()> {
+pub(super) fn object(v: &Value, keys: &[&str]) -> Result<()> {
     let o = v
         .as_object()
         .ok_or_else(|| failure("Era esperado um objeto JSON."))?;
@@ -18,12 +18,12 @@ fn object(v: &Value, keys: &[&str]) -> Result<()> {
     }
     Ok(())
 }
-fn text(v: &Value, max: usize) -> Result<&str> {
+pub(super) fn text(v: &Value, max: usize) -> Result<&str> {
     v.as_str()
         .filter(|s| !s.trim().is_empty() && s.len() <= max)
         .ok_or_else(|| failure("Texto vazio ou demasiado longo no resultado."))
 }
-fn array(v: &Value, max: usize) -> Result<&Vec<Value>> {
+pub(super) fn array(v: &Value, max: usize) -> Result<&Vec<Value>> {
     v.as_array()
         .filter(|a| a.len() <= max)
         .ok_or_else(|| failure("Lista inválida no resultado."))
@@ -197,6 +197,8 @@ pub fn build_messages(purpose: &str, sources: &AiSources) -> Result<Vec<Value>> 
     }
     let contract = if purpose == "follow_up" {
         r#"Return {schemaVersion:'ai-v3-1',decision:'ask'|'continue',reason:Portuguese explanation,missingDimension:null|dimension,question:null|English question}. Use double-quoted valid JSON. Ask at most one question about a real content gap, never grammar. Ask requires dimension and question; continue requires both null."#
+    } else if purpose == "practice_feedback" {
+        r#"Return {schemaVersion:'ai-v3-1',content:[{id,dimension,rating:'clear'|'partial'|'not_identified',explanation,evidence:[]}],strengths:[{id,explanation,evidence:[]}],gaps:[{id,explanation,evidence:[]}],english:{necessaryCorrections:[{id,explanation,evidence,replacement}],optionalStyle:[]},priorities:[{observationId,action}],fewerPrioritiesReason:string|null}. Exactly six content dimensions, unique IDs, maximum three priorities referencing observations; explain fewer priorities. Evidence is {type:'quote',confirmationId,role:'attempt',quote:exact nonempty substring} or {type:'absence',dimension,assessedConfirmationIds:ALL supplied confirmation IDs}. Clear/partial require quote; not_identified requires absence of same dimension. Strengths and English corrections require quotes. Corrections have one evidence object and factual English replacement. Never fabricate missing quotations. Explain absence as 'não identificado no texto'. There is exactly one confirmed answer (role attempt); never add initial or follow_up fields. Explain in Portuguese Portugal; quotes/replacements remain English. No overall score, pronunciation, acoustic fluency, confidence or emotions."#
     } else {
         r#"Return {schemaVersion:'ai-v3-1',content:[{id,dimension,rating:'clear'|'partial'|'not_identified',explanation,evidence:[]}],strengths:[{id,explanation,evidence:[]}],gaps:[{id,explanation,evidence:[]}],english:{necessaryCorrections:[{id,explanation,evidence,replacement}],optionalStyle:[]},priorities:[{observationId,action}],fewerPrioritiesReason:string|null}. Exactly six content dimensions, unique IDs, maximum three priorities referencing observations; explain fewer priorities. Evidence is {type:'quote',confirmationId,role:'initial'|'follow_up',quote:exact nonempty substring} or {type:'absence',dimension,assessedConfirmationIds:ALL supplied confirmation IDs}. Clear/partial require quote; not_identified requires absence of same dimension. Strengths and English corrections require quotes. Corrections have one evidence object and factual English replacement. Never fabricate missing quotations. Explain absence as 'não identificado no texto'. Distinguish initial and follow_up. Explain in Portuguese Portugal; quotes/replacements remain English. No overall score, pronunciation, acoustic fluency, confidence or emotions."#
     };

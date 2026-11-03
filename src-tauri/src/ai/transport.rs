@@ -4,7 +4,7 @@ use std::{future::Future, pin::Pin, time::Duration};
 pub struct TransportRequest {
     pub settings: AiSettingsView,
     pub key: String,
-    pub purpose: String,
+    pub task: AiTask,
     pub sources: AiSources,
 }
 #[derive(Clone, Debug)]
@@ -21,9 +21,15 @@ pub trait AiTransport: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<RemoteCompletion>> + Send>>;
 }
 pub struct HttpTransport;
-pub fn build_body(settings: &AiSettingsView, purpose: &str, sources: &AiSources) -> Result<Value> {
-    let messages = build_messages(purpose, sources)?;
-    let body = json!({"model":settings.model,"messages":messages,"max_tokens":if purpose=="follow_up"{800}else{4000},"stream":false});
+pub fn build_body(settings: &AiSettingsView, task: &AiTask, sources: &AiSources) -> Result<Value> {
+    let (messages, max_tokens) = match task {
+        AiTask::FollowUp => (build_messages("follow_up", sources)?, 800),
+        AiTask::OriginalFeedback => (build_messages("feedback", sources)?, 4000),
+        AiTask::PracticeFeedback { .. } => (build_messages("practice_feedback", sources)?, 4000),
+        AiTask::Rewrite { level, .. } => (build_rewrite_messages(sources, *level)?, 4000),
+    };
+    let body =
+        json!({"model":settings.model,"messages":messages,"max_tokens":max_tokens,"stream":false});
     if serde_json::to_vec(&body)
         .map_err(|_| failure("Pedido inválido."))?
         .len()
@@ -48,7 +54,7 @@ fn complete_with_timeout(
     timeout: Duration,
 ) -> Pin<Box<dyn Future<Output = Result<RemoteCompletion>> + Send>> {
     Box::pin(async move {
-        let body = build_body(&request.settings, &request.purpose, &request.sources)?;
+        let body = build_body(&request.settings, &request.task, &request.sources)?;
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
@@ -174,7 +180,7 @@ mod tests {
         TransportRequest {
             settings,
             key: "TEST-SECRET".into(),
-            purpose: "follow_up".into(),
+            task: AiTask::FollowUp,
             sources: AiSources {
                 question: "Question".into(),
                 criteria: vec!["STAR".into()],

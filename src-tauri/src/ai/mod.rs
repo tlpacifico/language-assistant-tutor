@@ -1,9 +1,12 @@
 mod credentials;
+mod rewrite;
 mod transport;
 mod usage;
 mod validation;
 use crate::domain::AppError;
+use crate::practice::RewriteLevel;
 pub use credentials::*;
+pub use rewrite::*;
 use serde::{Deserialize, Serialize};
 pub use transport::*;
 pub use usage::*;
@@ -148,6 +151,38 @@ pub struct AiSources {
     pub question: String,
     pub criteria: Vec<String>,
     pub answers: Vec<AiSource>,
+}
+
+/// Tarefa de IA tipada, em vez de tratar toda a finalidade não-`follow_up` como
+/// feedback. Uma única função `build_body` escolhe o prompt e o máximo de saída
+/// a partir da tarefa; os corpos efetivos da fase 3 mantêm-se iguais.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AiTask {
+    /// Seguimento da entrevista em curso.
+    FollowUp,
+    /// Avaliação da entrevista original concluída.
+    OriginalFeedback,
+    /// Avaliação de uma prática confirmada, com a rubrica da família.
+    PracticeFeedback { rubric_version: String },
+    /// Reformulação de uma origem confirmada para o nível pedido.
+    Rewrite {
+        level: RewriteLevel,
+        rubric_version: String,
+    },
+}
+
+impl AiTask {
+    /// Converte o propósito legado da fase 3 na tarefa tipada, preservando o
+    /// comportamento existente (tudo o que não é `follow_up` é feedback).
+    ///
+    /// As variantes `PracticeFeedback`/`Rewrite` são construídas diretamente com
+    /// nível/rubrica reais pela tarefa 5, que estende a reserva com a variante.
+    pub fn from_purpose(purpose: &str) -> AiTask {
+        match purpose {
+            "follow_up" => AiTask::FollowUp,
+            _ => AiTask::OriginalFeedback,
+        }
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -31,12 +31,14 @@ mod answers;
 mod operations;
 mod practice;
 mod questions;
+mod rewrites;
 mod sessions;
 mod stories;
 
 pub use ai::{CommandIdentity, CommandIdentityLocation};
 pub(crate) use answers::PendingRecording;
 pub use questions::*;
+pub use rewrites::ExerciseSources;
 pub use stories::{missing_fields, validate_story_input, PreparationReservation};
 
 /// Versão do esquema escrita em `PRAGMA user_version`.

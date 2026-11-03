@@ -257,7 +257,7 @@ json=excluded.json",
         }
         let sources =
             self.ai_sources(&command.session_id, &command.session_question_id, purpose)?;
-        build_body(settings, purpose, &sources)?;
+        build_body(settings, &AiTask::from_purpose(purpose), &sources)?;
         let payload = hash(&(command, purpose))?;
         self.with_connection(|c| {
             let tx = c.transaction().map_err(sql_error)?;

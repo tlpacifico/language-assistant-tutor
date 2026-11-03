@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::Value;
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NormalizedUsage {
     pub warnings: Vec<String>,
@@ -13,7 +13,7 @@ pub struct NormalizedUsage {
     pub billing_source: Option<String>,
     pub provider_estimated: Option<bool>,
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionUsage {
     pub known_reported_subtotal: f64,

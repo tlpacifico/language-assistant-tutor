@@ -255,7 +255,7 @@ impl AppService {
             self.ai_transport.complete(TransportRequest {
                 settings: a.settings.clone(),
                 key,
-                purpose: a.purpose.clone(),
+                task: AiTask::from_purpose(&a.purpose),
                 sources: a.sources.clone(),
             })
         };

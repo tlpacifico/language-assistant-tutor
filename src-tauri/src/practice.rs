@@ -9,7 +9,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
-use crate::ai::{NormalizedUsage, SessionUsage};
+use crate::ai::{
+    NormalizedUsage, RewriteChange, RewriteMissingInformation, RewriteSegment, SessionUsage,
+};
 use crate::interview::{
     AnswerSlot, Category, Confirmation, Id, RecordingView, ReviewOrigin, Version,
 };
@@ -78,6 +80,17 @@ pub enum RewriteLevel {
     B1,
     B2,
     C1,
+}
+
+impl RewriteLevel {
+    /// Nome estável enviado no JSON e no prompt, igual ao nome da variante.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            RewriteLevel::B1 => "B1",
+            RewriteLevel::B2 => "B2",
+            RewriteLevel::C1 => "C1",
+        }
+    }
 }
 
 /// Pedido para criar uma prática a partir de uma pergunta confirmada.
@@ -297,7 +310,7 @@ pub struct ReportVersions {
 }
 
 /// Tentativa de rede observável, sem dados de histórias nem credenciais.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkAttemptView {
     pub network_attempt_id: Id,
@@ -321,6 +334,28 @@ pub struct PracticeReportView {
     pub rubric_version: Option<String>,
     pub prompt_version: Option<String>,
     pub schema_version: Option<String>,
+    pub usage: SessionUsage,
+    pub network_attempts: Vec<NetworkAttemptView>,
+}
+
+/// Reformulação válida de uma origem confirmada, pronta para apresentar e ouvir.
+///
+/// O conteúdo (`segments`, `necessaryChanges`, `optionalStyle`,
+/// `missingInformation`) segue o contrato §2.4 (`rewrite-v1`) e fica vazio até o
+/// estado `ready`, que tem sempre identificador e conteúdo validado.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RewriteView {
+    pub id: Option<Id>,
+    pub origin: ResponseOrigin,
+    pub level: RewriteLevel,
+    pub state: ReportState,
+    pub segments: Vec<RewriteSegment>,
+    pub spoken_text: Option<String>,
+    pub necessary_changes: Vec<RewriteChange>,
+    pub optional_style: Vec<RewriteChange>,
+    pub missing_information: Vec<RewriteMissingInformation>,
+    pub versions: ReportVersions,
     pub usage: SessionUsage,
     pub network_attempts: Vec<NetworkAttemptView>,
 }
@@ -450,8 +485,8 @@ pub struct ComparisonEntry {
     pub answers: Vec<ComparisonAnswer>,
     pub report: Option<ComparisonReport>,
     pub report_state: ComparisonReportState,
-    /// Sugestões válidas da origem; a forma exata é fixada em §2.4 (tarefa 4).
-    pub rewrites: Vec<Json>,
+    /// Sugestões válidas da origem (contrato §2.4, `rewrite-v1`).
+    pub rewrites: Vec<RewriteView>,
     pub preparation: PreparationView,
 }
 
