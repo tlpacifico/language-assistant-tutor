@@ -1,7 +1,7 @@
 # Plano das fases — Tutor de entrevistas STAR
 
 Data: 2026-11-01  
-Estado: divisão em fases aprovada; fases 1 e 2 implementadas e verificadas automaticamente, com a validação manual do utilizador pendente em ambos os registos; fase 3 antecipada por autorização do utilizador; aceitação manual pendente.
+Estado: divisão em fases aprovada; fases 1 e 2 implementadas e verificadas automaticamente, com a validação manual do utilizador pendente em ambos os registos; fase 3 antecipada por autorização do utilizador; aceitação manual pendente; fase 4 implementada e verificada automaticamente, aceitação pendente.
 
 ## Objetivo
 
@@ -133,7 +133,7 @@ O [desenho aprovado do MVP](../specs/2026-11-01-star-interview-tutor-design.md) 
 
 ## Fase 4 — Melhorar e repetir
 
-**Documentação preparada em 2026-11-03:** [spec](../specs/2026-11-03-phase-4-improve-repeat-design.md) e [plano técnico](2026-11-03-phase-4-improve-repeat-implementation.md). O pedido do utilizador limita-se a estes documentos; implementação não iniciada nem autorizada neste pedido.
+**Estado (2026-11-03):** [spec](../specs/2026-11-03-phase-4-improve-repeat-design.md) e [plano técnico](2026-11-03-phase-4-improve-repeat-implementation.md) executados por autorização do utilizador; implementação verificada automaticamente (8/8 checks: 246 Rust, 97 Vitest, 36 pytest). Ver [preparação](../../phase-4/setup.md) e [validação](../../phase-4/validation.md). **Não aceite**: faltam o roteiro manual F4-16 e a inferência paga real; os critérios de conclusão abaixo continuam por validar com o utilizador.
 
 **Objetivo:** fechar o ciclo de aprendizagem com sugestões concretas e prática autónoma.
 
@@ -192,4 +192,4 @@ O [desenho aprovado do MVP](../specs/2026-11-01-star-interview-tutor-design.md) 
 
 ## Próximo passo
 
-A implementação e a verificação automática da fase 1 estão registadas em [validação da fase 1](../../phase-1/validation.md); os critérios manuais aí pendentes não são considerados concluídos sem evidência. O mesmo vale para a fase 2: implementação e automação estão registadas em [validação da fase 2](../../phase-2/validation.md), com a matriz F2-01 a F2-16 e a lista do que falta validar com o utilizador. O utilizador autorizou antecipar a fase 3; a implementação e a evidência estão nos documentos acima. O próximo passo é a validação manual das fases 1, 2 e 3 e o exercício da integração paga real. A pedido do utilizador em 2026-11-03, foi preparada apenas a spec e o plano técnico da fase 4. A implementação depende de instrução posterior; os documentos não constituem aceitação das fases anteriores.
+A implementação e a verificação automática da fase 1 estão registadas em [validação da fase 1](../../phase-1/validation.md); os critérios manuais aí pendentes não são considerados concluídos sem evidência. O mesmo vale para a fase 2: implementação e automação estão registadas em [validação da fase 2](../../phase-2/validation.md), com a matriz F2-01 a F2-16 e a lista do que falta validar com o utilizador. O utilizador autorizou antecipar a fase 3; a implementação e a evidência estão nos documentos acima. O próximo passo é a validação manual das fases 1, 2 e 3 e o exercício da integração paga real. A pedido do utilizador em 2026-11-03, a fase 4 foi especificada, planeada e implementada, com verificação automática verde; a aceitação manual e a inferência paga real continuam pendentes e a fase 5 não foi iniciada. Nada disto constitui aceitação das fases anteriores.

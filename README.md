@@ -1,7 +1,7 @@
 # language-assistant-tutor
 
 Tutor desktop de entrevistas comportamentais em inglês, por voz, baseado na
-estrutura STAR. Este repositório contém a implementação das **fases 1 a 3**:
+estrutura STAR. Este repositório contém a implementação das **fases 1 a 4**:
 uma aplicação Tauri 2 + React/TypeScript que prepara uma entrevista guiada com
 um banco de 20 perguntas, grava as respostas, reproduz o áudio, transcreve
 localmente com faster-whisper, permite rever e confirmar cada texto e guarda o
@@ -21,6 +21,12 @@ A fase 3 acrescenta configuração protegida, seguimentos únicos, feedback com
 fontes verificadas e consumo/custos observáveis. Ver [preparação](docs/phase-3/setup.md)
 e [validação](docs/phase-3/validation.md). Foi antecipada por autorização do
 utilizador; as aceitações manuais das três fases continuam pendentes.
+
+A fase 4 acrescenta reformulação B1/B2/C1 com voz Kokoro, novas tentativas
+(práticas) com avaliação própria, comparação local e histórias locais de apoio.
+Ver [preparação](docs/phase-4/setup.md) e [validação](docs/phase-4/validation.md).
+Está implementada e verificada automaticamente, mas **não aceite**: falta o
+roteiro manual F4-16 e a inferência paga real.
 
 ## Requisitos (Windows)
 
@@ -112,8 +118,8 @@ de cada caminho.
 
 `.\scripts\verify.ps1` executa typecheck, testes React, build Vite,
 `cargo fmt --check`, `clippy -D warnings`, testes Rust, pytest sem a marca
-`models` e `pip check`. Resultado real da verificação da fase 2: 8/8 checks com
-saída 0 (151 testes Rust, 53 Vitest, 36 pytest sem `models`); a duração depende
+`models` e `pip check`. Resultado real da verificação da fase 4: 8/8 checks com
+saída 0 (246 testes Rust, 97 Vitest, 36 pytest sem `models`); a duração depende
 da cache de compilação e do Vitest a frio. O teste com a marca
 `models` é executado à parte, porque exige pesos preparados e um manifesto
 indicado por `LANGUAGE_TUTOR_MODELS_MANIFEST`; nesta máquina deu `2 passed`,
@@ -135,9 +141,10 @@ src/features/questions/       Banco de perguntas editável
 src/features/interview/       Captura, revisão, confirmação e avanço
 src/features/navigation/      Decisão guardar/descartar/cancelar (navegar e fechar)
 src/features/history/         Histórico de sessões e treinos da fase 1
-src/features/practice/        practice.css partilhado pela interface nova
+src/features/practice/        Treino posterior: prática, reformulação, comparação, consumo
+src/features/stories/         Banco de histórias locais e apoio à preparação
 src-tauri/src/                Domínio, SQLite, artefactos, áudio, worker, serviço, comandos
-src-tauri/tests/              151 testes de domínio, base, artefactos, áudio, worker, sessões, serviço
+src-tauri/tests/              246 testes de domínio, base, artefactos, áudio, worker, sessões, serviço
 contracts/                    Exemplos partilhados dos contratos v1 e v2
 config/audio.example.json     Configuração pessoal documentada (não versionar a real)
 audio-worker/                 Auxiliar Python (faster-whisper + Kokoro)

@@ -1,7 +1,7 @@
 # Fase 4 — Melhorar e repetir
 
-Data: 2026-11-03  
-Estado: revista e aprovada tecnicamente pelo coordenador por delegação do utilizador, para elaboração do plano; implementação não autorizada neste pedido.  
+Data: 2026-11-03    
+Estado: revista e aprovada tecnicamente; implementada em 2026-11-03 por autorização posterior do utilizador e verificada automaticamente ([validação](../../phase-4/validation.md)). Os critérios F4-01 a F4-16 abaixo continuam por marcar: a aceitação manual (F4-16) e a inferência paga real estão pendentes.
 Base: [desenho do MVP](2026-11-01-star-interview-tutor-design.md), [fases](../plans/2026-11-01-star-interview-tutor-phases.md), [stack](../../tech-stack.md), [fase 3](2026-11-02-phase-3-ai-tutor-design.md) e [validação atual](../../phase-3/validation.md).
 
 ## 1. Intenção, autorização e limites

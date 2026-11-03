@@ -10,7 +10,7 @@
 
 **Spec:** [Melhorar e repetir](../specs/2026-11-03-phase-4-improve-repeat-design.md), revista pelo coordenador.
 
-Data: 2026-11-03. Estado: revisto e aprovado tecnicamente pelo coordenador por delegação do utilizador, para futura execução quando autorizada. **Só documentação autorizada.** Os comandos e alterações descritos abaixo são futuros; não foram executados para este plano. Não instalar, migrar dados, ler credenciais/dados pessoais ou fazer inferência paga. A fase 3 existente no checkout é preservada; aceitação manual das fases anteriores continua pendente. Não iniciar fase 5.
+Data: 2026-11-03. Estado: executado em 2026-11-03 por autorização do utilizador («termine as tarefas»); tarefas 1 a 8 realizadas e verificadas automaticamente, evidência real em [validação da fase 4](../../phase-4/validation.md). As caixas de verificação abaixo mantêm-se como roteiro original, sem serem marcadas, porque a aceitação (F4-16 e inferência paga) está pendente. Texto histórico do plano original: «só documentação autorizada; os comandos descritos eram futuros». Não instalar, migrar dados, ler credenciais/dados pessoais ou fazer inferência paga. A fase 3 existente no checkout é preservada; aceitação manual das fases anteriores continua pendente. Não iniciar fase 5.
 
 ## Restrições globais
 
