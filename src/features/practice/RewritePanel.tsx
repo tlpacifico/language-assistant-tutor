@@ -24,6 +24,7 @@ import {
 } from "../../lib/practice-contracts";
 import { newRequestId } from "../../lib/request-id";
 import { UsageLine } from "./shared";
+import { useAiSettled } from "./useAiSettled";
 
 const DIMENSION_LABELS: Record<string, string> = {
   relevance: "Relevância",
@@ -33,6 +34,12 @@ const DIMENSION_LABELS: Record<string, string> = {
   actions: "Ações",
   result: "Resultado",
   learning: "Aprendizagem",
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  initial: "Resposta inicial",
+  follow_up: "Acrescentado no seguimento",
+  attempt: "Tentativa",
 };
 
 function ChangeList({
@@ -87,6 +94,9 @@ export default function RewritePanel({
   // preferência local guardada, nunca por uma resposta remota.
   const [level, setLevel] = useState<RewriteLevel>("B1");
   const [variants, setVariants] = useState<RewriteView[]>([]);
+  // Todas as linhas da origem (também falhadas ou em curso), da mais antiga
+  // para a mais recente.
+  const [rows, setRows] = useState<RewriteView[]>([]);
   const [outcomes, setOutcomes] = useState<
     Partial<Record<RewriteLevel, { view?: RewriteView; error?: AppError }>>
   >({});
@@ -103,9 +113,16 @@ export default function RewritePanel({
 
   const loadVariants = useCallback(async (): Promise<void> => {
     try {
-      const rows = await client.listRewrites(origin);
+      const listed = await client.listRewrites(origin);
       if (originRef.current === originKey(origin)) {
-        setVariants(rows.filter((row) => row.state === "ready"));
+        setRows(listed);
+        setVariants(listed.filter((row) => row.state === "ready"));
+        // A releitura é a fonte do estado; o resultado do pedido já não manda.
+        setOutcomes((previous) =>
+          Object.fromEntries(
+            Object.entries(previous).filter(([, entry]) => entry?.error),
+          ),
+        );
       }
     } catch (failure) {
       setError(toAppError(failure));
@@ -115,6 +132,7 @@ export default function RewritePanel({
   useEffect(() => {
     let active = true;
     setVariants([]);
+    setRows([]);
     setOutcomes({});
     setError(null);
     client
@@ -136,12 +154,14 @@ export default function RewritePanel({
     };
   }, [client, key, loadVariants]);
 
-  // Um resultado guardado depois de uma falha de publicação passa a aparecer.
+  // Um resultado publicado pelo núcleo depois do pedido (ou guardado após uma
+  // falha de publicação) e as falhas passam a aparecer.
+  const settled = useAiSettled(snapshot);
   useEffect(() => {
     if (pendingPublication === null) {
       void loadVariants();
     }
-  }, [pendingPublication, loadVariants]);
+  }, [pendingPublication, loadVariants, settled]);
 
   async function chooseLevel(next: RewriteLevel): Promise<void> {
     setLevel(next);
@@ -246,12 +266,17 @@ export default function RewritePanel({
 
   const variant = variants.find((entry) => entry.level === level) ?? null;
   const outcome = outcomes[level];
+  const latest = [...rows].reverse().find((row) => row.level === level);
   const failed =
-    outcome?.error !== undefined || outcome?.view?.state === "failed";
+    outcome?.error !== undefined ||
+    outcome?.view?.state === "failed" ||
+    latest?.state === "failed";
   const waiting =
     requesting === level ||
     outcome?.view?.state === "running" ||
-    outcome?.view?.state === "pending";
+    outcome?.view?.state === "pending" ||
+    latest?.state === "running" ||
+    latest?.state === "pending";
 
   return (
     <section
@@ -315,6 +340,26 @@ export default function RewritePanel({
               </p>
             ))}
           </div>
+          <section aria-label="Origem dos segmentos">
+            <h5>Origem de cada segmento (fora da voz)</h5>
+            <ul className="practice__sublist">
+              {variant.segments.map((segment) => (
+                <li key={segment.id}>
+                  <p className="practice__meta">Segmento {segment.id}</p>
+                  {segment.evidence.length === 0 ? (
+                    <p className="practice__hint">Sem citação indicada.</p>
+                  ) : (
+                    segment.evidence.map((item, index) => (
+                      <blockquote key={`${item.confirmationId}-${index}`} lang="en">
+                        {item.quote}
+                        <footer>{ROLE_LABELS[item.role] ?? item.role}</footer>
+                      </blockquote>
+                    ))
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
           <div className="practice__actions">
             <button
               type="button"

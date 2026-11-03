@@ -226,4 +226,71 @@ describe("RewritePanel", () => {
     );
     expect(screen.getByText(/Valores parciais/)).toBeInTheDocument();
   });
+  it("relê as variantes quando o trabalho de IA termina e mostra a sugestão", async () => {
+    const user = userEvent.setup();
+    const fake = fakeInterviewClient();
+    fake.setRewriteResponder(async () =>
+      makeRewrite({ id: null, state: "running", segments: [] }),
+    );
+    const busy = snapshot({
+      revision: 2,
+      aiJob: {
+        attemptId: "a1",
+        purpose: "rewrite",
+        sessionId: "session-1",
+        sessionQuestionId: "sq-1",
+        stage: "running",
+      },
+    });
+    const { rerender } = render(
+      <RewritePanel client={fake.client} origin={ORIGIN} snapshot={snapshot({ revision: 1 })} />,
+    );
+    await user.click(await screen.findByRole("button", { name: "Pedir sugestão B1" }));
+    rerender(<RewritePanel client={fake.client} origin={ORIGIN} snapshot={busy} />);
+    expect(screen.queryByText("Sugestão da IA — confirme os factos")).toBeNull();
+
+    // O Rust publica o resultado e limpa o trabalho.
+    fake.rewrites.push(makeRewrite());
+    rerender(
+      <RewritePanel client={fake.client} origin={ORIGIN} snapshot={snapshot({ revision: 3 })} />,
+    );
+    expect(
+      await screen.findByText("Sugestão da IA — confirme os factos"),
+    ).toBeInTheDocument();
+  });
+
+  it("permite repetir depois de uma falha publicada pelo núcleo", async () => {
+    const user = userEvent.setup();
+    const fake = fakeInterviewClient();
+    fake.setRewriteResponder(async () =>
+      makeRewrite({ id: null, state: "running", segments: [] }),
+    );
+    const { rerender } = render(
+      <RewritePanel client={fake.client} origin={ORIGIN} snapshot={snapshot({ revision: 1 })} />,
+    );
+    await user.click(await screen.findByRole("button", { name: "Pedir sugestão B1" }));
+    expect(screen.getByRole("button", { name: "Pedir sugestão B1" })).toBeDisabled();
+
+    fake.rewrites.push(makeRewrite({ id: "rewrite-failed", state: "failed", segments: [] }));
+    rerender(
+      <RewritePanel client={fake.client} origin={ORIGIN} snapshot={snapshot({ revision: 2 })} />,
+    );
+    expect(
+      await screen.findByRole("button", { name: "Repetir pedido de sugestão B1" }),
+    ).toBeEnabled();
+  });
+
+  it("mostra as citações e o papel de cada segmento", async () => {
+    const fake = fakeInterviewClient();
+    fake.rewrites.push(makeRewrite());
+    render(<RewritePanel client={fake.client} origin={ORIGIN} snapshot={snapshot()} />);
+
+    const origins = await screen.findByLabelText("Origem dos segmentos");
+    expect(within(origins).getAllByText(/Resposta inicial/).length).toBeGreaterThan(0);
+    expect(within(origins).getByText("I solved a difficult problem")).toBeInTheDocument();
+    // A zona do texto sugerido (e da voz) continua sem citações.
+    expect(
+      within(screen.getByLabelText("Texto sugerido")).queryByText("I solved a difficult problem"),
+    ).toBeNull();
+  });
 });
