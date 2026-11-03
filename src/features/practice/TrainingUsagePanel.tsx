@@ -62,11 +62,11 @@ export default function TrainingUsagePanel({
       ) : (
         <>
           <UsageGroupView
-            title="Entrevista original"
+            title="Consumo — entrevista original"
             group={usage.originalInterview}
           />
-          <UsageGroupView title="Treino posterior" group={usage.laterPractice} />
-          <UsageGroupView title="Total combinado" group={usage.combined} />
+          <UsageGroupView title="Consumo — treino posterior" group={usage.laterPractice} />
+          <UsageGroupView title="Consumo — total combinado" group={usage.combined} />
         </>
       )}
     </section>
