@@ -1087,3 +1087,34 @@ async fn restart_resumes_review_and_state_without_opening_the_microphone() {
         "a revisão é conservada através do reinício"
     );
 }
+
+#[tokio::test]
+async fn snapshot_practice_follows_publication_and_preparation_is_readable() {
+    let harness = Harness::new().await;
+    let detail = harness.create("s1", "sq1").await;
+    let owner = Harness::owner_of(&detail);
+
+    let preparation = harness
+        .service
+        .load_preparation(owner.clone())
+        .await
+        .expect("ler a preparação");
+    assert_eq!(preparation.answer_id, detail.answer.id);
+
+    harness
+        .service
+        .start_practice_recording(owner, 0)
+        .await
+        .expect("gravar");
+    let stopped = harness
+        .service
+        .stop_recording()
+        .await
+        .expect("terminar a gravação");
+    let active = stopped
+        .practice
+        .active_practice
+        .expect("prática pendente na fotografia");
+    assert_eq!(active.recordings.len(), 1, "a publicação reflete-se na fotografia");
+    assert!(stopped.current.is_none(), "sem pergunta de entrevista fictícia");
+}
