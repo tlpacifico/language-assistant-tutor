@@ -34,7 +34,8 @@ import { latestTranscript, practiceTargetOf } from "../interview/useInterview";
 import StorySupport from "../stories/StorySupport";
 import Comparison from "./Comparison";
 import RewritePanel from "./RewritePanel";
-import { UsageLine, errorKey, formatMoment } from "./shared";
+import { PrioritiesView, UsageLine, errorKey, formatMoment } from "./shared";
+import { useAiSettled } from "./useAiSettled";
 
 const STATUS_LABELS: Record<PracticeStatus, string> = {
   preparing: "Em preparação",
@@ -143,10 +144,15 @@ export default function Practice({
   const confirmed = detail?.status === "confirmed";
   useEffect(() => {
     setReport(null);
+  }, [confirmed, loadReport]);
+  // O núcleo devolve `running` e publica depois: o relatório (e uma falha)
+  // são relidos quando o trabalho de IA assenta.
+  const settled = useAiSettled(snapshot);
+  useEffect(() => {
     if (confirmed) {
       void loadReport();
     }
-  }, [confirmed, loadReport]);
+  }, [confirmed, loadReport, settled]);
 
   const recordingActive = snapshot.recordingId !== null;
   const finalizing = snapshot.finalizing;
@@ -830,6 +836,7 @@ export default function Practice({
                 {report.report.english.optionalStyle.map((entry) => (
                   <CorrectionView key={entry.id} o={entry} />
                 ))}
+                <PrioritiesView report={report.report} />
               </>
             ) : null}
             {report?.state === "failed" ? (

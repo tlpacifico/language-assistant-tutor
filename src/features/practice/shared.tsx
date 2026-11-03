@@ -5,6 +5,7 @@
  * desconhecido nunca é apresentado como zero.
  */
 
+import type { QuestionReport } from "../../lib/ai-contracts";
 import type { AppError } from "../../lib/contracts";
 import type {
   ResponseOrigin,
@@ -99,6 +100,49 @@ export function UsageGroupView({
             </li>
           ))}
         </ul>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * Prioridades do relatório (no máximo três). Cada uma cita a observação a que
+ * se refere; com menos de três, mostra-se o motivo indicado pelo avaliador.
+ */
+export function PrioritiesView({ report }: { report: QuestionReport }) {
+  const explanations = new Map<string, string>();
+  for (const entry of [
+    ...report.content,
+    ...report.strengths,
+    ...report.gaps,
+    ...report.english.necessaryCorrections,
+    ...report.english.optionalStyle,
+  ]) {
+    explanations.set(entry.id, entry.explanation);
+  }
+  return (
+    <section aria-label="Prioridades">
+      <h4>Prioridades para a próxima tentativa</h4>
+      {report.priorities.length === 0 ? (
+        <p className="practice__hint">Nenhuma prioridade indicada.</p>
+      ) : (
+        <ol>
+          {report.priorities.map((priority, index) => (
+            <li key={`${priority.observationId}-${index}`}>
+              <p>{priority.action}</p>
+              {explanations.has(priority.observationId) ? (
+                <p className="practice__hint">
+                  Observação: {explanations.get(priority.observationId)}
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      )}
+      {report.fewerPrioritiesReason ? (
+        <p className="practice__hint">
+          Menos de três prioridades: {report.fewerPrioritiesReason}
+        </p>
       ) : null}
     </section>
   );

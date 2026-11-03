@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import App from "../../App";
 import {
@@ -403,6 +403,74 @@ describe("treino posterior — avaliação, publicação e consumo", () => {
     expect(screen.getByText(/Descreve a ação/)).toBeInTheDocument();
     // Nenhum seguimento nasce de uma prática.
     expect(fake.client.requestFollowUp).not.toHaveBeenCalled();
+  });
+
+  it("relê o relatório quando o núcleo publica o resultado depois de running", async () => {
+    const user = userEvent.setup();
+    const fake = fakeWithCompletedSession({ initial: snapshot({ revision: 1 }) });
+    fake.practices.push(confirmedPractice());
+    const base = {
+      practiceId: "practice-1",
+      rubricVersion: "star-text-v1",
+      promptVersion: "practice-feedback-v1",
+      schemaVersion: "ai-v3-1",
+      usage: emptyUsage(),
+      networkAttempts: [],
+    };
+    fake.client.evaluatePractice = vi.fn(async () => {
+      fake.reports.set("practice-1", { ...base, state: "running", report: null });
+      return fake.reports.get("practice-1")!;
+    });
+    render(<App client={fake.client} />);
+    await openHistorySession(user);
+    await user.click(screen.getByRole("button", { name: "Abrir prática 1" }));
+    await user.click(await screen.findByRole("button", { name: "Avaliar tentativa" }));
+    expect(await screen.findByText("Avaliação em processamento")).toBeInTheDocument();
+
+    fake.reports.set("practice-1", {
+      ...base,
+      state: "ready",
+      report: {
+        schemaVersion: "ai-v3-1",
+        content: [],
+        strengths: [],
+        gaps: [],
+        english: { necessaryCorrections: [], optionalStyle: [] },
+        priorities: [{ observationId: "o1", action: "Acrescentar um número." }],
+        fewerPrioritiesReason: "Só existe uma prioridade clara.",
+      },
+    });
+    act(() => fake.publish(snapshot({ revision: 2 })));
+
+    expect(await screen.findByText("Avaliação pronta")).toBeInTheDocument();
+    expect(screen.getByText(/Acrescentar um número/)).toBeInTheDocument();
+    expect(screen.getByText(/Só existe uma prioridade clara/)).toBeInTheDocument();
+  });
+
+  it("permite repetir a avaliação depois de uma falha publicada pelo núcleo", async () => {
+    const user = userEvent.setup();
+    const fake = fakeWithCompletedSession({ initial: snapshot({ revision: 1 }) });
+    fake.practices.push(confirmedPractice());
+    render(<App client={fake.client} />);
+    await openHistorySession(user);
+    await user.click(screen.getByRole("button", { name: "Abrir prática 1" }));
+    expect(await screen.findByText("Ainda sem avaliação")).toBeInTheDocument();
+
+    fake.reports.set("practice-1", {
+      practiceId: "practice-1",
+      state: "failed",
+      report: null,
+      rubricVersion: null,
+      promptVersion: null,
+      schemaVersion: null,
+      usage: emptyUsage(),
+      networkAttempts: [],
+    });
+    act(() => fake.publish(snapshot({ revision: 2 })));
+
+    expect(
+      await screen.findByRole("button", { name: "Repetir avaliação da tentativa" }),
+    ).toBeEnabled();
   });
 
   it("retry de publicação é separado do pedido de rede", async () => {

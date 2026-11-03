@@ -21,7 +21,7 @@ import {
   type RubricCompatibility,
 } from "../../lib/practice-contracts";
 import { ObservationView } from "../ai/FeedbackPanel";
-import { formatMoment, originLabel } from "./shared";
+import { PrioritiesView, formatMoment, originLabel } from "./shared";
 
 const ROLE_LABELS: Record<string, string> = {
   initial: "Resposta inicial",
@@ -129,6 +129,7 @@ function EntryView({
             {report.content.gaps.map((observation) => (
               <ObservationView key={observation.id} o={observation} />
             ))}
+            <PrioritiesView report={report.content} />
           </>
         ) : (
           <p className="practice__hint">

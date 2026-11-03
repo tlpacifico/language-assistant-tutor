@@ -213,4 +213,32 @@ describe("Comparison", () => {
     const confirmed = within(right).getByText("Attempt confirmed text.");
     expect(zone.contains(confirmed)).toBe(false);
   });
+  it("mostra as prioridades e o motivo de haver menos de três", async () => {
+    renderComparison(
+      view({
+        right: attempt({
+          reportState: "ready",
+          report: {
+            versions: {
+              rubricVersion: "star-text-v1",
+              promptVersion: "p",
+              schemaVersion: "ai-v3-1",
+            },
+            content: {
+              schemaVersion: "ai-v3-1",
+              content: [],
+              strengths: [],
+              gaps: [],
+              english: { necessaryCorrections: [], optionalStyle: [] },
+              priorities: [{ observationId: "g1", action: "Quantificar o resultado." }],
+              fewerPrioritiesReason: "Apenas uma lacuna relevante.",
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(await screen.findByText(/Quantificar o resultado/)).toBeInTheDocument();
+    expect(screen.getByText(/Apenas uma lacuna relevante/)).toBeInTheDocument();
+  });
 });

@@ -21,7 +21,7 @@ function EvidenceView({ e }: { e: Evidence }) {
     <blockquote>
       {e.quote}
       <footer>
-        {e.role === "follow_up" ? "Seguimento" : "Resposta inicial"} —{" "}
+        {e.role === "follow_up" ? "Seguimento" : e.role === "attempt" ? "Tentativa" : "Resposta inicial"} —{" "}
         {e.confirmationId}
       </footer>
     </blockquote>
