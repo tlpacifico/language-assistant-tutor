@@ -63,7 +63,6 @@ struct StoredPreparation {
 /// Linha de `preparation_captures` lida da base.
 struct StoredCapture {
     answer_id: Id,
-    snapshot_json: Option<String>,
 }
 
 /// Localização de uma captura de preparação pendente, para a recuperação.
@@ -473,6 +472,12 @@ impl Database {
         self.with_connection(|connection| load_preparation_in(connection, answer_id))
     }
 
+    /// A resposta tem uma preparação pendente de resolução, a resolver antes de
+    /// gravar, abandonar ou confirmar.
+    pub fn preparation_pending(&self, answer_id: &str) -> Result<bool> {
+        self.with_connection(|connection| preparation_pending_for_answer(connection, answer_id))
+    }
+
     /// Reserva o candidato imutável da preparação, antes de abrir o microfone.
     ///
     /// Se a transação falhar, o microfone não é aberto. Devolve o snapshot
@@ -500,7 +505,7 @@ impl Database {
                     transaction.commit().map_err(write_failed)?;
                     return Ok(PreparationReservation::Locked);
                 }
-                _ => return Err(preparation_pending()),
+                _ => return Err(preparation_unresolved()),
             }
 
             let snapshot = match preparation
@@ -567,8 +572,8 @@ impl Database {
     }
 
     /// Marca a captura como iniciada: `started` no candidato, `locked` na
-    /// preparação e, com apoio de história, a prática passa de `preparing` a
-    /// `answering`. Idempotente para a recuperação.
+    /// preparação e a prática passa de `preparing` a `answering` em qualquer
+    /// arranque bem-sucedido (com ou sem apoio). Idempotente para a recuperação.
     pub fn mark_preparation_started(&self, recording_id: &str) -> Result<()> {
         self.with_connection(|connection| {
             let transaction = connection
@@ -576,7 +581,6 @@ impl Database {
                 .map_err(write_failed)?;
             let capture = load_capture_row(&transaction, recording_id)?
                 .ok_or_else(preparation_capture_missing)?;
-            let has_story = capture.snapshot_json.is_some();
 
             transaction
                 .execute(
@@ -593,16 +597,16 @@ impl Database {
                 )
                 .map_err(write_failed)?;
 
-            if has_story {
-                if let Some(practice_id) = slot_practice_id(&transaction, &capture.answer_id)? {
-                    transaction
-                        .execute(
-                            "UPDATE practices SET status = 'answering'
-                              WHERE id = ?1 AND status = 'preparing'",
-                            [practice_id],
-                        )
-                        .map_err(write_failed)?;
-                }
+            // A transição `preparing → answering` é incondicional: qualquer
+            // arranque bem-sucedido de uma tentativa move a prática.
+            if let Some(practice_id) = slot_practice_id(&transaction, &capture.answer_id)? {
+                transaction
+                    .execute(
+                        "UPDATE practices SET status = 'answering'
+                          WHERE id = ?1 AND status = 'preparing'",
+                        [practice_id],
+                    )
+                    .map_err(write_failed)?;
             }
             transaction.commit().map_err(write_failed)?;
             Ok(())
@@ -700,7 +704,6 @@ impl Database {
 
             let capture = load_capture_row(&transaction, recording_id)?
                 .ok_or_else(preparation_capture_missing)?;
-            let has_story = capture.snapshot_json.is_some();
             match decision {
                 PreparationDecision::Keep => {
                     transaction
@@ -717,18 +720,15 @@ impl Database {
                             params![capture.answer_id, recording_id],
                         )
                         .map_err(write_failed)?;
-                    if has_story {
-                        if let Some(practice_id) =
-                            slot_practice_id(&transaction, &capture.answer_id)?
-                        {
-                            transaction
-                                .execute(
-                                    "UPDATE practices SET status = 'answering'
-                                      WHERE id = ?1 AND status = 'preparing'",
-                                    [practice_id],
-                                )
-                                .map_err(write_failed)?;
-                        }
+                    // Transição `preparing → answering` incondicional.
+                    if let Some(practice_id) = slot_practice_id(&transaction, &capture.answer_id)? {
+                        transaction
+                            .execute(
+                                "UPDATE practices SET status = 'answering'
+                                  WHERE id = ?1 AND status = 'preparing'",
+                                [practice_id],
+                            )
+                            .map_err(write_failed)?;
                     }
                 }
                 PreparationDecision::DidNotStart => {
@@ -977,26 +977,18 @@ fn load_preparation_row(
 fn load_capture_row(connection: &Connection, recording_id: &str) -> Result<Option<StoredCapture>> {
     let row = connection
         .query_row(
-            "SELECT answer_id, snapshot_json
+            "SELECT answer_id
                FROM preparation_captures
               WHERE recording_id = ?1",
             [recording_id],
-            |row| {
-                Ok((
-                    row.get::<_, Id>("answer_id")?,
-                    row.get::<_, Option<String>>("snapshot_json")?,
-                ))
-            },
+            |row| row.get::<_, Id>("answer_id"),
         )
         .optional()
         .map_err(read_failed)?;
-    let Some((answer_id, snapshot_json)) = row else {
+    let Some(answer_id) = row else {
         return Ok(None);
     };
-    Ok(Some(StoredCapture {
-        answer_id,
-        snapshot_json,
-    }))
+    Ok(Some(StoredCapture { answer_id }))
 }
 
 fn load_snapshot(connection: &Connection, recording_id: &str) -> Result<Option<StorySnapshot>> {
@@ -1182,6 +1174,54 @@ fn slot_practice_id(connection: &Connection, answer_id: &str) -> Result<Option<I
     Ok(practice_id.flatten())
 }
 
+/// A preparação de uma resposta está pendente de resolução (`pending_start` ou
+/// `start_uncertain`).
+pub(super) fn preparation_pending_for_answer(
+    connection: &Connection,
+    answer_id: &str,
+) -> Result<bool> {
+    let lock: Option<String> = connection
+        .query_row(
+            "SELECT lock_state FROM preparations WHERE answer_id = ?1",
+            [answer_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(read_failed)?;
+    Ok(matches!(
+        lock.as_deref(),
+        Some("pending_start" | "start_uncertain")
+    ))
+}
+
+/// A tentativa de uma prática tem uma preparação pendente de resolução.
+pub(super) fn practice_preparation_pending(
+    connection: &Connection,
+    practice_id: &str,
+) -> Result<bool> {
+    let answer_id: Option<Id> = connection
+        .query_row(
+            "SELECT answer_id FROM practices WHERE id = ?1",
+            [practice_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(read_failed)?;
+    let Some(answer_id) = answer_id else {
+        return Ok(false);
+    };
+    preparation_pending_for_answer(connection, &answer_id)
+}
+
+/// Erro de pendência de preparação, partilhado por gravação, abandono e confirmação.
+pub(super) fn preparation_unresolved() -> AppError {
+    AppError::new(
+        error_code::BUSY,
+        "Há uma preparação pendente para resolver ou retomar. Resolva-a antes de continuar.",
+        true,
+    )
+}
+
 fn parse_lock_state(value: &str) -> Result<LockState> {
     match value {
         "editable" => Ok(LockState::Editable),
@@ -1274,14 +1314,6 @@ fn preparation_locked() -> AppError {
         error_code::STALE_SOURCE,
         "O apoio desta resposta já está fixado e não pode ser alterado.",
         false,
-    )
-}
-
-fn preparation_pending() -> AppError {
-    AppError::new(
-        error_code::BUSY,
-        "Há uma preparação pendente para resolver. Resolva-a antes de gravar novamente.",
-        true,
     )
 }
 

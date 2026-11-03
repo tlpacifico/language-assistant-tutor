@@ -239,6 +239,18 @@ impl AppService {
             self.commit(|state| state.playback = None);
         }
 
+        // Uma preparação pendente por resolver impede nova reserva: nada é
+        // escrito nem aberto até se resolver/retomar.
+        let db = database.clone();
+        let aid = slot_id.clone();
+        if database_task(move || db.preparation_pending(&aid)).await? {
+            let error = AppError::busy(
+                "Há uma preparação pendente para resolver ou retomar. Resolva-a antes de gravar novamente.",
+            );
+            self.record_error(&error);
+            return Err(error);
+        }
+
         let db = database.clone();
         let sid = slot_id.clone();
         let reserved =

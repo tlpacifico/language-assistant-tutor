@@ -11,7 +11,10 @@ use uuid::Uuid;
 use super::ai::{lookup_command_identity, CommandIdentity, CommandIdentityLocation};
 use super::answers::{self, request_hash};
 use super::questions::{json_list, parse_category, utc_now};
-use super::stories::load_preparation_in;
+use super::stories::{
+    load_preparation_in, practice_preparation_pending, preparation_pending_for_answer,
+    preparation_unresolved,
+};
 use super::Database;
 use crate::domain::{error_code, AppError};
 use crate::interview::{
@@ -286,6 +289,12 @@ impl Database {
                 return Ok(detail);
             }
 
+            // O abandono aguarda a resolução da pendência de preparação; nada é
+            // aplicado enquanto houver um candidato por resolver.
+            if practice_preparation_pending(&transaction, &request.practice_id)? {
+                return Err(preparation_unresolved());
+            }
+
             let updated = transaction
                 .execute(
                     "UPDATE practices
@@ -372,6 +381,12 @@ impl Database {
             }
             if !resolved.writable {
                 return Err(practice_not_writable());
+            }
+
+            // A confirmação aguarda a resolução da pendência de preparação; nada
+            // é aplicado enquanto houver um candidato por resolver.
+            if preparation_pending_for_answer(&transaction, &answer_id)? {
+                return Err(preparation_unresolved());
             }
 
             let answer_target = AnswerTarget {

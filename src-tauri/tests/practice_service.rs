@@ -1076,7 +1076,9 @@ async fn restart_resumes_review_and_state_without_opening_the_microphone() {
         .load_practice(detail.id)
         .await
         .expect("carregar a prática após o reinício");
-    assert_eq!(loaded.status, PracticeStatus::Preparing);
+    // O arranque da primeira captura move a prática para `answering`, mesmo sem
+    // apoio de história (transição incondicional, tarefa 3).
+    assert_eq!(loaded.status, PracticeStatus::Answering);
     assert!(
         loaded.recordings[0]
             .review

@@ -20,8 +20,8 @@ use language_assistant_tutor::db::{missing_fields, validate_story_input, Databas
 use language_assistant_tutor::domain::{error_code, AppError, CaptureMeta, ComponentState};
 use language_assistant_tutor::interview::{ReviewOrigin, Version};
 use language_assistant_tutor::practice::{
-    CaptureOwner, CreateStory, LockState, MissingField, PracticeStatus, PreparationDecision,
-    SelectStory, StoryInput, StoryView, UpdateStory,
+    CaptureOwner, ConfirmPracticeAnswer, CreateStory, LockState, MissingField, PracticeCommand,
+    PracticeStatus, PreparationDecision, SelectStory, StoryInput, StoryView, UpdateStory,
 };
 use language_assistant_tutor::service::{
     AppService, LaunchedWorker, PreparationFault, ServicePaths, WorkerControl, WorkerLauncher,
@@ -1196,5 +1196,170 @@ async fn story_marker_never_leaks_into_sources_or_answers() {
             .text
             .contains(MARKER),
         "a confirmação não contém o marcador"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Pendência de preparação: abandono, confirmação e nova gravação aguardam
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn abandon_and_confirm_wait_for_preparation_resolution() {
+    let harness = Harness::new().await;
+    let detail = harness.create("s1", "sq1").await;
+    let story = harness
+        .create_story("Pending", "Pending note.", &["Team"])
+        .await;
+    harness
+        .select_story(Harness::owner_of(&detail), 0, Some(&story))
+        .await;
+
+    // A marcação `started` falha depois do microfone: fica o candidato pendente.
+    harness
+        .service
+        .inject_preparation_fault(Some(PreparationFault::MarkStarted));
+    harness
+        .service
+        .start_practice_recording(Harness::owner_of(&detail), 0)
+        .await
+        .expect("o microfone abre");
+    let recording_id = harness.service.snapshot().recording_id.clone().unwrap();
+    harness
+        .service
+        .stop_recording()
+        .await
+        .expect("terminar a gravação");
+
+    // O abandono recusa enquanto a preparação está pendente.
+    let abandon_err = harness
+        .service
+        .abandon_practice(PracticeCommand {
+            request_id: new_request_id(),
+            practice_id: detail.id.clone(),
+            expected_version: detail.version,
+        })
+        .await
+        .expect_err("o abandono recusa com pendência");
+    assert_eq!(abandon_err.code, error_code::BUSY);
+
+    // A confirmação também recusa.
+    let current = harness
+        .service
+        .load_practice(detail.id.clone())
+        .await
+        .expect("recarregar a prática");
+    let rid = current.answer.selected_recording_id.clone().unwrap();
+    let selection_version = current.answer.selection_version;
+    let target = language_assistant_tutor::practice::PracticeAnswerTarget {
+        owner: Harness::owner_of(&current),
+        recording_id: rid,
+        selection_version,
+    };
+    let confirm_err = harness
+        .service
+        .confirm_practice_answer(ConfirmPracticeAnswer {
+            request_id: new_request_id(),
+            target,
+            expected_review_version: 0,
+            expected_practice_version: current.version,
+            source_transcript_id: None,
+            origin: ReviewOrigin::ManualExplicit,
+            text: "I answered the question.".to_owned(),
+        })
+        .await
+        .expect_err("a confirmação recusa com pendência");
+    assert_eq!(confirm_err.code, error_code::BUSY);
+
+    // Nada foi aplicado: a prática continua pendente com a preparação por resolver.
+    let loaded = harness
+        .service
+        .load_practice(detail.id.clone())
+        .await
+        .expect("recarregar a prática");
+    assert_eq!(loaded.status, PracticeStatus::Preparing);
+    assert_eq!(loaded.preparation.lock_state, LockState::PendingStart);
+
+    // Resolvida a pendência, o abandono volta a ser permitido.
+    harness.service.inject_preparation_fault(None);
+    harness
+        .service
+        .retry_preparation_publication(recording_id)
+        .await
+        .expect("resolver a pendência");
+    let abandoned = harness
+        .service
+        .abandon_practice(PracticeCommand {
+            request_id: new_request_id(),
+            practice_id: detail.id.clone(),
+            expected_version: detail.version,
+        })
+        .await
+        .expect("o abandono é permitido depois da resolução");
+    assert_eq!(abandoned.status, PracticeStatus::Abandoned);
+}
+
+#[tokio::test]
+async fn new_recording_waits_for_pending_preparation() {
+    let harness = Harness::new().await;
+    let detail = harness.create("s1", "sq1").await;
+    let story = harness
+        .create_story("Pending", "Pending note.", &["Team"])
+        .await;
+    harness
+        .select_story(Harness::owner_of(&detail), 0, Some(&story))
+        .await;
+
+    // Simula uma queda entre a reserva do candidato e o microfone.
+    let recording = harness
+        .database
+        .reserve_recording(&detail.answer.id, 0)
+        .expect("reservar a gravação");
+    harness
+        .database
+        .reserve_preparation_candidate(&detail.answer.id, &recording.id)
+        .expect("reservar o candidato");
+
+    let starts_before = harness.audio.starts();
+    let recordings_before: i64 = harness
+        .database
+        .with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM recordings WHERE session_question_id = ?1",
+                    [&detail.answer.id],
+                    |row| row.get(0),
+                )
+                .map_err(|error| AppError::new("TEST_SQLITE", error.to_string(), false))
+        })
+        .expect("contar as gravações");
+
+    // Nova gravação no mesmo owner recusa, sem abrir microfone nem escrever.
+    let error = harness
+        .service
+        .start_practice_recording(Harness::owner_of(&detail), 0)
+        .await
+        .expect_err("nova gravação recusa com pendência");
+    assert_eq!(error.code, error_code::BUSY);
+    assert_eq!(
+        harness.audio.starts(),
+        starts_before,
+        "nenhum microfone foi aberto"
+    );
+
+    let recordings_after: i64 = harness
+        .database
+        .with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM recordings WHERE session_question_id = ?1",
+                    [&detail.answer.id],
+                    |row| row.get(0),
+                )
+                .map_err(|error| AppError::new("TEST_SQLITE", error.to_string(), false))
+        })
+        .expect("contar as gravações");
+    assert_eq!(
+        recordings_after, recordings_before,
+        "nenhuma gravação nova foi reservada"
     );
 }
