@@ -717,6 +717,51 @@ async fn evaluate_refuses_unconfirmed_practice_and_incompatible_family() {
     assert_eq!(h.transport.calls.load(Ordering::SeqCst), 0);
 }
 
+#[tokio::test]
+async fn evaluate_derives_family_from_original_report() {
+    let h = Harness::new(vec![]).await;
+    h.consent().await;
+    let detail = h.confirm_practice(h.create_practice().await).await;
+
+    // Semeia um relatório original com rubrica própria (não o padrão), para a
+    // família derivar dele em vez do padrão star-text-v1.
+    h.db.with_connection(|c| {
+        c.execute_batch(
+            "INSERT INTO ai_requests (id, purpose, question_id, session_id, origin_key, variant_key, sources_json, rubric_version, schema_version)
+             VALUES ('air-orig', 'feedback', 'sq1', 's1', 'original:sq1', 'default',
+                     '{\"question\":\"x\",\"criteria\":[],\"answers\":[]}', 'custom-rubric-v1', 'custom-schema-v1');
+             INSERT INTO ai_attempts (id, request_id, generation, command_id, payload_hash, state, settings_json, created_at)
+             VALUES ('aia-orig', 'air-orig', 1, 'cmd-orig', 'h', 'completed', '{}', '2026-11-03T09:00:00Z');
+             INSERT INTO ai_reports (question_id, attempt_id, json)
+             VALUES ('sq1', 'aia-orig', '{}');",
+        )
+        .map_err(|e| AppError::new("TEST_SQLITE", e.to_string(), false))?;
+        Ok(())
+    })
+    .unwrap();
+
+    // A família nasce do relatório original, não do padrão.
+    let sources =
+        h.db.load_exercise_sources(&ResponseOrigin::Practice {
+            practice_id: detail.id.clone(),
+        })
+        .unwrap();
+    assert_eq!(sources.rubric_version, "custom-rubric-v1");
+
+    // A versão incompatível é recusada sem substituir histórico.
+    let err = h
+        .service
+        .evaluate_practice(EvaluatePractice {
+            request_id: new_id(),
+            practice_id: detail.id.clone(),
+            expected_version: detail.version,
+        })
+        .await
+        .expect_err("rubrica original incompatível recusada");
+    assert_eq!(err.code, error_code::STALE_SOURCE);
+    assert_eq!(h.transport.calls.load(Ordering::SeqCst), 0);
+}
+
 // ---------------------------------------------------------------------------
 // Concorrência, resultado tardio e recuperação de publicação
 // ---------------------------------------------------------------------------
