@@ -32,7 +32,7 @@ function EvidenceView({ e }: { e: Evidence }) {
     </p>
   );
 }
-function ObservationView({ o }: { o: Observation }) {
+export function ObservationView({ o }: { o: Observation }) {
   return (
     <div>
       <p>
@@ -54,7 +54,7 @@ function ObservationView({ o }: { o: Observation }) {
     </div>
   );
 }
-function CorrectionView({ o }: { o: Correction }) {
+export function CorrectionView({ o }: { o: Correction }) {
   return (
     <div>
       <p>{o.explanation}</p>

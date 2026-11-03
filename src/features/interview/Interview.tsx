@@ -28,6 +28,7 @@ import {
   type SessionDetail,
 } from "../../lib/interview-contracts";
 import { newRequestId } from "../../lib/request-id";
+import StorySupport from "../stories/StorySupport";
 import type { InterviewReview } from "./useInterview";
 import { selectedAnswer } from "./useInterview";
 
@@ -435,6 +436,29 @@ export default function Interview({
           </button>
         ) : null}
       </div>
+
+      {question && snapshot.current ? (
+        <StorySupport
+          client={client}
+          snapshot={snapshot}
+          onSnapshot={onSnapshot}
+          owner={{
+            type: "interview",
+            sessionId: session.id,
+            sessionQuestionId: snapshot.current.question.id,
+            answerId: question.id,
+          }}
+          editable={
+            snapshot.current.followUp == null &&
+            recordings.length === 0 &&
+            confirmation === null &&
+            !captureBusy &&
+            modelJob === null &&
+            busyAction === null &&
+            !closing
+          }
+        />
+      ) : null}
 
       <section className="practice__panel" aria-labelledby="capture-title">
         <h3 id="capture-title">Gravação</h3>

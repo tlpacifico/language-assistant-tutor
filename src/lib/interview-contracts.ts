@@ -139,6 +139,8 @@ export type AudioSelection =
   | { type: "follow_up"; sessionId: Id; sessionQuestionId: Id; answerId: Id }
   | { type: "question"; sessionId: Id; sessionQuestionId: Id }
   | { type: "recording"; recordingId: Id }
+  | { type: "rewrite"; rewriteId: Id }
+  | { type: "practice_question"; practiceId: Id }
   | { type: "legacy"; attemptId: Id };
 
 export type ReviewOrigin = "automatic" | "manual_explicit";
@@ -256,7 +258,7 @@ export interface InterviewSnapshot {
   currentAnswer?: {
     id: Id;
     sessionQuestionId: Id;
-    role: "initial" | "follow_up";
+    role: "initial" | "follow_up" | "attempt";
     text: string;
     selectedRecordingId: Id | null;
     selectionVersion: number;
@@ -280,6 +282,8 @@ export interface InterviewSnapshot {
   playback: PlaybackTarget | null;
   warnings: AppError[];
   lastError: AppError | null;
+  /** Estado de prática; neutro enquanto nenhuma prática está aberta. */
+  practice: import("./practice-contracts").ExerciseSnapshot;
 }
 
 /** Resultado da recuperação no arranque. */

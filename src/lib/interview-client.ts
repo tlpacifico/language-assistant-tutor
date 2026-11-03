@@ -37,6 +37,31 @@ import type {
   Version,
 } from "./interview-contracts";
 import type { RestoreResult } from "./contracts";
+import type {
+  CaptureOwner,
+  ComparisonRequest,
+  ComparisonView,
+  ConfirmPracticeAnswer,
+  CreatePractice,
+  CreateStory,
+  EvaluatePractice,
+  PracticeAnswerTarget,
+  PracticeCommand,
+  PracticeDetail,
+  PracticeReportView,
+  PreparationDecision,
+  PreparationView,
+  ResponseOrigin,
+  RewriteCommand,
+  RewritePreference,
+  RewriteView,
+  SavePracticeReview,
+  SelectStory,
+  SetRewriteLevel,
+  StoryView,
+  TrainingUsageView,
+  UpdateStory,
+} from "./practice-contracts";
 
 /** Evento com a fotografia da entrevista, publicado depois de cada alteração. */
 export const INTERVIEW_SNAPSHOT_EVENT = "interview://snapshot";
@@ -107,6 +132,43 @@ export interface InterviewClient {
   prepareClose(): Promise<InterviewSnapshot>;
   /** Repete a abertura e a reconciliação da base de dados. */
   retryDatabase(): Promise<InterviewSnapshot>;
+  // -- Fase 4: histórias, práticas, reformulações, comparação e consumo --
+  /** Lista as histórias locais, filtradas por competência (só leitura). */
+  listStories(competency?: string | null): Promise<StoryView[]>;
+  createStory(request: CreateStory): Promise<StoryView>;
+  updateStory(request: UpdateStory): Promise<StoryView>;
+  /** Apoio guardado de uma resposta, só em leitura local. */
+  loadPreparation(owner: CaptureOwner): Promise<PreparationView>;
+  selectStory(request: SelectStory): Promise<InterviewSnapshot>;
+  resolvePreparation(
+    recordingId: Id,
+    requestId: Id,
+    decision: PreparationDecision,
+  ): Promise<InterviewSnapshot>;
+  retryPreparationPublication(recordingId: Id): Promise<InterviewSnapshot>;
+  createPractice(request: CreatePractice): Promise<PracticeDetail>;
+  loadPractice(practiceId: Id): Promise<PracticeDetail>;
+  listPractices(sessionQuestionId: Id): Promise<PracticeDetail[]>;
+  abandonPractice(request: PracticeCommand): Promise<PracticeDetail>;
+  startPracticeRecording(
+    owner: CaptureOwner,
+    expectedSelection: Version,
+  ): Promise<InterviewSnapshot>;
+  savePracticeReview(request: SavePracticeReview): Promise<InterviewSnapshot>;
+  confirmPracticeAnswer(
+    request: ConfirmPracticeAnswer,
+  ): Promise<PracticeDetail>;
+  transcribePracticeResponse(
+    target: PracticeAnswerTarget,
+  ): Promise<InterviewSnapshot>;
+  evaluatePractice(request: EvaluatePractice): Promise<PracticeReportView>;
+  loadPracticeReport(practiceId: Id): Promise<PracticeReportView>;
+  requestRewrite(request: RewriteCommand): Promise<RewriteView>;
+  listRewrites(origin: ResponseOrigin): Promise<RewriteView[]>;
+  compareResponses(request: ComparisonRequest): Promise<ComparisonView>;
+  loadTrainingUsage(sessionId: Id): Promise<TrainingUsageView>;
+  loadRewritePreference(): Promise<RewritePreference>;
+  setRewriteLevel(request: SetRewriteLevel): Promise<RewritePreference>;
   /** Recebe cada fotografia publicada; devolve a remoção do listener. */
   subscribe(listener: (snapshot: InterviewSnapshot) => void): Unsubscribe;
 }
@@ -180,6 +242,69 @@ export function createInterviewClient(): InterviewClient {
     restartWorker: () => invoke<InterviewSnapshot>("interview_restart_worker"),
     prepareClose: () => invoke<InterviewSnapshot>("interview_prepare_close"),
     retryDatabase: () => invoke<InterviewSnapshot>("interview_retry_database"),
+    listStories: (competency) =>
+      invoke<StoryView[]>("interview_list_stories", {
+        competency: competency ?? null,
+      }),
+    createStory: (request) =>
+      invoke<StoryView>("interview_create_story", { request }),
+    updateStory: (request) =>
+      invoke<StoryView>("interview_update_story", { request }),
+    loadPreparation: (owner) =>
+      invoke<PreparationView>("interview_load_preparation", { owner }),
+    selectStory: (request) =>
+      invoke<InterviewSnapshot>("interview_select_story", { request }),
+    resolvePreparation: (recordingId, requestId, decision) =>
+      invoke<InterviewSnapshot>("interview_resolve_preparation", {
+        recordingId,
+        requestId,
+        decision,
+      }),
+    retryPreparationPublication: (recordingId) =>
+      invoke<InterviewSnapshot>("interview_retry_preparation_publication", {
+        recordingId,
+      }),
+    createPractice: (request) =>
+      invoke<PracticeDetail>("interview_create_practice", { request }),
+    loadPractice: (practiceId) =>
+      invoke<PracticeDetail>("interview_load_practice", { practiceId }),
+    listPractices: (sessionQuestionId) =>
+      invoke<PracticeDetail[]>("interview_list_practices", {
+        sessionQuestionId,
+      }),
+    abandonPractice: (request) =>
+      invoke<PracticeDetail>("interview_abandon_practice", { request }),
+    startPracticeRecording: (owner, expectedSelection) =>
+      invoke<InterviewSnapshot>("interview_start_practice_recording", {
+        owner,
+        expectedSelection,
+      }),
+    savePracticeReview: (request) =>
+      invoke<InterviewSnapshot>("interview_save_practice_review", { request }),
+    confirmPracticeAnswer: (request) =>
+      invoke<PracticeDetail>("interview_confirm_practice_answer", { request }),
+    transcribePracticeResponse: (target) =>
+      invoke<InterviewSnapshot>("interview_transcribe_practice_response", {
+        target,
+      }),
+    evaluatePractice: (request) =>
+      invoke<PracticeReportView>("interview_evaluate_practice", { request }),
+    loadPracticeReport: (practiceId) =>
+      invoke<PracticeReportView>("interview_load_practice_report", {
+        practiceId,
+      }),
+    requestRewrite: (request) =>
+      invoke<RewriteView>("interview_request_rewrite", { request }),
+    listRewrites: (origin) =>
+      invoke<RewriteView[]>("interview_list_rewrites", { origin }),
+    compareResponses: (request) =>
+      invoke<ComparisonView>("interview_compare_responses", { request }),
+    loadTrainingUsage: (sessionId) =>
+      invoke<TrainingUsageView>("interview_load_training_usage", { sessionId }),
+    loadRewritePreference: () =>
+      invoke<RewritePreference>("interview_load_rewrite_preference"),
+    setRewriteLevel: (request) =>
+      invoke<RewritePreference>("interview_set_rewrite_level", { request }),
     subscribe(listener) {
       let unlisten: Unsubscribe | null = null;
       let disposed = false;

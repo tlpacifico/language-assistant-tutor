@@ -1,4 +1,6 @@
 import FeedbackPanel from "../ai/FeedbackPanel";
+import PostTraining from "../practice/PostTraining";
+import TrainingUsagePanel from "../practice/TrainingUsagePanel";
 /**
  * Histórico: sessões guiadas, detalhes e treinos da fase 1.
  *
@@ -23,6 +25,7 @@ import type { InterviewClient } from "../../lib/interview-client";
 import {
   CATEGORY_LABELS,
   type Category,
+  type InterviewSnapshot,
   type QuestionDetail,
   type RecordingView,
   type RecordingState,
@@ -79,15 +82,22 @@ export interface HistoryProps {
   client: InterviewClient;
   /** Pede à aplicação que abra a entrevista na etapa persistida. */
   onResume: (sessionId: string) => void;
+  /** Fotografia atual; bloqueia práticas com entrevista/prática pendente. */
+  snapshot?: InterviewSnapshot | null;
+  onSnapshot?: (snapshot: InterviewSnapshot) => void;
+  /** Abre uma prática (nova, pendente ou já feita). */
+  onOpenPractice?: (practiceId: string) => void;
 }
 
 /** Detalhe de uma sessão, aberto sem alterar a sessão em curso. */
 function SessionDetailView({
   detail,
   onPlay,
+  renderQuestionExtra,
 }: {
   detail: SessionDetail;
   onPlay: (recordingId: string) => void;
+  renderQuestionExtra?: (question: QuestionDetail) => React.ReactNode;
 }) {
   const { summary } = detail;
   const completed = summary.status === "completed";
@@ -124,12 +134,16 @@ function SessionDetailView({
       )}
 
       {detail.questions.map((question) => (
-        <QuestionDetailPanel
-          key={question.question.id}
-          detail={question}
-          count={summary.count}
-          onPlay={onPlay}
-        />
+        <div key={question.question.id}>
+          <QuestionDetailPanel
+            detail={question}
+            count={summary.count}
+            onPlay={onPlay}
+          />
+          {completed && question.confirmation && renderQuestionExtra
+            ? renderQuestionExtra(question)
+            : null}
+        </div>
       ))}
     </div>
   );
@@ -401,7 +415,13 @@ function LegacyDetailPanel({
  * Uma sessão em curso ganha a ação «Retomar», que relê a etapa persistida do
  * núcleo e não avança nenhuma pergunta; uma sessão concluída só tem leitura.
  */
-export default function History({ client, onResume }: HistoryProps) {
+export default function History({
+  client,
+  onResume,
+  snapshot = null,
+  onSnapshot,
+  onOpenPractice,
+}: HistoryProps) {
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
   const [sessionsError, setSessionsError] = useState<AppError | null>(null);
   const [sessionsReload, setSessionsReload] = useState(0);
@@ -716,7 +736,23 @@ export default function History({ client, onResume }: HistoryProps) {
                           onPlay={(recordingId) =>
                             void playRecording(recordingId)
                           }
+                          renderQuestionExtra={(question) => (
+                            <PostTraining
+                              client={client}
+                              sessionId={detail.summary.id}
+                              question={question}
+                              snapshot={snapshot}
+                              onSnapshot={onSnapshot}
+                              onOpenPractice={(id) => onOpenPractice?.(id)}
+                            />
+                          )}
                         />
+                        {detail.summary.status === "completed" ? (
+                          <TrainingUsagePanel
+                            client={client}
+                            sessionId={detail.summary.id}
+                          />
+                        ) : null}
                         {detail.questions.map((q) =>
                           q.followUp ? (
                             <section key={q.question.id}>
