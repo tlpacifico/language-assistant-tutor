@@ -173,6 +173,7 @@ pub fn run() {
             commands::interview_list_stories,
             commands::interview_create_story,
             commands::interview_update_story,
+            commands::interview_load_preparation,
             commands::interview_select_story,
             commands::interview_resolve_preparation,
             commands::interview_retry_preparation_publication,

@@ -588,8 +588,17 @@ impl AppService {
         database: &Database,
     ) -> Result<InterviewSnapshot, AppError> {
         let detail = self.load_active_detail(database).await?;
+        // A prática pendente acompanha a releitura: publicação, transcrição e
+        // revisão alteram as gravações que a interface apresenta.
+        let pending_db = database.clone();
+        let practice = database_task(move || pending_db.pending_practice()).await?;
         Ok(self.commit(|state| {
             state.apply_detail(detail);
+            state.active_owner = practice.as_ref().map(|p| CaptureOwner::Practice {
+                practice_id: p.id.clone(),
+                answer_id: p.answer.id.clone(),
+            });
+            state.active_practice = practice;
             state.last_error = None;
         }))
     }

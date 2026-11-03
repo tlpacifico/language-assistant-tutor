@@ -99,6 +99,19 @@ impl AppService {
         database_task(move || db.update_story(request)).await
     }
 
+    /// Lê a preparação (apoio de história) de uma resposta, sem alterar estado.
+    ///
+    /// Só leitura local: resolve o dono e devolve o apoio guardado, sem rede.
+    pub async fn load_preparation(
+        &self,
+        owner: CaptureOwner,
+    ) -> Result<crate::practice::PreparationView, AppError> {
+        let resolved = self.resolve_practice_owner(&owner).await?;
+        let database = self.database()?;
+        let slot_id = resolved.slot.id;
+        database_task(move || database.load_preparation(&slot_id)).await
+    }
+
     /// Seleciona (ou remove) o apoio de história de uma resposta, antes da captura.
     pub async fn select_story(&self, request: SelectStory) -> Result<InterviewSnapshot, AppError> {
         let _transition = self.transitions.lock().await;

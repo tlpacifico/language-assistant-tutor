@@ -323,6 +323,15 @@ pub async fn interview_update_story(
     service.update_story(request).await
 }
 
+/// Lê a preparação (apoio de história) de uma resposta, só em leitura.
+#[tauri::command]
+pub async fn interview_load_preparation(
+    owner: CaptureOwner,
+    service: State<'_, Arc<AppService>>,
+) -> Result<crate::practice::PreparationView, AppError> {
+    service.load_preparation(owner).await
+}
+
 /// Seleciona (ou remove) o apoio de história de uma resposta.
 #[tauri::command]
 pub async fn interview_select_story(
