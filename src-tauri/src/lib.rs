@@ -17,6 +17,7 @@
 //! captura, a reprodução e a revisão continuam a funcionar.
 
 pub mod ai;
+pub mod article;
 pub mod artifacts;
 pub mod audio;
 pub mod commands;
