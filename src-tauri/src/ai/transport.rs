@@ -57,6 +57,27 @@ fn complete_with_timeout(
 ) -> Pin<Box<dyn Future<Output = Result<RemoteCompletion>> + Send>> {
     Box::pin(async move {
         let body = build_body(&request.settings, &request.task, &request.sources)?;
+        send_chat(
+            &request.settings,
+            &request.key,
+            &request.conversation_id,
+            &body,
+            timeout,
+        )
+        .await
+    })
+}
+
+/// Envio HTTP comum a todos os modos: autenticação, identidade da conversa,
+/// limites, timeout e política de redirects/retries num único sítio.
+pub(crate) async fn send_chat(
+    settings: &AiSettingsView,
+    key: &str,
+    conversation_id: &str,
+    body: &Value,
+    timeout: Duration,
+) -> Result<RemoteCompletion> {
+    {
         let client = reqwest::Client::builder()
             .user_agent(concat!(
                 "LanguageAssistantTutor/",
@@ -69,13 +90,13 @@ fn complete_with_timeout(
             .build()
             .map_err(|_| failure("HTTP indisponível."))?;
         let mut response = client
-            .post(format!("{}/chat/completions", request.settings.base_url))
-            .bearer_auth(request.key)
+            .post(format!("{}/chat/completions", settings.base_url))
+            .bearer_auth(key)
             .header(
                 "x-opencode-session",
-                format!("language-tutor-{}", request.conversation_id),
+                format!("language-tutor-{conversation_id}"),
             )
-            .json(&body)
+            .json(body)
             .send()
             .await
             .map_err(|e| {
@@ -127,7 +148,7 @@ fn complete_with_timeout(
         {
             usage_value["opencode"] = envelope["opencode"].clone();
         }
-        let usage = normalize_usage(&usage_value, request.settings.tariff.as_ref(), &model);
+        let usage = normalize_usage(&usage_value, settings.tariff.as_ref(), &model);
         let content = envelope["choices"][0]["message"]["content"]
             .as_str()
             .unwrap_or("")
@@ -138,7 +159,7 @@ fn complete_with_timeout(
             usage,
             invalid: envelope["choices"][0]["finish_reason"] != "stop",
         })
-    })
+    }
 }
 
 #[cfg(test)]
