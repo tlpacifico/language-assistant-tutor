@@ -10,7 +10,7 @@
 
 **Spec:** [desenho aprovado](../specs/2026-11-04-article-conversation-design.md).
 
-**Estado:** plano preparado em 2026-11-04; nenhuma tarefa de implementação executada. A aprovação do desenho não constitui evidência de testes nem aceitação manual.
+**Estado:** execução iniciada em 2026-11-04 no ramo `feat/article-conversation`. Tarefas 1 a 3 implementadas com testes automáticos verdes (`cargo test` completo e `cargo clippy -D warnings` limpos; `npm run typecheck` limpo): contratos e estados (`article_domain`), migração v4 e repositório (`article_migration`, `article_repository`), prompts, validação e transporte (`article_ai`). Tarefas 4 a 9 por executar; a tarefa 4 é a integração mais invasiva (nova propriedade `Article` na captura, na normalização e na aplicação de transcrições do `AppService`). Rulings: `ArticleTransportRequest` transporta a chave (como `TransportRequest`); `evidence.turnId` do relatório é o ID da versão da fala citada; o código `ARTICLE_DELETED` entrou na lista fechada do diagnóstico. Nada disto é aceitação manual nem validação com áudio ou inferência reais.
 
 ## Restrições globais
 
