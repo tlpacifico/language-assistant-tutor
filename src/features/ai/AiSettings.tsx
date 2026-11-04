@@ -42,7 +42,7 @@ export default function AiSettings({ client }: { client: InterviewClient }) {
       </section>
     );
   return (
-    <section className="practice__panel">
+    <section className="practice__panel tutor-ai-settings">
       <h2>Configuração IA</h2>
       <p>
         O áudio fica neste computador. Apenas o texto confirmado, a pergunta e

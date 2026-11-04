@@ -56,7 +56,9 @@ function lines(value: string): string[] {
 }
 
 function questionsLabel(total: number): string {
-  return total === 1 ? "1 pergunta nesta vista." : `${total} perguntas nesta vista.`;
+  return total === 1
+    ? "1 pergunta nesta vista."
+    : `${total} perguntas nesta vista.`;
 }
 
 /**
@@ -228,31 +230,48 @@ export default function QuestionBank({
   }, [reportGuard, dirty, saving, saveError]);
 
   return (
-    <section className="practice__page" aria-labelledby="bank-title">
-      <h2 id="bank-title">Banco de perguntas</h2>
+    <section
+      className="practice__page collection collection--questions"
+      aria-labelledby="bank-title"
+    >
+      <h2 className="tutor-sr-only" id="bank-title">
+        Banco de perguntas
+      </h2>
       <p className="practice__hint">
         As perguntas são apresentadas em inglês; a interface e as explicações
         ficam em português.
       </p>
 
-      <div className="practice__field">
-        <label htmlFor="bank-filter">Filtrar por categoria</label>
-        <select
-          id="bank-filter"
-          className="practice__select"
-          value={filter}
-          onChange={(event) => {
-            const next = event.target.value;
-            setFilter(next === "all" ? "all" : (next as Category));
-          }}
-        >
-          <option value="all">Todas as categorias</option>
-          {(Object.keys(CATEGORY_LABELS) as Category[]).map((value) => (
-            <option key={value} value={value}>
-              {CATEGORY_LABELS[value]}
-            </option>
-          ))}
-        </select>
+      <div className="collection__toolbar">
+        <div className="practice__field collection__filter">
+          <label htmlFor="bank-filter">Filtrar por categoria</label>
+          <select
+            id="bank-filter"
+            className="practice__select"
+            value={filter}
+            onChange={(event) => {
+              const next = event.target.value;
+              setFilter(next === "all" ? "all" : (next as Category));
+            }}
+          >
+            <option value="all">Todas as categorias</option>
+            {(Object.keys(CATEGORY_LABELS) as Category[]).map((value) => (
+              <option key={value} value={value}>
+                {CATEGORY_LABELS[value]}
+              </option>
+            ))}
+          </select>
+        </div>
+        {!draft ? (
+          <button
+            className="collection__add"
+            type="button"
+            onClick={beginNew}
+            disabled={loading}
+          >
+            <span aria-hidden="true">＋</span> Adicionar pergunta
+          </button>
+        ) : null}
       </div>
 
       {loadError ? (
@@ -277,7 +296,7 @@ export default function QuestionBank({
 
       {draft ? (
         <form
-          className="practice__panel practice__form"
+          className="practice__panel practice__form collection__editor"
           aria-labelledby="editor-title"
           onSubmit={(event) => {
             event.preventDefault();
@@ -299,9 +318,7 @@ export default function QuestionBank({
           ) : null}
 
           <div className="practice__field">
-            <label htmlFor="question-text">
-              Texto da pergunta (em inglês)
-            </label>
+            <label htmlFor="question-text">Texto da pergunta (em inglês)</label>
             <textarea
               id="question-text"
               className="practice__textarea"
@@ -322,7 +339,10 @@ export default function QuestionBank({
               className="practice__select"
               value={draft.category}
               onChange={(event) => {
-                setDraft({ ...draft, category: event.target.value as Category });
+                setDraft({
+                  ...draft,
+                  category: event.target.value as Category,
+                });
                 setDraftDirty(true);
               }}
               disabled={saving}
@@ -357,9 +377,7 @@ export default function QuestionBank({
           </div>
 
           <div className="practice__field">
-            <label htmlFor="question-criteria">
-              Critérios (uma por linha)
-            </label>
+            <label htmlFor="question-criteria">Critérios (uma por linha)</label>
             <textarea
               id="question-criteria"
               className="practice__textarea"
@@ -387,35 +405,53 @@ export default function QuestionBank({
           </div>
 
           {saveError ? (
-            <div className="practice__notice practice__notice--error" role="alert">
+            <div
+              className="practice__notice practice__notice--error"
+              role="alert"
+            >
               <p>{saveError.message}</p>
               <p className="practice__hint">Código: {saveError.code}.</p>
             </div>
           ) : null}
         </form>
-      ) : (
-        <div className="practice__actions">
-          <button type="button" onClick={beginNew} disabled={loading}>
-            Adicionar pergunta
-          </button>
+      ) : null}
+
+      {!loading && !loadError && questions.length === 0 ? (
+        <div className="collection__empty">
+          <span className="collection__empty-icon" aria-hidden="true">
+            ≡
+          </span>
+          <h3>Nenhuma pergunta nesta vista</h3>
+          <p>Escolha outra categoria ou adicione uma pergunta ao banco.</p>
         </div>
-      )}
+      ) : null}
 
       {questions.length > 0 ? (
-        <ul className="practice__list" aria-label="Perguntas do banco">
+        <ul
+          className="practice__list collection__cards"
+          aria-label="Perguntas do banco"
+        >
           {questions.map((question) => (
             <li key={question.id}>
               <article
-                className="practice__item"
+                className="practice__item collection__card"
                 aria-labelledby={`question-${question.id}`}
               >
-                <h3 id={`question-${question.id}`} lang="en">
+                <div className="collection__card-head">
+                  <span className="collection__tag">
+                    {CATEGORY_LABELS[question.category]}
+                  </span>
+                  <span className="collection__version">
+                    Versão {question.version}.
+                  </span>
+                </div>
+                <h3
+                  className="collection__question"
+                  id={`question-${question.id}`}
+                  lang="en"
+                >
                   {question.text}
                 </h3>
-                <p className="practice__meta">
-                  {CATEGORY_LABELS[question.category]}
-                </p>
-                <p className="practice__meta">Versão {question.version}.</p>
                 <div className="practice__field">
                   <p className="practice__meta">Competências</p>
                   <ul className="practice__sublist">
@@ -426,15 +462,17 @@ export default function QuestionBank({
                     ))}
                   </ul>
                 </div>
-                <div className="practice__field">
+                <div className="practice__field collection__criteria">
                   <p className="practice__meta">Critérios</p>
                   <ul className="practice__sublist">
                     {question.criteria.map((criterion, index) => (
-                      <li key={`${question.id}-criterion-${index}`}>{criterion}</li>
+                      <li key={`${question.id}-criterion-${index}`}>
+                        {criterion}
+                      </li>
                     ))}
                   </ul>
                 </div>
-                <div className="practice__actions">
+                <div className="practice__actions collection__card-foot">
                   <button
                     type="button"
                     aria-label={`Editar pergunta: ${question.text}`}

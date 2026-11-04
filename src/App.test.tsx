@@ -487,7 +487,7 @@ describe("App", () => {
     renderApp(snapshot({ database: "opening" }));
 
     expect(
-      screen.getByRole("heading", { name: "Tutor de entrevistas" }),
+      screen.getByRole("heading", { name: "Prepare a próxima entrevista", level: 1 }),
     ).toBeInTheDocument();
     expect(
       await screen.findByText("A abrir a base de dados…"),
@@ -593,10 +593,12 @@ describe("App", () => {
         }),
       );
     });
-    expect(await screen.findByText("Voz local pronta")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Banco de perguntas" }),
     ).toBeInTheDocument();
+    // O ambiente está na preparação; mantém o estado recebido noutra vista.
+    await user.click(screen.getByRole("button", { name: "Preparação" }));
+    expect(await screen.findByText("Voz local pronta")).toBeInTheDocument();
     expect(fake.client.subscribe).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "Entrevista" }));

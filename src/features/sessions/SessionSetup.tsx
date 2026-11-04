@@ -158,28 +158,69 @@ export default function SessionSetup({
   }
 
   return (
-    <section className="practice__page" aria-labelledby="setup-title">
-      <h2 id="setup-title">Preparar entrevista</h2>
+    <section
+      className="practice__page tutor-setup"
+      aria-labelledby="setup-title"
+    >
+      <h2 id="setup-title" className="tutor-sr-only">
+        Preparar entrevista
+      </h2>
 
       {activeSession ? (
-        <section className="practice__panel" aria-labelledby="resume-title">
-          <h3 id="resume-title">Retomar sessão</h3>
-          <p className="practice__state">
-            Sessão em curso: pergunta {activeSession.position} de{" "}
-            {activeSession.count}.
-          </p>
-          <p>Respostas confirmadas: {activeSession.confirmedCount}.</p>
-          <p className="practice__hint">
-            Categoria:{" "}
-            {activeSession.category
-              ? CATEGORY_LABELS[activeSession.category]
-              : "todas as categorias"}
-            .
-          </p>
-          <div className="practice__actions">
-            <button type="button" onClick={() => onStarted(snapshot)}>
-              Retomar sessão
-            </button>
+        <section className="tutor-hero" aria-labelledby="resume-title">
+          <div className="tutor-hero-main">
+            <div className="tutor-hero-copy">
+              <p className="tutor-eyebrow">
+                <span className="tutor-dot" />
+                Sessão em curso
+              </p>
+              <h3 id="resume-title">Retomar sessão</h3>
+              <p className="practice__state">
+                Sessão em curso: pergunta {activeSession.position} de{" "}
+                {activeSession.count}.
+              </p>
+              <p className="practice__hint">
+                Categoria:{" "}
+                {activeSession.category
+                  ? CATEGORY_LABELS[activeSession.category]
+                  : "todas as categorias"}
+                .
+              </p>
+            </div>
+            <div className="practice__actions">
+              <button type="button" onClick={() => onStarted(snapshot)}>
+                Retomar sessão
+              </button>
+            </div>
+          </div>
+          <progress
+            className="tutor-progress"
+            value={activeSession.confirmedCount}
+            max={Math.max(1, activeSession.count)}
+            aria-label="Progresso da sessão"
+          />
+          <div className="tutor-hero-stats">
+            <div>
+              <strong>
+                {activeSession.position} de {activeSession.count}
+              </strong>
+              <span>Pergunta atual</span>
+            </div>
+            <div>
+              <strong>{activeSession.confirmedCount}</strong>
+              <span>Respostas confirmadas</span>
+            </div>
+            <div>
+              <strong>
+                {Math.round(
+                  activeSession.count > 0
+                    ? (activeSession.confirmedCount / activeSession.count) * 100
+                    : 0,
+                )}
+                %
+              </strong>
+              <span>Progresso</span>
+            </div>
           </div>
         </section>
       ) : loadError ? (
@@ -197,113 +238,128 @@ export default function SessionSetup({
           </div>
         </div>
       ) : (
-        <>
-          <label>
-            Modo de treino
-            <select
-              value={mode}
-              onChange={(e) => {
-                setMode(e.target.value as "local_v2" | "ai_v3");
-                intention.current = null;
-              }}
-              disabled={starting}
-            >
-              <option value="local_v2">Local, sem IA</option>
-              <option value="ai_v3">
-                Tutor com IA — envia texto confirmado
-              </option>
-            </select>
-          </label>
-          <form
-            className="practice__form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void start();
-            }}
-          >
-            <div className="practice__field">
-              <label htmlFor="setup-category">Categoria</label>
+        <section
+          className="tutor-hero tutor-new-session"
+          aria-labelledby="new-session-title"
+        >
+          <div className="tutor-hero-intro">
+            <p className="tutor-eyebrow">O seu espaço de prática</p>
+            <h3 id="new-session-title">
+              Uma boa resposta começa com uma história sua.
+            </h3>
+            <p>
+              Escolha o foco da sessão. Ouça cada pergunta, grave ao seu ritmo e
+              reveja a sua resposta em inglês.
+            </p>
+          </div>
+          <div className="tutor-session-form">
+            <label>
+              Modo de treino
               <select
-                id="setup-category"
-                className="practice__select"
-                value={category ?? ""}
-                onChange={(event) => {
-                  const next = event.target.value;
-                  setCategory(next === "" ? null : (next as Category));
-                  setStartError(null);
+                value={mode}
+                onChange={(e) => {
+                  setMode(e.target.value as "local_v2" | "ai_v3");
+                  intention.current = null;
                 }}
                 disabled={starting}
               >
-                <option value="">Todas as categorias</option>
-                {(Object.keys(CATEGORY_LABELS) as Category[]).map((value) => (
-                  <option key={value} value={value}>
-                    {CATEGORY_LABELS[value]}
-                  </option>
-                ))}
+                <option value="local_v2">Local, sem IA</option>
+                <option value="ai_v3">
+                  Tutor com IA — envia texto confirmado
+                </option>
               </select>
-            </div>
-
-            <div className="practice__field">
-              <label htmlFor="setup-count">Quantidade de perguntas</label>
-              <input
-                id="setup-count"
-                className="practice__input"
-                type="number"
-                min={1}
-                step={1}
-                inputMode="numeric"
-                value={countText}
-                onChange={(event) => {
-                  setCountText(event.target.value);
-                  setStartError(null);
-                }}
-                disabled={starting || loading}
-                aria-invalid={quantityError !== null}
-                aria-describedby={[
-                  "setup-eligible",
-                  quantityError ? "setup-count-error" : null,
-                  suggestionTooHigh ? "setup-count-warning" : null,
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-              />
-              <p className="practice__hint" id="setup-eligible">
-                {loading
-                  ? "A carregar perguntas…"
-                  : `${questionsLabel(eligible)} para esta escolha.`}
-              </p>
-            </div>
-
-            {quantityError ? (
-              <p className="practice__error-text" id="setup-count-error">
-                {quantityError}
-              </p>
-            ) : null}
-
-            {suggestionTooHigh ? (
-              <p className="practice__warning" id="setup-count-warning">
-                Só existem {eligible} perguntas elegíveis. Ajuste a quantidade
-                antes de iniciar a entrevista.
-              </p>
-            ) : null}
-
-            <div className="practice__actions">
-              <button type="submit" disabled={!canStart}>
-                {starting ? "A iniciar entrevista…" : "Iniciar entrevista"}
-              </button>
-            </div>
-
-            {startError ? (
-              <div
-                className="practice__notice practice__notice--error"
-                role="alert"
-              >
-                <p>{startError.message}</p>
-                <p className="practice__hint">Código: {startError.code}.</p>
+            </label>
+            <form
+              className="practice__form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void start();
+              }}
+            >
+              <div className="practice__field">
+                <label htmlFor="setup-category">Categoria</label>
+                <select
+                  id="setup-category"
+                  className="practice__select"
+                  value={category ?? ""}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setCategory(next === "" ? null : (next as Category));
+                    setStartError(null);
+                  }}
+                  disabled={starting}
+                >
+                  <option value="">Todas as categorias</option>
+                  {(Object.keys(CATEGORY_LABELS) as Category[]).map((value) => (
+                    <option key={value} value={value}>
+                      {CATEGORY_LABELS[value]}
+                    </option>
+                  ))}
+                </select>
               </div>
-            ) : null}
-          </form>
-        </>
+
+              <div className="practice__field">
+                <label htmlFor="setup-count">Quantidade de perguntas</label>
+                <input
+                  id="setup-count"
+                  className="practice__input"
+                  type="number"
+                  min={1}
+                  step={1}
+                  inputMode="numeric"
+                  value={countText}
+                  onChange={(event) => {
+                    setCountText(event.target.value);
+                    setStartError(null);
+                  }}
+                  disabled={starting || loading}
+                  aria-invalid={quantityError !== null}
+                  aria-describedby={[
+                    "setup-eligible",
+                    quantityError ? "setup-count-error" : null,
+                    suggestionTooHigh ? "setup-count-warning" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                />
+                <p className="practice__hint" id="setup-eligible">
+                  {loading
+                    ? "A carregar perguntas…"
+                    : `${questionsLabel(eligible)} para esta escolha.`}
+                </p>
+              </div>
+
+              {quantityError ? (
+                <p className="practice__error-text" id="setup-count-error">
+                  {quantityError}
+                </p>
+              ) : null}
+
+              {suggestionTooHigh ? (
+                <p className="practice__warning" id="setup-count-warning">
+                  Só existem {eligible} perguntas elegíveis. Ajuste a quantidade
+                  antes de iniciar a entrevista.
+                </p>
+              ) : null}
+
+              <div className="practice__actions">
+                <button type="submit" disabled={!canStart}>
+                  {starting ? "A iniciar entrevista…" : "Iniciar entrevista"}
+                </button>
+              </div>
+
+              {startError ? (
+                <div
+                  className="practice__notice practice__notice--error"
+                  role="alert"
+                >
+                  <p>{startError.message}</p>
+                  <p className="practice__hint">Código: {startError.code}.</p>
+                </div>
+              ) : null}
+            </form>
+          </div>
+        </section>
       )}
     </section>
   );

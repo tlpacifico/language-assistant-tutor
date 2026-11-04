@@ -1,0 +1,629 @@
+{
+  "checks": [
+    {
+      "width": 360,
+      "height": 800,
+      "view": "setup",
+      "overflow": false
+    },
+    {
+      "width": 360,
+      "height": 800,
+      "view": "bank",
+      "overflow": false
+    },
+    {
+      "width": 360,
+      "height": 800,
+      "view": "stories",
+      "overflow": false
+    },
+    {
+      "width": 360,
+      "height": 800,
+      "view": "interview",
+      "overflow": false
+    },
+    {
+      "width": 360,
+      "height": 800,
+      "view": "history",
+      "overflow": false
+    },
+    {
+      "width": 360,
+      "height": 800,
+      "view": "ai",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "view": "setup",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "view": "bank",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "view": "stories",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "view": "interview",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "view": "history",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "view": "ai",
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "height": 932,
+      "view": "setup",
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "height": 932,
+      "view": "bank",
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "height": 932,
+      "view": "stories",
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "height": 932,
+      "view": "interview",
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "height": 932,
+      "view": "history",
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "height": 932,
+      "view": "ai",
+      "overflow": false
+    },
+    {
+      "width": 600,
+      "height": 960,
+      "view": "setup",
+      "overflow": false
+    },
+    {
+      "width": 600,
+      "height": 960,
+      "view": "bank",
+      "overflow": false
+    },
+    {
+      "width": 600,
+      "height": 960,
+      "view": "stories",
+      "overflow": false
+    },
+    {
+      "width": 600,
+      "height": 960,
+      "view": "interview",
+      "overflow": false
+    },
+    {
+      "width": 600,
+      "height": 960,
+      "view": "history",
+      "overflow": false
+    },
+    {
+      "width": 600,
+      "height": 960,
+      "view": "ai",
+      "overflow": false
+    },
+    {
+      "width": 820,
+      "height": 1180,
+      "view": "setup",
+      "overflow": false
+    },
+    {
+      "width": 820,
+      "height": 1180,
+      "view": "bank",
+      "overflow": false
+    },
+    {
+      "width": 820,
+      "height": 1180,
+      "view": "stories",
+      "overflow": false
+    },
+    {
+      "width": 820,
+      "height": 1180,
+      "view": "interview",
+      "overflow": false
+    },
+    {
+      "width": 820,
+      "height": 1180,
+      "view": "history",
+      "overflow": false
+    },
+    {
+      "width": 820,
+      "height": 1180,
+      "view": "ai",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "height": 768,
+      "view": "setup",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "height": 768,
+      "view": "bank",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "height": 768,
+      "view": "stories",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "height": 768,
+      "view": "interview",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "height": 768,
+      "view": "history",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "height": 768,
+      "view": "ai",
+      "overflow": false
+    },
+    {
+      "width": 1366,
+      "height": 768,
+      "view": "setup",
+      "overflow": false
+    },
+    {
+      "width": 1366,
+      "height": 768,
+      "view": "bank",
+      "overflow": false
+    },
+    {
+      "width": 1366,
+      "height": 768,
+      "view": "stories",
+      "overflow": false
+    },
+    {
+      "width": 1366,
+      "height": 768,
+      "view": "interview",
+      "overflow": false
+    },
+    {
+      "width": 1366,
+      "height": 768,
+      "view": "history",
+      "overflow": false
+    },
+    {
+      "width": 1366,
+      "height": 768,
+      "view": "ai",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "view": "setup",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "view": "bank",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "view": "stories",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "view": "interview",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "view": "history",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "view": "ai",
+      "overflow": false
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "view": "setup",
+      "overflow": false
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "view": "bank",
+      "overflow": false
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "view": "stories",
+      "overflow": false
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "view": "interview",
+      "overflow": false
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "view": "history",
+      "overflow": false
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "view": "ai",
+      "overflow": false
+    },
+    {
+      "width": 360,
+      "height": 800,
+      "view": "new-session",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "view": "new-session",
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "height": 932,
+      "view": "new-session",
+      "overflow": false
+    },
+    {
+      "width": 600,
+      "height": 960,
+      "view": "new-session",
+      "overflow": false
+    },
+    {
+      "width": 820,
+      "height": 1180,
+      "view": "new-session",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "height": 768,
+      "view": "new-session",
+      "overflow": false
+    },
+    {
+      "width": 1366,
+      "height": 768,
+      "view": "new-session",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "view": "new-session",
+      "overflow": false
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "view": "new-session",
+      "overflow": false
+    },
+    {
+      "width": 360,
+      "height": 800,
+      "view": "practice",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "view": "practice",
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "height": 932,
+      "view": "practice",
+      "overflow": false
+    },
+    {
+      "width": 600,
+      "height": 960,
+      "view": "practice",
+      "overflow": false
+    },
+    {
+      "width": 820,
+      "height": 1180,
+      "view": "practice",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "height": 768,
+      "view": "practice",
+      "overflow": false
+    },
+    {
+      "width": 1366,
+      "height": 768,
+      "view": "practice",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "view": "practice",
+      "overflow": false
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "view": "practice",
+      "overflow": false
+    }
+  ],
+  "errors": [],
+  "spacing": [
+    {
+      "view": "interview",
+      "width": 360,
+      "gap": 16
+    },
+    {
+      "view": "history-raw",
+      "width": 360,
+      "gap": 16
+    },
+    {
+      "view": "history-review",
+      "width": 360,
+      "gap": 16
+    },
+    {
+      "view": "interview",
+      "width": 390,
+      "gap": 16
+    },
+    {
+      "view": "history-raw",
+      "width": 390,
+      "gap": 16
+    },
+    {
+      "view": "history-review",
+      "width": 390,
+      "gap": 16
+    },
+    {
+      "view": "interview",
+      "width": 430,
+      "gap": 16
+    },
+    {
+      "view": "history-raw",
+      "width": 430,
+      "gap": 16
+    },
+    {
+      "view": "history-review",
+      "width": 430,
+      "gap": 16
+    },
+    {
+      "view": "interview",
+      "width": 600,
+      "gap": 16
+    },
+    {
+      "view": "history-raw",
+      "width": 600,
+      "gap": 16
+    },
+    {
+      "view": "history-review",
+      "width": 600,
+      "gap": 16
+    },
+    {
+      "view": "interview",
+      "width": 820,
+      "gap": 16
+    },
+    {
+      "view": "history-raw",
+      "width": 820,
+      "gap": 16
+    },
+    {
+      "view": "history-review",
+      "width": 820,
+      "gap": 16
+    },
+    {
+      "view": "interview",
+      "width": 1024,
+      "gap": 16
+    },
+    {
+      "view": "history-raw",
+      "width": 1024,
+      "gap": 16
+    },
+    {
+      "view": "history-review",
+      "width": 1024,
+      "gap": 16
+    },
+    {
+      "view": "interview",
+      "width": 1366,
+      "gap": 16
+    },
+    {
+      "view": "history-raw",
+      "width": 1366,
+      "gap": 16
+    },
+    {
+      "view": "history-review",
+      "width": 1366,
+      "gap": 16
+    },
+    {
+      "view": "interview",
+      "width": 1440,
+      "gap": 16
+    },
+    {
+      "view": "history-raw",
+      "width": 1440,
+      "gap": 16
+    },
+    {
+      "view": "history-review",
+      "width": 1440,
+      "gap": 16
+    },
+    {
+      "view": "interview",
+      "width": 1920,
+      "gap": 16
+    },
+    {
+      "view": "history-raw",
+      "width": 1920,
+      "gap": 16
+    },
+    {
+      "view": "history-review",
+      "width": 1920,
+      "gap": 16
+    },
+    {
+      "view": "practice",
+      "width": 360,
+      "gap": 16
+    },
+    {
+      "view": "practice",
+      "width": 390,
+      "gap": 16
+    },
+    {
+      "view": "practice",
+      "width": 430,
+      "gap": 16
+    },
+    {
+      "view": "practice",
+      "width": 600,
+      "gap": 16
+    },
+    {
+      "view": "practice",
+      "width": 820,
+      "gap": 16
+    },
+    {
+      "view": "practice",
+      "width": 1024,
+      "gap": 16
+    },
+    {
+      "view": "practice",
+      "width": 1366,
+      "gap": 16
+    },
+    {
+      "view": "practice",
+      "width": 1440,
+      "gap": 16
+    },
+    {
+      "view": "practice",
+      "width": 1920,
+      "gap": 16
+    }
+  ],
+  "cascade": {
+    "background": "rgb(242, 245, 243)",
+    "font": "16px",
+    "button": "rgb(255, 255, 255)",
+    "radius": "10px",
+    "padding": "10px 18px",
+    "ink": "rgb(20, 35, 29)"
+  },
+  "systemColorScheme": "dark",
+  "command": "python scripts/layout-matrix.py"
+}

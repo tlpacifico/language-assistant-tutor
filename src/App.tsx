@@ -22,7 +22,16 @@ import QuestionBank from "./features/questions/QuestionBank";
 import StoryBank from "./features/stories/StoryBank";
 import { PendingPreparationNotice } from "./features/stories/StorySupport";
 import SessionSetup from "./features/sessions/SessionSetup";
-import "./features/practice/practice.css";
+import "./features/layout/styles.css";
+import "./features/layout/fonts.css";
+import TutorNavigation, {
+  PAGE_COPY,
+  type Page,
+} from "./features/layout/TutorNavigation";
+
+import EnvironmentIcon, {
+  ENVIRONMENT_HINTS,
+} from "./features/layout/EnvironmentIcon";
 
 /** Rótulos dos quatro componentes de disponibilidade. */
 const COMPONENT_LABELS = {
@@ -44,25 +53,6 @@ const DATABASE_LABELS: Record<InterviewSnapshot["database"], string> = {
   ready: "Base de dados pronta",
   error: "A base de dados não abriu",
 };
-
-/** Páginas da aplicação, sem router nem gestor global de estado. */
-type Page =
-  | "setup"
-  | "bank"
-  | "stories"
-  | "interview"
-  | "history"
-  | "practice"
-  | "ai";
-
-const PAGES: Array<{ id: Page; label: string }> = [
-  { id: "setup", label: "Preparação" },
-  { id: "bank", label: "Banco de perguntas" },
-  { id: "stories", label: "Histórias" },
-  { id: "interview", label: "Entrevista" },
-  { id: "history", label: "Histórico" },
-  { id: "ai", label: "Configuração IA" },
-];
 
 /** Motivo apresentado quando uma página é pedida durante captura/finalização. */
 const NAVIGATION_BLOCKED_MESSAGE =
@@ -126,6 +116,14 @@ export default function App({
   const [actionError, setActionError] = useState<AppError | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [page, setPage] = useState<Page>("setup");
+  const mainRef = useRef<HTMLElement>(null);
+  const previousPage = useRef(page);
+  useEffect(() => {
+    if (previousPage.current !== page) {
+      previousPage.current = page;
+      mainRef.current?.focus();
+    }
+  }, [page]);
   const [practiceId, setPracticeId] = useState<string | null>(null);
   const [navigationBlocked, setNavigationBlocked] = useState(false);
   const [guardRequest, setGuardRequest] = useState<GuardRequest | null>(null);
@@ -536,189 +534,309 @@ export default function App({
   }
 
   return (
-    <main className="practice" aria-labelledby="app-title">
-      <header className="practice__header">
-        <p className="practice__eyebrow">
-          Entrevistas comportamentais em inglês
-        </p>
-        <h1 className="practice__question" id="app-title">
-          Tutor de entrevistas
-        </h1>
-        <p className="practice__hint">
-          Prepare a sessão, edite o banco de perguntas e consulte o histórico.
-        </p>
-      </header>
+    <div className="practice tutor-app">
+      <a className="tutor-skip" href="#main-content">
+        Saltar para o conteúdo
+      </a>
+      <TutorNavigation
+        page={page}
+        session={snapshot?.activeSession ?? null}
+        onNavigate={navigate}
+      />
+      <main
+        className={`tutor-main tutor-main--${page}`}
+        ref={mainRef}
+        id="main-content"
+        aria-labelledby="app-title"
+        tabIndex={-1}
+      >
+        <div className="tutor-content">
+          <header className="tutor-page-head">
+            <p className="tutor-eyebrow">{PAGE_COPY[page].label}</p>
+            <h1 id="app-title">{PAGE_COPY[page].title}</h1>
+            <p>{PAGE_COPY[page].description}</p>
+          </header>
 
-      <nav className="practice__nav" aria-label="Navegação principal">
-        {PAGES.map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            aria-current={page === entry.id ? "page" : undefined}
-            onClick={() => navigate(entry.id)}
-          >
-            {entry.label}
-          </button>
-        ))}
-      </nav>
+          {page !== "setup" && (
+            <details className="tutor-audio-recovery">
+              <summary>Áudio e recuperação</summary>
+              <p className="practice__hint">
+                Verifique os dispositivos ou reinicie o áudio local sem sair
+                desta página. O núcleo preserva a gravação em curso e recusa o
+                reinício do auxiliar durante transcrição ou síntese.
+              </p>
+              <div className="practice__actions">
+                <button
+                  type="button"
+                  disabled={!snapshot || retrying || closing}
+                  onClick={() =>
+                    void run(() => activeClient.refreshAvailability())
+                  }
+                >
+                  Verificar disponibilidade
+                </button>
+                <button
+                  type="button"
+                  disabled={!snapshot || retrying || closing}
+                  onClick={() => void run(() => activeClient.restartWorker())}
+                >
+                  Reiniciar áudio local
+                </button>
+              </div>
+            </details>
+          )}
 
-      {navigationBlocked ? (
-        <div className="practice__notice practice__notice--error" role="alert">
-          <p>{NAVIGATION_BLOCKED_MESSAGE}</p>
-        </div>
-      ) : null}
-
-      {loadError && !snapshot ? (
-        <div className="practice__notice practice__notice--error" role="alert">
-          <p>{loadError.message}</p>
-        </div>
-      ) : null}
-
-      {closing ? (
-        <div className="practice__notice" role="status">
-          <p>A preparar o fecho da aplicação…</p>
-        </div>
-      ) : null}
-
-      {snapshot ? (
-        <PendingPreparationNotice
-          client={activeClient}
-          snapshot={snapshot}
-          onSnapshot={applySnapshot}
-        />
-      ) : null}
-
-      {pendingPracticeId && page !== "practice" ? (
-        <div className="practice__notice" role="status">
-          <p>
-            Existe uma prática pendente. Retome-a, confirme-a ou abandone-a
-            antes de começar uma entrevista ou outra prática.
-          </p>
-          <div className="practice__actions">
-            <button type="button" onClick={() => openPractice(pendingPracticeId)}>
-              Retomar prática pendente
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {pendingRecordingId ? (
-        <div className="practice__notice practice__notice--error" role="alert">
-          <p>
-            A gravação terminada ainda não foi guardada. Repita o guardar antes
-            de gravar outra resposta ou fechar a aplicação.
-          </p>
-          <div className="practice__actions">
-            <button
-              type="button"
-              onClick={() =>
-                void run(() =>
-                  activeClient.retrySaveRecording(pendingRecordingId),
-                )
-              }
-              disabled={retrying}
+          {navigationBlocked ? (
+            <div
+              className="practice__notice practice__notice--error"
+              role="alert"
             >
-              Repetir guardar gravação
-            </button>
-          </div>
-        </div>
-      ) : null}
+              <p>{NAVIGATION_BLOCKED_MESSAGE}</p>
+            </div>
+          ) : null}
 
-      {content}
+          {loadError && !snapshot ? (
+            <div
+              className="practice__notice practice__notice--error"
+              role="alert"
+            >
+              <p>{loadError.message}</p>
+            </div>
+          ) : null}
 
-      <section className="practice__panel" aria-labelledby="database-title">
-        <h2 id="database-title">Base de dados</h2>
-        <p
-          className={`practice__status practice__status--${database}`}
-          role="status"
-        >
-          {DATABASE_LABELS[database]}
-        </p>
-        {database === "error" ? (
-          <>
-            {databaseMessage ? <p>{databaseMessage}</p> : null}
-            <div className="practice__actions">
+          {closing ? (
+            <div className="practice__notice" role="status">
+              <p>A preparar o fecho da aplicação…</p>
+            </div>
+          ) : null}
+
+          {snapshot ? (
+            <PendingPreparationNotice
+              client={activeClient}
+              snapshot={snapshot}
+              onSnapshot={applySnapshot}
+            />
+          ) : null}
+
+          {pendingPracticeId && page !== "practice" ? (
+            <div className="practice__notice" role="status">
+              <p>
+                Existe uma prática pendente. Retome-a, confirme-a ou abandone-a
+                antes de começar uma entrevista ou outra prática.
+              </p>
+              <div className="practice__actions">
+                <button
+                  type="button"
+                  onClick={() => openPractice(pendingPracticeId)}
+                >
+                  Retomar prática pendente
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {pendingRecordingId ? (
+            <div
+              className="practice__notice practice__notice--error"
+              role="alert"
+            >
+              <p>
+                A gravação terminada ainda não foi guardada. Repita o guardar
+                antes de gravar outra resposta ou fechar a aplicação.
+              </p>
+              <div className="practice__actions">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void run(() =>
+                      activeClient.retrySaveRecording(pendingRecordingId),
+                    )
+                  }
+                  disabled={retrying}
+                >
+                  Repetir guardar gravação
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {content}
+
+          {page === "setup" && (
+            <div className="tutor-setup-grid">
+              <section
+                className="practice__panel tutor-database"
+                aria-labelledby="database-title"
+              >
+                <h2 id="database-title">Base de dados</h2>
+                <p
+                  className={`practice__status practice__status--${database}`}
+                  role="status"
+                >
+                  {DATABASE_LABELS[database]}
+                </p>
+                <p className="practice__hint">
+                  As sessões, histórias e gravações ficam neste computador.
+                </p>
+                <div className="practice__actions">
+                  <button type="button" onClick={() => navigate("bank")}>
+                    Abrir banco
+                  </button>
+                  <button type="button" onClick={() => navigate("stories")}>
+                    Ver histórias
+                  </button>
+                </div>
+                {database === "error" ? (
+                  <>
+                    {databaseMessage ? <p>{databaseMessage}</p> : null}
+                    <div className="practice__actions">
+                      <button
+                        type="button"
+                        onClick={() => void retryDatabase()}
+                        disabled={retrying}
+                      >
+                        {retrying
+                          ? "A tentar abrir novamente…"
+                          : "Tentar abrir novamente"}
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </section>
+
+              <section
+                className="practice__panel tutor-environment"
+                aria-labelledby="availability-title"
+              >
+                <h2 id="availability-title">Ambiente</h2>
+                <p className="practice__hint">
+                  Verifique o microfone e o áudio antes de gravar a primeira
+                  resposta.
+                </p>
+                <ul className="practice__availability">
+                  {(
+                    Object.keys(COMPONENT_LABELS) as Array<
+                      keyof typeof COMPONENT_LABELS
+                    >
+                  ).map((key) => {
+                    const component = snapshot?.availability[key];
+                    return (
+                      <li key={key}>
+                        <EnvironmentIcon name={key} />
+                        <div className="tutor-env-copy">
+                          <span className="practice__component">
+                            {COMPONENT_LABELS[key]}
+                          </span>
+                          <span className="practice__hint">
+                            {ENVIRONMENT_HINTS[key]}
+                          </span>
+                        </div>
+                        {component ? (
+                          <>
+                            <span
+                              className={`practice__status practice__status--${component.status}`}
+                            >
+                              {STATUS_LABELS[component.status] ??
+                                component.status}
+                            </span>
+                            {component.message ? (
+                              <span className="practice__hint">
+                                {component.message}
+                              </span>
+                            ) : null}
+                          </>
+                        ) : (
+                          <span className="practice__hint">
+                            Ainda sem informação do núcleo.
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <div className="practice__actions">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void run(() => activeClient.refreshAvailability())
+                    }
+                    disabled={!snapshot || retrying}
+                  >
+                    Verificar disponibilidade
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void run(() => activeClient.restartWorker())}
+                    disabled={!snapshot || retrying}
+                  >
+                    Reiniciar áudio local
+                  </button>
+                </div>
+              </section>
+
+              <section
+                className="practice__panel tutor-quick-guide"
+                aria-labelledby="guide-title"
+              >
+                <h2 id="guide-title">Roteiro rápido</h2>
+                <ol className="tutor-steps">
+                  <li>
+                    <strong>Prepare as suas histórias</strong>
+                    <span>
+                      Recorde o contexto, a sua responsabilidade e o que fez.
+                    </span>
+                  </li>
+                  <li>
+                    <strong>Ouça e responda em inglês</strong>
+                    <span>
+                      Comece e termine a gravação quando estiver preparado.
+                    </span>
+                  </li>
+                  <li>
+                    <strong>Reveja e pratique de novo</strong>
+                    <span>
+                      Confirme o texto e melhore sem perder o original.
+                    </span>
+                  </li>
+                </ol>
+              </section>
+            </div>
+          )}
+          {page !== "setup" && database === "error" && (
+            <div
+              className="practice__notice practice__notice--error"
+              role="alert"
+            >
+              <p>{DATABASE_LABELS[database]}</p>
+              <p>{databaseMessage}</p>
               <button
                 type="button"
                 onClick={() => void retryDatabase()}
                 disabled={retrying}
               >
-                {retrying
-                  ? "A tentar abrir novamente…"
-                  : "Tentar abrir novamente"}
+                Tentar abrir novamente
               </button>
             </div>
-          </>
-        ) : null}
-      </section>
+          )}
 
-      <section className="practice__panel" aria-labelledby="availability-title">
-        <h2 id="availability-title">Disponibilidade</h2>
-        <ul className="practice__availability">
-          {(
-            Object.keys(COMPONENT_LABELS) as Array<
-              keyof typeof COMPONENT_LABELS
+          <NavigationGuard
+            request={guardRequest}
+            busy={busy}
+            sources={guardSources}
+            onCancel={() => setGuardRequest(null)}
+          />
+
+          {actionError ? (
+            <div
+              className="practice__notice practice__notice--error"
+              role="alert"
             >
-          ).map((key) => {
-            const component = snapshot?.availability[key];
-            return (
-              <li key={key}>
-                <span className="practice__component">
-                  {COMPONENT_LABELS[key]}
-                </span>
-                {component ? (
-                  <>
-                    <span
-                      className={`practice__status practice__status--${component.status}`}
-                    >
-                      {STATUS_LABELS[component.status] ?? component.status}
-                    </span>
-                    {component.message ? (
-                      <span className="practice__hint">
-                        {component.message}
-                      </span>
-                    ) : null}
-                  </>
-                ) : (
-                  <span className="practice__hint">
-                    Ainda sem informação do núcleo.
-                  </span>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-        <div className="practice__actions">
-          <button
-            type="button"
-            onClick={() => void run(() => activeClient.refreshAvailability())}
-            disabled={!snapshot || retrying}
-          >
-            Verificar disponibilidade
-          </button>
-          <button
-            type="button"
-            onClick={() => void run(() => activeClient.restartWorker())}
-            disabled={!snapshot || retrying}
-          >
-            Reiniciar áudio local
-          </button>
+              <p>{actionError.message}</p>
+              <p className="practice__hint">Código: {actionError.code}.</p>
+            </div>
+          ) : null}
         </div>
-      </section>
-
-      <NavigationGuard
-        request={guardRequest}
-        busy={busy}
-        sources={guardSources}
-        onCancel={() => setGuardRequest(null)}
-      />
-
-      {actionError ? (
-        <div className="practice__notice practice__notice--error" role="alert">
-          <p>{actionError.message}</p>
-          <p className="practice__hint">Código: {actionError.code}.</p>
-        </div>
-      ) : null}
-    </main>
+      </main>
+    </div>
   );
 }

@@ -278,8 +278,13 @@ export default function Interview({
 
   if (!session) {
     return (
-      <section className="practice__page" aria-labelledby="interview-title">
-        <h2 id="interview-title">Entrevista</h2>
+      <section
+        className="practice__page tutor-interview"
+        aria-labelledby="interview-title"
+      >
+        <h2 id="interview-title" className="tutor-sr-only">
+          Entrevista
+        </h2>
         {finishedSession ? (
           <>
             <SessionSummaryPanel detail={finishedSession} />
@@ -354,344 +359,424 @@ export default function Interview({
   }
 
   return (
-    <section className="practice__page" aria-labelledby="interview-title">
-      <h2 id="interview-title">Entrevista</h2>
-      <AiStep client={client} snapshot={snapshot} onSnapshot={onSnapshot} />
-      {snapshot.current?.followUp && (
-        <section className="practice__panel">
-          <h3>Resposta inicial confirmada</h3>
-          <p>{snapshot.current.confirmation?.text}</p>
-          {snapshot.current.recordings
-            .filter((r) => r.state === "ready")
-            .map((r) => (
-              <button
-                key={r.id}
-                disabled={captureBusy}
-                onClick={() =>
-                  void run(() =>
-                    client.playAudio({ type: "recording", recordingId: r.id }),
-                  )
-                }
-              >
-                Ouvir original da resposta inicial
-              </button>
-            ))}
-        </section>
-      )}
-      {snapshot.current?.followUp && <p>Seguimento da pergunta principal</p>}
-      <p className="practice__state">
-        Pergunta {session.position} de {session.count}
-      </p>
-      <p className="practice__hint">
-        Categoria:{" "}
-        {session.category
-          ? CATEGORY_LABELS[session.category]
-          : "todas as categorias"}
-        . Respostas confirmadas: {session.confirmedCount} de {session.count}.
-      </p>
-
-      {question ? (
-        <p className="practice__question" lang="en">
-          {question.text}
-        </p>
-      ) : (
-        <p className="practice__hint" role="status">
-          A carregar a pergunta da sessão…
-        </p>
-      )}
-
-      <div className="practice__actions">
-        <button
-          type="button"
-          onClick={() =>
-            question &&
-            void run(() =>
-              client.playAudio(
-                snapshot.current?.question.id !== question.id
-                  ? {
-                      type: "follow_up",
-                      sessionId: session.id,
-                      sessionQuestionId: snapshot.current!.question.id,
-                      answerId: question.id,
+    <section
+      className="practice__page tutor-interview"
+      aria-labelledby="interview-title"
+    >
+      <h2 id="interview-title" className="tutor-sr-only">
+        Entrevista
+      </h2>
+      <div className="tutor-interview-grid">
+        <div className="tutor-interview-main">
+          <AiStep client={client} snapshot={snapshot} onSnapshot={onSnapshot} />
+          {snapshot.current?.followUp && (
+            <section className="practice__panel">
+              <h3>Resposta inicial confirmada</h3>
+              <p>{snapshot.current.confirmation?.text}</p>
+              {snapshot.current.recordings
+                .filter((r) => r.state === "ready")
+                .map((r) => (
+                  <button
+                    key={r.id}
+                    disabled={captureBusy}
+                    onClick={() =>
+                      void run(() =>
+                        client.playAudio({
+                          type: "recording",
+                          recordingId: r.id,
+                        }),
+                      )
                     }
-                  : {
-                      type: "question",
-                      sessionId: session.id,
-                      sessionQuestionId: question.id,
-                    },
-              ),
-            )
-          }
-          disabled={!question || !canUseAudio}
-        >
-          Ouvir pergunta
-        </button>
-        {playback ? (
-          <button
-            type="button"
-            onClick={() => void run(() => client.stopAudio())}
-            disabled={busyAction !== null || closing}
-          >
-            Parar áudio
-          </button>
-        ) : null}
-      </div>
-
-      {question && snapshot.current ? (
-        <StorySupport
-          client={client}
-          snapshot={snapshot}
-          onSnapshot={onSnapshot}
-          owner={{
-            type: "interview",
-            sessionId: session.id,
-            sessionQuestionId: snapshot.current.question.id,
-            answerId: question.id,
-          }}
-          editable={
-            snapshot.current.followUp == null &&
-            recordings.length === 0 &&
-            confirmation === null &&
-            !captureBusy &&
-            modelJob === null &&
-            busyAction === null &&
-            !closing
-          }
-        />
-      ) : null}
-
-      <section className="practice__panel" aria-labelledby="capture-title">
-        <h3 id="capture-title">Gravação</h3>
-        {recording ? (
-          <p className="practice__state" role="status">
-            Gravação em curso
+                  >
+                    Ouvir original da resposta inicial
+                  </button>
+                ))}
+            </section>
+          )}
+          {snapshot.current?.followUp && (
+            <p>Seguimento da pergunta principal</p>
+          )}
+          <p className="practice__state">
+            Pergunta {session.position} de {session.count}
           </p>
-        ) : finalizing ? (
-          <p className="practice__state" role="status">
-            A finalizar e guardar a gravação…
-          </p>
-        ) : recordings.length === 0 ? (
           <p className="practice__hint">
-            Ainda não existe uma resposta gravada para esta pergunta.
+            Categoria:{" "}
+            {session.category
+              ? CATEGORY_LABELS[session.category]
+              : "todas as categorias"}
+            . Respostas confirmadas: {session.confirmedCount} de {session.count}
+            .
           </p>
-        ) : null}
-        {modelJob ? (
-          <p className="practice__state" role="status">
-            {jobMessage(modelJob)}
-          </p>
-        ) : null}
-        {playback ? (
-          <p className="practice__state" role="status">
-            {playback === "question"
-              ? "A reproduzir a pergunta…"
-              : "A reproduzir a resposta…"}
-          </p>
-        ) : null}
-        <div className="practice__actions">
-          {recording ? (
+
+          {question ? (
+            <p
+              className="practice__question tutor-interview-question"
+              lang="en"
+            >
+              {question.text}
+            </p>
+          ) : (
+            <p className="practice__hint" role="status">
+              A carregar a pergunta da sessão…
+            </p>
+          )}
+
+          <div className="practice__actions">
             <button
               type="button"
-              onClick={() => void stopRecording()}
-              disabled={busyAction !== null || closing}
+              onClick={() =>
+                question &&
+                void run(() =>
+                  client.playAudio(
+                    snapshot.current?.question.id !== question.id
+                      ? {
+                          type: "follow_up",
+                          sessionId: session.id,
+                          sessionQuestionId: snapshot.current!.question.id,
+                          answerId: question.id,
+                        }
+                      : {
+                          type: "question",
+                          sessionId: session.id,
+                          sessionQuestionId: question.id,
+                        },
+                  ),
+                )
+              }
+              disabled={!question || !canUseAudio}
             >
-              Terminar gravação
+              Ouvir pergunta
             </button>
-          ) : confirmation === null ? (
-            <button type="button" onClick={requestRecord} disabled={!canRecord}>
-              {recordings.length > 0 ? "Gravar novamente" : "Iniciar gravação"}
-            </button>
+            {playback ? (
+              <button
+                type="button"
+                onClick={() => void run(() => client.stopAudio())}
+                disabled={busyAction !== null || closing}
+              >
+                Parar áudio
+              </button>
+            ) : null}
+          </div>
+
+          {question && snapshot.current ? (
+            <StorySupport
+              client={client}
+              snapshot={snapshot}
+              onSnapshot={onSnapshot}
+              owner={{
+                type: "interview",
+                sessionId: session.id,
+                sessionQuestionId: snapshot.current.question.id,
+                answerId: question.id,
+              }}
+              editable={
+                snapshot.current.followUp == null &&
+                recordings.length === 0 &&
+                confirmation === null &&
+                !captureBusy &&
+                modelJob === null &&
+                busyAction === null &&
+                !closing
+              }
+            />
           ) : null}
-        </div>
-        <p className="practice__hint">
-          A gravação começa e termina por sua ação. Uma nova tomada preserva as
-          anteriores e não conta como outra pergunta.
-        </p>
-      </section>
 
-      <section className="practice__panel" aria-labelledby="takes-title">
-        <h3 id="takes-title">Gravações desta pergunta</h3>
-        {recordings.length === 0 ? (
-          <p className="practice__hint">
-            Cada tomada tem identidade própria e fica consultável.
-          </p>
-        ) : (
-          <ul className="practice__list">
-            {recordings.map((take) => (
-              <RecordingItem
-                key={take.id}
-                take={take}
-                selected={
-                  current?.question.selectedRecordingId === take.id || false
-                }
-                disabled={busyAction !== null || captureBusy || closing}
-                onPlay={() =>
-                  void run(() =>
-                    client.playAudio({
-                      type: "recording",
-                      recordingId: take.id,
-                    }),
-                  )
-                }
-                onRetry={() =>
-                  void run(() => client.retrySaveRecording(take.id))
-                }
-              />
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section
-        className="practice__panel practice__panel--wide"
-        aria-labelledby="review-title"
-      >
-        <h3 id="review-title">Transcrição e revisão</h3>
-        {!answer ? (
-          <p className="practice__hint">
-            Grave uma resposta guardada para criar a transcrição automática e a
-            revisão. Não é possível confirmar uma resposta sem uma gravação.
-          </p>
-        ) : (
-          <>
-            <div className="practice__field">
-              <label htmlFor="automatic-transcript">
-                Transcrição automática
-              </label>
-              <textarea
-                id="automatic-transcript"
-                className="practice__textarea practice__textarea--raw"
-                value={review.automaticText}
-                readOnly
-                rows={5}
-                lang="en"
-                placeholder="O texto devolvido pelo motor aparece aqui, sem alterações."
-              />
-              <p className="practice__hint">
-                Versão do motor, apenas de leitura. Não é uma avaliação da
-                resposta.
-              </p>
-            </div>
-
-            {review.automaticNoSpeech ? (
-              <p className="practice__warning">
-                O motor não reconheceu fala nesta gravação. Pode ouvir o áudio,
-                gravar outra tomada ou introduzir uma revisão fiel ao áudio.
-              </p>
-            ) : null}
-
-            {review.origin === "manual_explicit" ? (
-              <p className="practice__warning">
-                Texto introduzido manualmente: não existe texto automático
-                utilizável nesta gravação. O resultado sem fala é preservado e
-                não é um diagnóstico de pronúncia.
-              </p>
-            ) : null}
-
-            <div className="practice__field">
-              <label htmlFor="review-text">Revisão editável</label>
-              <textarea
-                id="review-text"
-                className="practice__textarea"
-                value={review.text}
-                onChange={(event) => review.setReviewText(event.target.value)}
-                readOnly={!review.canEdit}
-                rows={6}
-                lang="en"
-                aria-describedby="review-status"
-                placeholder="A revisão começa com a transcrição automática."
-              />
-              <p
-                className="practice__review-status"
-                id="review-status"
-                role="status"
-              >
-                {reviewStatus}
-              </p>
-              <p className="practice__hint">
-                «Guardar revisão» mantém o texto editável e não confirma a
-                resposta. Ao confirmar, o texto mostrado fica fixo e apenas de
-                leitura.
-              </p>
-            </div>
-
-            {review.error ? (
-              <div
-                className="practice__notice practice__notice--error"
-                role="alert"
-              >
-                <p>{review.error.message}</p>
-                <p className="practice__hint">Código: {review.error.code}.</p>
-              </div>
-            ) : null}
-
-            {closing ? (
-              <p className="practice__warning">
-                A aplicação está a preparar o fecho. A revisão fica bloqueada
-                até o fecho terminar.
-              </p>
-            ) : null}
-
-            {review.confirmed ? null : (
-              <div className="practice__actions">
-                <button
-                  type="button"
-                  onClick={() => void review.saveReview()}
-                  disabled={!review.canSave || !canSaveOrConfirm}
-                >
-                  Guardar revisão
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void review.confirm()}
-                  disabled={
-                    !review.canEdit ||
-                    review.saving ||
-                    review.confirming ||
-                    !canSaveOrConfirm ||
-                    review.text.trim() === ""
-                  }
-                >
-                  Confirmar resposta
-                </button>
-              </div>
-            )}
-
-            {review.confirmed && confirmation ? (
-              <p className="practice__hint">
-                Resposta confirmada em {formatMoment(confirmation.confirmedAt)}.
-                Fica apenas de leitura; não existe desfazer nesta fase.
-              </p>
-            ) : null}
-          </>
-        )}
-      </section>
-
-      <section className="practice__panel" aria-labelledby="progress-title">
-        <h3 id="progress-title">Progresso da entrevista</h3>
-        <p>
-          Respostas confirmadas: {session.confirmedCount} de {session.count}.
-        </p>
-        <div className="practice__actions">
-          <button
-            type="button"
-            onClick={() => void advance()}
-            disabled={
-              confirmation === null ||
-              advancing ||
-              captureBusy ||
-              !question ||
-              closing
-            }
+          <section
+            className={`practice__panel tutor-capture${recording ? " tutor-capture--recording" : ""}`}
+            aria-labelledby="capture-title"
           >
-            {last ? "Terminar sessão" : "Próxima pergunta"}
-          </button>
+            <h3 id="capture-title">Gravação</h3>
+            {recording ? (
+              <p className="practice__state" role="status">
+                Gravação em curso
+              </p>
+            ) : finalizing ? (
+              <p className="practice__state" role="status">
+                A finalizar e guardar a gravação…
+              </p>
+            ) : recordings.length === 0 ? (
+              <p className="practice__hint">
+                Ainda não existe uma resposta gravada para esta pergunta.
+              </p>
+            ) : null}
+            {modelJob ? (
+              <p className="practice__state" role="status">
+                {jobMessage(modelJob)}
+              </p>
+            ) : null}
+            {playback ? (
+              <p className="practice__state" role="status">
+                {playback === "question"
+                  ? "A reproduzir a pergunta…"
+                  : "A reproduzir a resposta…"}
+              </p>
+            ) : null}
+            <div className="practice__actions">
+              {recording ? (
+                <button
+                  type="button"
+                  onClick={() => void stopRecording()}
+                  disabled={busyAction !== null || closing}
+                >
+                  Terminar gravação
+                </button>
+              ) : confirmation === null ? (
+                <button
+                  type="button"
+                  onClick={requestRecord}
+                  disabled={!canRecord}
+                >
+                  {recordings.length > 0
+                    ? "Gravar novamente"
+                    : "Iniciar gravação"}
+                </button>
+              ) : null}
+            </div>
+            <p className="practice__hint">
+              A gravação começa e termina por sua ação. Uma nova tomada preserva
+              as anteriores e não conta como outra pergunta.
+            </p>
+          </section>
+
+          <section className="practice__panel" aria-labelledby="takes-title">
+            <h3 id="takes-title">Gravações desta pergunta</h3>
+            {recordings.length === 0 ? (
+              <p className="practice__hint">
+                Cada tomada tem identidade própria e fica consultável.
+              </p>
+            ) : (
+              <ul className="practice__list">
+                {recordings.map((take) => (
+                  <RecordingItem
+                    key={take.id}
+                    take={take}
+                    selected={
+                      current?.question.selectedRecordingId === take.id || false
+                    }
+                    disabled={busyAction !== null || captureBusy || closing}
+                    onPlay={() =>
+                      void run(() =>
+                        client.playAudio({
+                          type: "recording",
+                          recordingId: take.id,
+                        }),
+                      )
+                    }
+                    onRetry={() =>
+                      void run(() => client.retrySaveRecording(take.id))
+                    }
+                  />
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section
+            className="practice__panel practice__panel--wide"
+            aria-labelledby="review-title"
+          >
+            <h3 id="review-title">Transcrição e revisão</h3>
+            {!answer ? (
+              <p className="practice__hint">
+                Grave uma resposta guardada para criar a transcrição automática
+                e a revisão. Não é possível confirmar uma resposta sem uma
+                gravação.
+              </p>
+            ) : (
+              <>
+                <div className="practice__field">
+                  <label htmlFor="automatic-transcript">
+                    Transcrição automática
+                  </label>
+                  <textarea
+                    id="automatic-transcript"
+                    className="practice__textarea practice__textarea--raw"
+                    value={review.automaticText}
+                    readOnly
+                    rows={5}
+                    lang="en"
+                    placeholder="O texto devolvido pelo motor aparece aqui, sem alterações."
+                  />
+                  <p className="practice__hint">
+                    Versão do motor, apenas de leitura. Não é uma avaliação da
+                    resposta.
+                  </p>
+                </div>
+
+                {review.automaticNoSpeech ? (
+                  <p className="practice__warning">
+                    O motor não reconheceu fala nesta gravação. Pode ouvir o
+                    áudio, gravar outra tomada ou introduzir uma revisão fiel ao
+                    áudio.
+                  </p>
+                ) : null}
+
+                {review.origin === "manual_explicit" ? (
+                  <p className="practice__warning">
+                    Texto introduzido manualmente: não existe texto automático
+                    utilizável nesta gravação. O resultado sem fala é preservado
+                    e não é um diagnóstico de pronúncia.
+                  </p>
+                ) : null}
+
+                <div className="practice__field">
+                  <label htmlFor="review-text">Revisão editável</label>
+                  <textarea
+                    id="review-text"
+                    className="practice__textarea"
+                    value={review.text}
+                    onChange={(event) =>
+                      review.setReviewText(event.target.value)
+                    }
+                    readOnly={!review.canEdit}
+                    rows={6}
+                    lang="en"
+                    aria-describedby="review-status"
+                    placeholder="A revisão começa com a transcrição automática."
+                  />
+                  <p
+                    className="practice__review-status"
+                    id="review-status"
+                    role="status"
+                  >
+                    {reviewStatus}
+                  </p>
+                  <p className="practice__hint">
+                    «Guardar revisão» mantém o texto editável e não confirma a
+                    resposta. Ao confirmar, o texto mostrado fica fixo e apenas
+                    de leitura.
+                  </p>
+                </div>
+
+                {review.error ? (
+                  <div
+                    className="practice__notice practice__notice--error"
+                    role="alert"
+                  >
+                    <p>{review.error.message}</p>
+                    <p className="practice__hint">
+                      Código: {review.error.code}.
+                    </p>
+                  </div>
+                ) : null}
+
+                {closing ? (
+                  <p className="practice__warning">
+                    A aplicação está a preparar o fecho. A revisão fica
+                    bloqueada até o fecho terminar.
+                  </p>
+                ) : null}
+
+                {review.confirmed ? null : (
+                  <div className="practice__actions">
+                    <button
+                      type="button"
+                      onClick={() => void review.saveReview()}
+                      disabled={!review.canSave || !canSaveOrConfirm}
+                    >
+                      Guardar revisão
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void review.confirm()}
+                      disabled={
+                        !review.canEdit ||
+                        review.saving ||
+                        review.confirming ||
+                        !canSaveOrConfirm ||
+                        review.text.trim() === ""
+                      }
+                    >
+                      Confirmar resposta
+                    </button>
+                  </div>
+                )}
+
+                {review.confirmed && confirmation ? (
+                  <p className="practice__hint">
+                    Resposta confirmada em{" "}
+                    {formatMoment(confirmation.confirmedAt)}. Fica apenas de
+                    leitura; não existe desfazer nesta fase.
+                  </p>
+                ) : null}
+              </>
+            )}
+          </section>
         </div>
-        {confirmation === null ? (
-          <p className="practice__hint">
-            Confirme a resposta para {last ? "terminar a sessão" : "avançar"}.
-          </p>
-        ) : null}
-      </section>
+        <div className="tutor-interview-aside">
+          <section
+            className="practice__panel tutor-interview-progress"
+            aria-labelledby="progress-title"
+          >
+            <h3 id="progress-title">Progresso da entrevista</h3>
+            <progress
+              className="tutor-progress"
+              value={session.confirmedCount}
+              max={session.count}
+              aria-label="Progresso da entrevista"
+            />
+            <p>
+              Respostas confirmadas: {session.confirmedCount} de {session.count}
+              .
+            </p>
+            <div className="practice__actions">
+              <button
+                type="button"
+                onClick={() => void advance()}
+                disabled={
+                  confirmation === null ||
+                  advancing ||
+                  captureBusy ||
+                  !question ||
+                  closing
+                }
+              >
+                {last ? "Terminar sessão" : "Próxima pergunta"}
+              </button>
+            </div>
+            {confirmation === null ? (
+              <p className="practice__hint">
+                Confirme a resposta para{" "}
+                {last ? "terminar a sessão" : "avançar"}.
+              </p>
+            ) : null}
+          </section>
+
+          <section
+            className="practice__panel tutor-star-guide"
+            aria-labelledby="star-guide-title"
+          >
+            <h3 id="star-guide-title">Uma história com estrutura</h3>
+            <p className="practice__hint">Use STAR para orientar a resposta.</p>
+            <dl>
+              <div>
+                <dt>S</dt>
+                <dd>
+                  <strong>Situação</strong>Qual era o contexto?
+                </dd>
+              </div>
+              <div>
+                <dt>T</dt>
+                <dd>
+                  <strong>Tarefa</strong>Qual era a sua responsabilidade?
+                </dd>
+              </div>
+              <div>
+                <dt>A</dt>
+                <dd>
+                  <strong>Ação</strong>O que fez concretamente?
+                </dd>
+              </div>
+              <div>
+                <dt>R</dt>
+                <dd>
+                  <strong>Resultado</strong>O que aconteceu ou aprendeu?
+                </dd>
+              </div>
+            </dl>
+          </section>
+        </div>
+      </div>
 
       {errors.length > 0 ? (
         <section

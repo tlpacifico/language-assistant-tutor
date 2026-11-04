@@ -177,7 +177,9 @@ export default function StoryBank({
         (note) => note === "",
       )
     ) {
-      found.push("Escreva pelo menos uma nota (situação, tarefa, ações ou resultado).");
+      found.push(
+        "Escreva pelo menos uma nota (situação, tarefa, ações ou resultado).",
+      );
     }
     if (competencies.length === 0) {
       found.push("Indique pelo menos uma competência.");
@@ -237,23 +239,40 @@ export default function StoryBank({
   }, [reportGuard, guardDirty, saving, saveError]);
 
   return (
-    <section className="practice__page" aria-labelledby="stories-title">
-      <h2 id="stories-title">Histórias de preparação</h2>
+    <section
+      className="practice__page collection collection--stories"
+      aria-labelledby="stories-title"
+    >
+      <h2 className="tutor-sr-only" id="stories-title">
+        Histórias de preparação
+      </h2>
       <p className="practice__hint">
         Notas factuais, só neste computador. Consultar, filtrar ou editar uma
-        história nunca envia nada à API; só pode ser consultada como apoio
-        antes de gravar e não preenche a resposta.
+        história nunca envia nada à API; só pode ser consultada como apoio antes
+        de gravar e não preenche a resposta.
       </p>
 
-      <div className="practice__field">
-        <label htmlFor="story-filter">Filtrar por competência</label>
-        <input
-          id="story-filter"
-          className="practice__input"
-          type="text"
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-        />
+      <div className="collection__toolbar">
+        <div className="practice__field collection__filter">
+          <label htmlFor="story-filter">Filtrar por competência</label>
+          <input
+            id="story-filter"
+            className="practice__input"
+            type="text"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+        </div>
+        {!draft ? (
+          <button
+            className="collection__add"
+            type="button"
+            disabled={loading}
+            onClick={() => requestDraft(emptyDraft)}
+          >
+            <span aria-hidden="true">＋</span> Adicionar história
+          </button>
+        ) : null}
       </div>
 
       {loadError ? (
@@ -281,7 +300,7 @@ export default function StoryBank({
 
       {draft ? (
         <form
-          className="practice__panel practice__form"
+          className="practice__panel practice__form collection__editor"
           aria-labelledby="story-editor-title"
           onSubmit={(event) => {
             event.preventDefault();
@@ -336,9 +355,8 @@ export default function StoryBank({
             />
           </div>
           <p className="practice__hint">
-            O resultado e o STAR completo não são obrigatórios: pode guardar
-            uma história parcial, incluindo resultados negativos ou
-            aprendizagens.
+            O resultado e o STAR completo não são obrigatórios: pode guardar uma
+            história parcial, incluindo resultados negativos ou aprendizagens.
           </p>
           <div className="practice__actions">
             <button type="submit" disabled={saving}>
@@ -358,31 +376,55 @@ export default function StoryBank({
             </div>
           ) : null}
         </form>
-      ) : (
-        <div className="practice__actions">
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => requestDraft(emptyDraft)}
-          >
-            Adicionar história
-          </button>
+      ) : null}
+
+      {!loading && !loadError && stories.length === 0 ? (
+        <div className="collection__empty">
+          <span className="collection__empty-icon" aria-hidden="true">
+            ▤
+          </span>
+          <h3>Nenhuma história nesta vista</h3>
+          <p>
+            {filter.trim()
+              ? "Experimente outra competência para encontrar as suas histórias."
+              : "Guarde uma experiência real para preparar a sua próxima entrevista."}
+          </p>
         </div>
-      )}
+      ) : null}
 
       {stories.length > 0 ? (
-        <ul className="practice__list" aria-label="Histórias guardadas">
+        <ul
+          className="practice__list collection__cards"
+          aria-label="Histórias guardadas"
+        >
           {stories.map((story) => (
             <li key={story.id}>
               <article
-                className="practice__item"
+                className="practice__item collection__card"
                 aria-labelledby={`story-${story.id}`}
               >
-                <h3 id={`story-${story.id}`}>{story.title}</h3>
-                <p className="practice__meta">
-                  Versão {story.version}. Competências:{" "}
-                  {story.competencies.join(", ")}.
-                </p>
+                <div className="collection__card-head">
+                  <span className="collection__tag">
+                    {story.competencies.join(", ")}
+                  </span>
+                  <span className="collection__version">
+                    Versão {story.version}.
+                  </span>
+                </div>
+                <h3 className="collection__question" id={`story-${story.id}`}>
+                  {story.title}
+                </h3>
+                <dl className="collection__story-notes">
+                  {(["situation", "task", "actions", "outcome"] as const).map(
+                    (field) =>
+                      story[field] ? (
+                        <div key={field}>
+                          <dt>{FIELD_LABELS[field]}</dt>
+                          <dd lang="en">{story[field]}</dd>
+                        </div>
+                      ) : null,
+                  )}
+                </dl>
                 {story.missingFields.length > 0 ? (
                   <p className="practice__hint">
                     Campos em branco:{" "}
@@ -392,9 +434,11 @@ export default function StoryBank({
                     . É apenas um rótulo, não uma avaliação.
                   </p>
                 ) : (
-                  <p className="practice__hint">Todos os campos STAR escritos.</p>
+                  <p className="practice__hint">
+                    Todos os campos STAR escritos.
+                  </p>
                 )}
-                <div className="practice__actions">
+                <div className="practice__actions collection__card-foot">
                   <button
                     type="button"
                     aria-label={`Editar história: ${story.title}`}

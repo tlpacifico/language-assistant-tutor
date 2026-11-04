@@ -6,6 +6,8 @@ Este projeto é um tutor desktop de entrevistas comportamentais em inglês, por 
 
 Antes de trabalhar, consultar os documentos relevantes para a tarefa:
 
+- [Validação do layout](docs/layout/validation.md): referência visual, adaptações aos contratos, recuperação áudio em todas as páginas e matriz reproduzível de sete páginas.
+
 - [Ideia e objetivos](docs/ideia-e-objetivos.md): problema, público, ciclo de aprendizagem e limites do MVP.
 - [Stack técnica](docs/tech-stack.md): tecnologias escolhidas, responsabilidades e integrações.
 - [Plano das fases](docs/superpowers/plans/2026-11-01-star-interview-tutor-phases.md): entregas, dependências e critérios de conclusão.

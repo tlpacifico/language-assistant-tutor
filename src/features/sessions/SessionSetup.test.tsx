@@ -13,9 +13,7 @@ import {
 
 import SessionSetup from "./SessionSetup";
 
-function renderSetup(
-  options: Parameters<typeof fakeInterviewClient>[0] = {},
-) {
+function renderSetup(options: Parameters<typeof fakeInterviewClient>[0] = {}) {
   const fake = fakeInterviewClient(options);
   const onStarted = vi.fn();
   render(
@@ -167,7 +165,12 @@ describe("SessionSetup", () => {
     expect(
       screen.getByText("Sessão em curso: pergunta 2 de 3."),
     ).toBeInTheDocument();
-    expect(screen.getByText("Respostas confirmadas: 1.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("progressbar", { name: "Progresso da sessão" }),
+    ).toHaveAttribute("value", "1");
+    expect(
+      screen.getByRole("progressbar", { name: "Progresso da sessão" }),
+    ).toHaveAttribute("max", "3");
     expect(screen.getByText(/Resolução de problemas/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Retomar sessão" }));

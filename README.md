@@ -28,6 +28,9 @@ Ver [preparação](docs/phase-4/setup.md) e [validação](docs/phase-4/validatio
 Está implementada e verificada automaticamente, mas **não aceite**: falta o
 roteiro manual F4-16 e a inferência paga real.
 
+O layout foi atualizado a partir de `docs/Melhorar-layout-do-tutor`, com navegação
+lateral, preparação da sessão e vistas adaptáveis. Ver [validação e capturas](docs/layout/validation.md).
+
 ## Requisitos (Windows)
 
 Verificados nesta máquina (detalhe e versões em

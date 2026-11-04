@@ -1,0 +1,36 @@
+@layer tokens, legacy, layout, collections;
+@layer tokens {
+  :root {
+    color-scheme: light;
+    --page: #f2f5f3;
+    --surface: #fff;
+    --surface-muted: #f7faf8;
+    --ink: #14231d;
+    --ink-muted: #586b62;
+    --line: #dce5df;
+    --border-strong: #c6d4cc;
+    --accent: #0e6b52;
+    --accent-hover: #0a5541;
+    --accent-ink: #08402f;
+    --on-accent: #ffffff;
+    --accent-soft: #e4f1eb;
+    --hero: #0f3d30;
+    --hero-ink: #f2f7f4;
+    --amber-bg: #fbf1da;
+    --hero-muted: #b9cfc5;
+    --error-surface: #fff0ed;
+    --error-line: #a33a2b;
+    --warning: #7a5000;
+    --focus: #0e6b52;
+    --font-display: "Newsreader", Georgia, "Times New Roman", serif;
+    --font-body: "Public Sans", "Segoe UI", sans-serif;
+    --shadow-card: 0 1px 2px rgb(20 35 29 / 5%);
+    --radius-card: 14px;
+    --radius-control: 10px;
+    --radius-hero: 18px;
+    --radius-pill: 999px;
+    --motion-control: 180ms;
+    --motion-progress: 350ms;
+    --motion-ease: ease;
+  }
+}

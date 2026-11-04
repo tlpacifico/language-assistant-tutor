@@ -60,6 +60,22 @@ function formatMoment(value: string): string {
   });
 }
 
+/** A data completa permanece no resumo acessível da sessão. */
+function CalendarDate({ value }: { value: string }) {
+  const moment = new Date(value);
+  const valid = !Number.isNaN(moment.getTime());
+  return (
+    <div className="collection__date" aria-hidden="true">
+      <span>
+        {valid ? moment.toLocaleDateString("pt-PT", { day: "2-digit" }) : "—"}
+      </span>
+      <small>
+        {valid ? moment.toLocaleDateString("pt-PT", { month: "short" }) : ""}
+      </small>
+    </div>
+  );
+}
+
 /** Duração em segundos, com uma casa decimal e vírgula decimal. */
 function formatDuration(durationMs: number): string {
   const seconds = Math.max(0, durationMs) / 1000;
@@ -603,8 +619,13 @@ export default function History({
   }
 
   return (
-    <section className="practice__page" aria-labelledby="history-title">
-      <h2 id="history-title">Histórico</h2>
+    <section
+      className="practice__page collection collection--history"
+      aria-labelledby="history-title"
+    >
+      <h2 className="tutor-sr-only" id="history-title">
+        Histórico
+      </h2>
       <p className="practice__hint">
         Consulte as sessões guardadas e os treinos anteriores. Abrir ou ouvir
         não altera a sessão em curso; nada é convertido, movido ou apagado.
@@ -627,7 +648,7 @@ export default function History({
       ) : null}
 
       <section
-        className="practice__panel practice__panel--wide"
+        className="practice__panel practice__panel--wide collection__history-section"
         aria-labelledby="history-sessions-title"
       >
         <h3 id="history-sessions-title">Sessões</h3>
@@ -658,45 +679,54 @@ export default function History({
             preparação.
           </p>
         ) : (
-          <ul className="practice__list">
+          <ul className="practice__list collection__history-list">
             {sessions.map((session) => {
               const open = openSessionId === session.id;
               return (
-                <li key={session.id} className="practice__item">
-                  <p className="practice__meta">
-                    {formatMoment(session.createdAt)}
-                  </p>
-                  <p>
-                    <span className="practice__status">
-                      {SESSION_STATUS_LABELS[session.status]}
-                    </span>{" "}
-                    <span className="practice__hint">
-                      {categoryLabel(session.category)}
-                    </span>
-                  </p>
-                  <p>
-                    {questionsLabel(session.count)} · respostas confirmadas:{" "}
-                    {session.confirmedCount} de {session.count}
-                  </p>
-                  <p className="practice__hint">
-                    Progresso: pergunta {session.position} de {session.count}.
-                  </p>
-                  <div className="practice__actions">
-                    <button
-                      type="button"
-                      onClick={() => toggleSession(session.id)}
-                      aria-expanded={open}
-                    >
-                      {open ? "Fechar sessão" : "Abrir sessão"}
-                    </button>
-                    {session.status === "in_progress" ? (
+                <li
+                  key={session.id}
+                  className="practice__item collection__history-row"
+                >
+                  <div className="collection__history-summary">
+                    <CalendarDate value={session.createdAt} />
+                    <div className="collection__history-main">
+                      <p className="practice__meta">
+                        {formatMoment(session.createdAt)}
+                      </p>
+                      <p>
+                        <span className="practice__status">
+                          {SESSION_STATUS_LABELS[session.status]}
+                        </span>{" "}
+                        <span className="practice__hint">
+                          {categoryLabel(session.category)}
+                        </span>
+                      </p>
+                      <p>
+                        {questionsLabel(session.count)} · respostas confirmadas:{" "}
+                        {session.confirmedCount} de {session.count}
+                      </p>
+                      <p className="practice__hint">
+                        Progresso: pergunta {session.position} de{" "}
+                        {session.count}.
+                      </p>
+                    </div>
+                    <div className="practice__actions collection__history-actions">
                       <button
                         type="button"
-                        onClick={() => void resume(session)}
+                        onClick={() => toggleSession(session.id)}
+                        aria-expanded={open}
                       >
-                        Retomar
+                        {open ? "Fechar sessão" : "Abrir sessão"}
                       </button>
-                    ) : null}
+                      {session.status === "in_progress" ? (
+                        <button
+                          type="button"
+                          onClick={() => void resume(session)}
+                        >
+                          Retomar
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
 
                   {open ? (
@@ -786,7 +816,7 @@ export default function History({
       </section>
 
       <section
-        className="practice__panel practice__panel--wide"
+        className="practice__panel practice__panel--wide collection__history-section"
         aria-labelledby="history-legacy-title"
       >
         <h3 id="history-legacy-title">Treinos da fase 1</h3>
@@ -820,14 +850,14 @@ export default function History({
             Não existem treinos anteriores nesta instalação.
           </p>
         ) : (
-          <ul className="practice__list">
+          <ul className="practice__list collection__history-list">
             {legacy.map((item, index) => {
               const attempt = item.attempt;
               const open = attempt !== null && legacyDetailId === attempt.id;
               return (
                 <li
                   key={attempt?.id ?? `treino-invalido-${index}`}
-                  className="practice__item"
+                  className="practice__item collection__history-row collection__legacy-row"
                 >
                   {attempt ? (
                     <>

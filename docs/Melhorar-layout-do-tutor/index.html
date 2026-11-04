@@ -1,0 +1,1969 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Tutor de entrevistas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+@layer od-layout {
+  [hidden]:not([hidden="until-found" i]) { display: none !important; }
+  dialog:not([open]) { display: none !important; }
+
+  :where(.od-stack,.od-row,.od-row-top,.od-cluster,.od-grid,.od-field,.od-stat,.od-cell,.od-tile) > :where(*) { min-width: 0; }
+
+  .od-stack   { display: flex; flex-direction: column; gap: var(--od-gap, 8px); }
+  .od-row     { display: flex; align-items: center; gap: var(--od-gap, 8px); }
+  .od-row-top { display: flex; align-items: flex-start; gap: var(--od-gap, 8px); }
+  .od-cluster { display: flex; flex-wrap: wrap; align-items: center; gap: var(--od-gap, 8px); }
+  .od-fill    { flex: 1 1 0; min-width: 0; }
+  .od-fixed   { flex: none; }
+  .od-grid    { display: grid; gap: var(--od-gap, 12px); grid-template-columns: repeat(var(--od-cols, 3), minmax(0, 1fr)); }
+
+  .od-stat, .od-field, .od-cell { display: grid; gap: var(--od-gap, 2px); }
+  :where(.od-stat,.od-field,.od-cell) > :where(*) { display: block; }
+  .od-tile { display: grid; grid-template-rows: auto 1fr; }
+  :where(.od-tile) > :where(*) { display: block; }
+
+  .od-media { display: block; width: 100%; height: auto; aspect-ratio: var(--od-ratio, auto); }
+  .od-media-cover { object-fit: cover; }
+
+  .od-icon { display: inline-block; inline-size: var(--od-icon-size, 1em); block-size: var(--od-icon-size, 1em); flex: none; }
+
+  .od-truncate { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .od-clamp-2, .od-clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .od-clamp-2 { -webkit-line-clamp: 2; }
+  .od-clamp-3 { -webkit-line-clamp: 3; }
+  .od-lines-2 { min-height: calc(2 * 1.4em); }
+  .od-nowrap  { white-space: nowrap; }
+  .od-keep    { word-break: keep-all; overflow-wrap: anywhere; }
+
+  .od-screen { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; }
+  .od-scroll { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+
+  .od-rail { display: flex; gap: var(--od-gap, 8px); overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+             padding-inline: var(--od-rail-pad, 16px); scroll-padding-inline: var(--od-rail-pad, 16px); }
+  .od-rail::-webkit-scrollbar { display: none; }
+  :where(.od-rail) > :where(*) { flex: none; scroll-snap-align: start; }
+  :where(.od-rail) > :where(:last-child) { margin-inline-end: var(--od-rail-pad, 16px); }
+
+  .od-spacer { flex: none; visibility: hidden; pointer-events: none; }
+  .od-touch  { min-width: 44px; min-height: 44px; }
+}
+:root [hidden]:where(:not([hidden="until-found" i])) { display: none; }
+/* /OD-LAYOUT-PRIMITIVES v1 */
+
+:root {
+  --bg: #F2F5F3;
+  --surface: #FFFFFF;
+  --surface-2: #F7FAF8;
+  --ink: #14231D;
+  --ink-soft: #3F5148;
+  --muted: #586B62;
+  --border: #DCE5DF;
+  --border-strong: #C6D4CC;
+  --accent: #0E6B52;
+  --accent-hover: #0A5541;
+  --accent-soft: #E4F1EB;
+  --accent-ink: #08402F;
+  --hero: #0F3D30;
+  --hero-ink: #F2F7F4;
+  --hero-muted: #B9CFC5;
+  --amber: #7A5000;
+  --amber-bg: #FBF1DA;
+  --danger: #A33A2B;
+  --radius-card: 14px;
+  --radius-control: 10px;
+  --font-display: 'Newsreader', Georgia, 'Times New Roman', serif;
+  --font-body: 'Public Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --shadow-card: 0 1px 2px rgba(20, 35, 29, .05);
+  --shadow-pop: 0 24px 60px rgba(10, 25, 18, .24);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, p, ul, ol { margin: 0; }
+button, input, select, textarea { font: inherit; color: inherit; }
+svg { display: block; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.skip-link {
+  position: absolute; left: 16px; top: -48px; z-index: 100;
+  background: var(--accent); color: #fff; padding: 10px 16px;
+  border-radius: 8px; text-decoration: none; font-weight: 600;
+}
+.skip-link:focus { top: 16px; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.app { display: grid; grid-template-columns: 264px minmax(0, 1fr); align-items: start; }
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  position: sticky; top: 0; height: 100vh;
+  display: flex; flex-direction: column; gap: 28px;
+  padding: 24px 16px 20px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+.brand { display: flex; align-items: center; gap: 11px; padding: 0 8px; }
+.brand-mark {
+  width: 36px; height: 36px; display: grid; place-items: center;
+  background: var(--hero); color: var(--hero-ink);
+  border-radius: 10px; font-family: var(--font-display);
+  font-size: 21px; font-weight: 500; line-height: 1;
+}
+.brand-copy { display: grid; gap: 1px; }
+.brand-name { font-size: 14.5px; font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
+.brand-sub { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
+
+.nav { display: grid; gap: 4px; }
+.nav-label {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .11em;
+  color: var(--muted); font-weight: 700; padding: 0 10px 6px;
+}
+.nav-list { display: grid; gap: 3px; }
+.nav-item {
+  position: relative; display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 10px 11px; border: 1px solid transparent;
+  border-radius: 9px; background: transparent; color: var(--ink-soft);
+  font-size: 14px; font-weight: 500; text-align: left; cursor: pointer;
+  transition: background .18s ease, color .18s ease;
+}
+.nav-item:hover { background: var(--surface-2); color: var(--ink); }
+.nav-item.is-active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
+.nav-item.is-active::before {
+  content: ""; position: absolute; left: -9px; top: 50%;
+  width: 3px; height: 18px; border-radius: 2px; background: var(--accent);
+  transform: translateY(-50%);
+}
+.nav-icon { --od-icon-size: 18px; }
+.nav-hint { margin-left: auto; font-size: 11px; color: var(--muted); font-weight: 500; }
+
+.sidebar-session { margin-top: auto; }
+.session-mini {
+  display: grid; gap: 10px; padding: 15px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2);
+}
+.session-mini-kicker {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11px; font-weight: 600; color: var(--accent-ink);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.dot-live {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none;
+  box-shadow: 0 0 0 3px rgba(14, 107, 82, .14);
+}
+.session-mini-title { font-size: 14px; font-weight: 600; line-height: 1.3; }
+.session-mini-meta { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+
+/* ---------- Main ---------- */
+.main { min-width: 0; padding: 36px 44px 72px; }
+.content { max-width: 1060px; margin: 0 auto; }
+.view { display: grid; gap: 24px; }
+
+.page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+.page-head-copy { max-width: 680px; }
+.eyebrow {
+  font-size: 11.5px; letter-spacing: .13em; text-transform: uppercase;
+  font-weight: 700; color: var(--accent);
+}
+h1 {
+  font-family: var(--font-display); font-weight: 500;
+  font-size: clamp(32px, 3.6vw, 43px); line-height: 1.06;
+  letter-spacing: -.015em; margin: 7px 0 9px;
+}
+.page-desc { font-size: 15.5px; color: var(--muted); line-height: 1.6; max-width: 64ch; }
+
+/* ---------- Buttons ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 42px; padding: 10px 18px; border-radius: var(--radius-control);
+  border: 1px solid transparent; background: transparent; color: var(--ink);
+  font-size: 14px; font-weight: 600; line-height: 1.2; text-decoration: none;
+  cursor: pointer; transition: background .18s ease, border-color .18s ease, color .18s ease;
+}
+.btn:disabled { opacity: .6; cursor: default; }
+.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-secondary { background: var(--surface); color: var(--ink); border-color: var(--border-strong); }
+.btn-secondary:hover:not(:disabled) { background: var(--surface-2); border-color: #AEBFB6; }
+.btn-ghost { background: transparent; color: var(--ink-soft); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
+.btn-inverse { background: #fff; color: var(--hero); border-color: #fff; }
+.btn-inverse:hover { background: #E7F1EC; border-color: #E7F1EC; }
+.btn-inverse:focus-visible { outline-color: #fff; }
+.btn-sm { min-height: 34px; padding: 6px 12px; font-size: 13px; }
+.btn .od-icon { --od-icon-size: 16px; }
+
+/* ---------- Cards ---------- */
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-card); padding: 24px; box-shadow: var(--shadow-card);
+}
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.card h2 { font-family: var(--font-display); font-size: 21px; font-weight: 500; letter-spacing: -.005em; line-height: 1.2; }
+.card-lead { font-size: 14px; color: var(--muted); margin-top: 5px; line-height: 1.5; }
+.card-foot { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.split { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.stack-16 { display: grid; gap: 16px; }
+.muted { color: var(--muted); }
+
+/* ---------- Hero / resumed session ---------- */
+.hero {
+  background: var(--hero); color: var(--hero-ink);
+  border-radius: 18px; padding: 26px 28px; display: grid; gap: 22px;
+}
+.hero-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; flex-wrap: wrap; }
+.hero-copy { display: grid; gap: 6px; max-width: 560px; }
+.hero-kicker {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  font-weight: 600; color: var(--hero-muted);
+}
+.hero-kicker .dot-live { background: #8BE3C2; box-shadow: 0 0 0 3px rgba(139, 227, 194, .16); }
+.hero h2 { font-family: var(--font-display); font-size: 29px; font-weight: 500; line-height: 1.15; letter-spacing: -.01em; }
+.hero p { color: var(--hero-muted); font-size: 14.5px; line-height: 1.55; max-width: 58ch; }
+.hero-progress { display: grid; gap: 16px; }
+.progress {
+  height: 6px; border-radius: 999px; overflow: hidden;
+  background: rgba(255, 255, 255, .16);
+}
+.progress-fill {
+  height: 100%; width: 100%; border-radius: inherit; background: #8BE3C2;
+  transform: scaleX(var(--p, 0)); transform-origin: left center;
+  transition: transform .35s ease;
+}
+.hero-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.hero-stat { display: grid; gap: 2px; }
+.hero-stat-value { font-family: var(--font-display); font-size: 23px; line-height: 1.1; }
+.hero-stat-label { font-size: 12px; color: var(--hero-muted); line-height: 1.35; }
+
+/* ---------- Lists / rows ---------- */
+.env-list { display: grid; margin-top: 14px; }
+.env-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.env-row:last-child { border-bottom: 0; padding-bottom: 2px; }
+.env-icon {
+  width: 34px; height: 34px; display: grid; place-items: center; flex: none;
+  border-radius: 9px; background: var(--surface-2); color: var(--accent-ink);
+  border: 1px solid var(--border);
+}
+.env-icon .od-icon { --od-icon-size: 17px; }
+.env-copy { display: grid; gap: 1px; min-width: 0; }
+.env-name { font-size: 14px; font-weight: 600; line-height: 1.35; }
+.env-hint { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.status-pill {
+  margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: var(--accent-soft); color: var(--accent-ink); white-space: nowrap;
+}
+.status-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.status-pill.is-checking { background: var(--amber-bg); color: var(--amber); }
+.status-pill.is-muted { background: #EFF2F0; color: var(--muted); }
+
+.steps { display: grid; gap: 2px; margin-top: 12px; list-style: none; padding: 0; }
+.step { display: flex; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--border); }
+.step:last-child { border-bottom: 0; padding-bottom: 0; }
+.step-num {
+  width: 25px; height: 25px; flex: none; display: grid; place-items: center;
+  border-radius: 50%; border: 1px solid var(--border-strong);
+  font-size: 12px; font-weight: 700; color: var(--accent-ink); background: var(--surface-2);
+}
+.step-title { display: block; font-size: 13.5px; font-weight: 600; line-height: 1.4; }
+.step-desc { display: block; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+
+/* ---------- Toolbar / filters ---------- */
+.toolbar { display: grid; gap: 14px; }
+.filter-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+.search-field { position: relative; flex: 1 1 300px; max-width: 420px; }
+.search-field label {
+  display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft);
+  margin-bottom: 6px; letter-spacing: .01em;
+}
+.search-field .search-icon {
+  position: absolute; left: 12px; bottom: 12px; color: var(--muted); pointer-events: none;
+}
+.search-field .search-icon .od-icon { --od-icon-size: 17px; }
+.search-field input {
+  width: 100%; min-height: 42px; padding: 10px 13px 10px 38px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-control);
+  background: var(--surface); font-size: 14px;
+}
+.search-field input::placeholder { color: #87978F; }
+.chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.chip {
+  display: inline-flex; align-items: center; min-height: 32px; padding: 5px 13px;
+  border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface);
+  color: var(--ink-soft); font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: background .16s ease, color .16s ease, border-color .16s ease;
+}
+.chip:hover { background: var(--surface-2); color: var(--ink); }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.result-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.result-count { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ---------- Question cards ---------- */
+.q-list { display: grid; gap: 14px; }
+.q-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-card);
+  padding: 22px 24px; box-shadow: var(--shadow-card);
+  display: grid; gap: 14px;
+}
+.q-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.tag {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px;
+  border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink);
+  font-size: 12px; font-weight: 600; letter-spacing: .005em;
+}
+.version {
+  font-size: 12px; color: var(--muted); border: 1px solid var(--border);
+  padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+}
+.q-text {
+  font-family: var(--font-display); font-size: clamp(20px, 2.1vw, 23px);
+  font-weight: 500; line-height: 1.35; letter-spacing: -.005em;
+}
+.q-criteria { display: grid; gap: 6px; padding: 12px 14px; background: var(--surface-2); border-radius: 10px; }
+.meta-label {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em;
+  font-weight: 700; color: var(--muted);
+}
+.q-criteria ul { list-style: none; padding: 0; display: grid; gap: 4px; }
+.q-criteria li {
+  position: relative; padding-left: 15px; font-size: 13.5px; line-height: 1.5; color: var(--ink-soft);
+}
+.q-criteria li::before {
+  content: ""; position: absolute; left: 0; top: .58em;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--border-strong);
+}
+.q-foot { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ---------- Notes / empty states ---------- */
+.note {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface); color: var(--ink-soft);
+}
+.note .od-icon { --od-icon-size: 19px; color: var(--accent); margin-top: 1px; }
+.note p { font-size: 13.5px; line-height: 1.55; }
+.note strong { color: var(--ink); font-weight: 600; }
+
+.empty {
+  display: grid; justify-items: center; text-align: center; gap: 8px;
+  padding: 46px 24px; border: 1px dashed var(--border-strong); border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.empty-icon {
+  width: 46px; height: 46px; display: grid; place-items: center; margin-bottom: 4px;
+  border-radius: 13px; background: var(--accent-soft); color: var(--accent-ink);
+}
+.empty-icon .od-icon { --od-icon-size: 22px; }
+.empty h3 { font-family: var(--font-display); font-size: 21px; font-weight: 500; line-height: 1.25; }
+.empty p { font-size: 14px; color: var(--muted); max-width: 46ch; line-height: 1.55; }
+.empty .btn { margin-top: 10px; }
+
+/* ---------- Interview ---------- */
+.interview-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.session-card { display: grid; gap: 18px; }
+.session-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.session-top .eyebrow { color: var(--muted); }
+.card .progress { background: #E7EEEA; height: 5px; }
+.card .progress-fill { background: var(--accent); }
+.interview-question {
+  font-family: var(--font-display); font-size: clamp(24px, 2.8vw, 30px);
+  font-weight: 500; line-height: 1.3; letter-spacing: -.01em;
+}
+.record-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.btn.is-recording { background: #FBEDEA; border-color: #E7C6BF; color: #8E3324; }
+.btn.is-recording:hover { background: #F7E1DC; }
+.record-dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+.timer {
+  font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600;
+  color: var(--ink-soft); letter-spacing: .02em;
+}
+.field { display: grid; gap: 6px; }
+.field label { font-size: 12.5px; font-weight: 600; color: var(--ink-soft); }
+.field input, .field select, .field textarea {
+  width: 100%; padding: 11px 13px; background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-control);
+  font-size: 14.5px; line-height: 1.5;
+}
+.field textarea { resize: vertical; min-height: 96px; }
+.field input:focus, .field select:focus, .field textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.field-error { font-size: 12.5px; color: var(--danger); font-weight: 500; }
+.actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 9px; padding-top: 4px; }
+.actions .btn-danger-ghost { margin-right: auto; }
+
+.plan-list { list-style: none; padding: 0; display: grid; gap: 2px; margin-top: 12px; }
+.plan-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.plan-item:last-child { border-bottom: 0; padding-bottom: 0; }
+.plan-mark {
+  width: 22px; height: 22px; flex: none; display: grid; place-items: center;
+  border-radius: 50%; border: 1px solid var(--border-strong); background: var(--surface-2);
+  color: var(--muted); font-size: 11px; font-weight: 700;
+}
+.plan-mark .od-icon { --od-icon-size: 13px; }
+.plan-item.is-done .plan-mark { background: var(--accent-soft); border-color: var(--accent-soft); color: var(--accent-ink); }
+.plan-item.is-current .plan-mark { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 3px rgba(14,107,82,.1); }
+.plan-copy { display: grid; gap: 1px; }
+.plan-title { font-size: 13.5px; font-weight: 600; line-height: 1.4; }
+.plan-meta { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.plan-item.is-current .plan-title { color: var(--accent-ink); }
+
+.completion { display: grid; justify-items: center; text-align: center; gap: 10px; padding: 46px 28px; }
+.completion-icon {
+  width: 52px; height: 52px; display: grid; place-items: center; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent-ink); margin-bottom: 2px;
+}
+.completion-icon .od-icon { --od-icon-size: 26px; }
+.completion h2 { font-size: 30px; }
+.completion p { color: var(--muted); font-size: 15px; max-width: 46ch; }
+.completion-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
+
+/* ---------- History ---------- */
+.history-list { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface); overflow: hidden; }
+.history-row {
+  display: grid; grid-template-columns: 66px minmax(0, 1fr) auto auto;
+  align-items: center; gap: 18px; padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.history-row:last-child { border-bottom: 0; }
+.history-date { display: grid; gap: 0; text-align: left; }
+.history-day { font-family: var(--font-display); font-size: 25px; line-height: 1; font-weight: 500; }
+.history-month { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.history-main { display: grid; gap: 2px; }
+.history-title { font-size: 14.5px; font-weight: 600; line-height: 1.4; }
+.history-meta { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+
+/* ---------- Settings ---------- */
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 20px; margin-top: 18px; }
+.span-2 { grid-column: span 2; }
+.switch-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  padding: 14px 0; border-bottom: 1px solid var(--border);
+}
+.switch-row:last-of-type { border-bottom: 0; }
+.switch-copy { display: grid; gap: 1px; }
+.switch-title { font-size: 14px; font-weight: 600; line-height: 1.4; }
+.switch-desc { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.switch { position: relative; display: inline-flex; cursor: pointer; flex: none; }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch .track {
+  width: 44px; height: 25px; border-radius: 999px; background: #CBD8D1;
+  position: relative; transition: background .2s ease; display: block;
+}
+.switch .track::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 19px; height: 19px;
+  border-radius: 50%; background: #fff; transition: transform .2s ease;
+  box-shadow: 0 1px 2px rgba(20,35,29,.2);
+}
+.switch input:checked + .track { background: var(--accent); }
+.switch input:checked + .track::after { transform: translateX(19px); }
+.switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.form-status { font-size: 13px; font-weight: 500; color: var(--accent-ink); min-height: 1.2em; }
+
+/* ---------- Dialogs ---------- */
+dialog {
+  border: 0; border-radius: 18px; padding: 0; width: min(560px, calc(100vw - 32px));
+  background: var(--surface); color: var(--ink); box-shadow: var(--shadow-pop);
+  max-height: calc(100vh - 40px); overflow: auto;
+}
+dialog::backdrop { background: rgba(8, 20, 15, .46); }
+.dialog-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  padding: 22px 24px 0;
+}
+.dialog-head h2 { font-size: 24px; }
+.dialog-head p { font-size: 13px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+.dialog-close {
+  width: 34px; height: 34px; flex: none; display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 9px; background: var(--surface);
+  color: var(--muted); cursor: pointer;
+}
+.dialog-close:hover { background: var(--surface-2); color: var(--ink); }
+.dialog-close .od-icon { --od-icon-size: 16px; }
+.dialog-body { padding: 18px 24px 4px; display: grid; gap: 15px; }
+.dialog-foot {
+  display: flex; justify-content: flex-end; gap: 9px;
+  padding: 18px 24px 22px; margin-top: 8px;
+}
+.btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn-danger:hover { background: #8C2F22; border-color: #8C2F22; }
+
+/* ---------- Toast ---------- */
+.toast {
+  position: fixed; right: 24px; bottom: 24px; z-index: 80;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 12px 16px; border-radius: 11px; background: var(--hero); color: var(--hero-ink);
+  font-size: 13.5px; font-weight: 500; line-height: 1.4;
+  box-shadow: 0 12px 30px rgba(10, 25, 18, .22);
+  opacity: 0; transform: translateY(10px); pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease;
+}
+.toast.is-visible { opacity: 1; transform: translateY(0); }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 1023px) {
+  .app { display: block; }
+  .sidebar {
+    position: sticky; top: 0; height: auto; z-index: 40;
+    display: grid; gap: 12px; padding: 13px 20px 11px;
+    border-right: 0; border-bottom: 1px solid var(--border);
+    background: rgba(255, 255, 255, .97); backdrop-filter: blur(8px);
+    overflow: visible;
+  }
+  .brand { padding: 0; }
+  .brand-mark { width: 32px; height: 32px; border-radius: 9px; font-size: 19px; }
+  .nav { display: block; }
+  .nav-label { display: none; }
+  .nav-list {
+    display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none;
+    padding: 1px 0 2px; margin: 0 -2px;
+  }
+  .nav-list::-webkit-scrollbar { display: none; }
+  .nav-item {
+    width: auto; flex: none; white-space: nowrap; padding: 8px 12px;
+    font-size: 13px; min-height: 38px;
+  }
+  .nav-item.is-active::before { display: none; }
+  .nav-hint { display: none; }
+  .sidebar-session { display: none; }
+  .main { padding: 28px 22px 64px; }
+}
+
+@media (max-width: 899px) {
+  .split, .interview-grid { grid-template-columns: minmax(0, 1fr); }
+  .hero-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+}
+
+@media (max-width: 639px) {
+  .main { padding: 24px 16px 56px; }
+  .view { gap: 20px; }
+  .page-head { align-items: flex-start; gap: 16px; }
+  .page-head .btn { width: 100%; }
+  .hero { padding: 22px 20px; border-radius: 16px; }
+  .hero-main { gap: 18px; }
+  .hero-main .btn { width: 100%; }
+  .hero h2 { font-size: 26px; }
+  .hero-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .hero-stat-value { font-size: 20px; }
+  .card { padding: 20px 18px; }
+  .q-card { padding: 19px 18px; }
+  .filter-row { align-items: stretch; flex-direction: column; gap: 14px; }
+  .search-field { max-width: none; flex-basis: auto; }
+  .chips { gap: 6px; }
+  .chip { font-size: 12.5px; padding: 5px 11px; }
+  .history-row { grid-template-columns: 56px minmax(0, 1fr) auto; gap: 12px; padding: 14px 16px; }
+  .history-row .btn { grid-column: 2 / -1; justify-self: start; }
+  .history-row .status-pill { margin-left: 0; }
+  .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .span-2 { grid-column: auto; }
+  .actions { justify-content: stretch; }
+  .actions .btn { flex: 1 1 auto; }
+  .actions .btn-danger-ghost { margin-right: 0; }
+  .completion { padding: 36px 20px; }
+  .dialog-head { padding: 20px 18px 0; }
+  .dialog-body { padding: 16px 18px 4px; }
+  .dialog-foot { padding: 16px 18px 18px; flex-wrap: wrap; }
+  .dialog-foot .btn { flex: 1 1 auto; }
+  .toast { right: 16px; left: 16px; bottom: 16px; max-width: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Ir para o conteúdo</a>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">T</span>
+      <div class="brand-copy">
+        <span class="brand-name">Tutor de entrevistas</span>
+        <span class="brand-sub">Entrevistas comportamentais</span>
+      </div>
+    </div>
+
+    <nav class="nav" aria-label="Seções do tutor">
+      <span class="nav-label">Navegação</span>
+      <div class="nav-list">
+        <button type="button" class="nav-item is-active" data-action="nav" data-view="preparacao" aria-current="page">
+          <svg class="od-icon nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M18 7h2M4 17h2M11 17h9"/><circle cx="15.5" cy="7" r="2.2"/><circle cx="7.5" cy="17" r="2.2"/></svg>
+          Preparação
+        </button>
+        <button type="button" class="nav-item" data-action="nav" data-view="banco">
+          <svg class="od-icon nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.1"/><circle cx="4.5" cy="12" r="1.1"/><circle cx="4.5" cy="18" r="1.1"/></svg>
+          Banco de perguntas
+        </button>
+        <button type="button" class="nav-item" data-action="nav" data-view="historias">
+          <svg class="od-icon nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 5.5v15"/><path d="M8 7.5h8M8 11h5.5"/></svg>
+          Histórias
+        </button>
+        <button type="button" class="nav-item" data-action="nav" data-view="entrevista">
+          <svg class="od-icon nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3M9 21h6"/></svg>
+          Entrevista
+          <span class="nav-hint" id="nav-session-hint" hidden></span>
+        </button>
+        <button type="button" class="nav-item" data-action="nav" data-view="historico">
+          <svg class="od-icon nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+          Histórico
+        </button>
+        <button type="button" class="nav-item" data-action="nav" data-view="configuracao">
+          <svg class="od-icon nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.1"/><path d="M12 2.9v2.3M12 18.8v2.3M2.9 12h2.3M18.8 12h2.3M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/></svg>
+          Configuração IA
+        </button>
+      </div>
+    </nav>
+
+    <div class="sidebar-session" id="sidebar-session"></div>
+  </aside>
+
+  <main class="main" id="main">
+    <div class="content">
+
+      <!-- ================= PREPARAÇÃO ================= -->
+      <section class="view" id="view-preparacao" aria-labelledby="prep-title">
+        <header class="page-head">
+          <div class="page-head-copy">
+            <span class="eyebrow">Preparação</span>
+            <h1 id="prep-title">Prepare a próxima entrevista</h1>
+            <p class="page-desc">Revise o ambiente, consulte o banco de perguntas e retome a sessão exatamente de onde parou.</p>
+          </div>
+          <div id="prep-action"></div>
+        </header>
+
+        <div class="hero" id="session-hero"></div>
+
+        <div class="split">
+          <div class="card">
+            <div class="card-head">
+              <h2>Ambiente</h2>
+              <span class="status-pill" id="env-badge">Pronto</span>
+            </div>
+            <p class="card-lead">Confira microfone e áudio antes de gravar a primeira resposta.</p>
+            <div class="env-list">
+              <div class="env-row">
+                <span class="env-icon" aria-hidden="true">
+                  <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3M9 21h6"/></svg>
+                </span>
+                <div class="env-copy">
+                  <span class="env-name">Microfone</span>
+                  <span class="env-hint">Entrada padrão do sistema</span>
+                </div>
+                <span class="status-pill env-value">Disponível</span>
+              </div>
+              <div class="env-row">
+                <span class="env-icon" aria-hidden="true">
+                  <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3l4.5-3.5v12L7 14.5H4z"/><path d="M15.5 9a4.2 4.2 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+                </span>
+                <div class="env-copy">
+                  <span class="env-name">Reprodução</span>
+                  <span class="env-hint">Saída de áudio do tutor</span>
+                </div>
+                <span class="status-pill env-value">Disponível</span>
+              </div>
+              <div class="env-row">
+                <span class="env-icon" aria-hidden="true">
+                  <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h8l4 4v13H6z"/><path d="M14 3.5v4h4"/><path d="M9 12h6M9 15.5h6"/></svg>
+                </span>
+                <div class="env-copy">
+                  <span class="env-name">Transcrição</span>
+                  <span class="env-hint">Conversão local da fala em texto</span>
+                </div>
+                <span class="status-pill env-value">Disponível</span>
+              </div>
+              <div class="env-row">
+                <span class="env-icon" aria-hidden="true">
+                  <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h2l2-6 3 12 3-9 2 3h6"/></svg>
+                </span>
+                <div class="env-copy">
+                  <span class="env-name">Síntese de voz</span>
+                  <span class="env-hint">Leitura das perguntas em inglês</span>
+                </div>
+                <span class="status-pill env-value">Disponível</span>
+              </div>
+            </div>
+            <div class="card-foot">
+              <button type="button" class="btn btn-secondary" data-action="verify-env">Verificar disponibilidade</button>
+              <button type="button" class="btn btn-ghost" data-action="reset-audio">Reiniciar áudio local</button>
+            </div>
+          </div>
+
+          <div class="stack-16">
+            <div class="card">
+              <div class="card-head">
+                <h2>Base de dados</h2>
+                <span class="status-pill">Pronta</span>
+              </div>
+              <p class="card-lead">Todo o conteúdo fica neste navegador.</p>
+              <p class="db-meta" id="db-meta" style="margin-top: 10px; font-size: 13.5px; color: var(--ink-soft); font-weight: 500;"></p>
+              <div class="card-foot">
+                <button type="button" class="btn btn-secondary btn-sm" data-action="nav" data-view="banco">Abrir banco</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-action="nav" data-view="historias">Ver histórias</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2>Roteiro rápido</h2>
+              <ol class="steps">
+                <li class="step">
+                  <span class="step-num" aria-hidden="true">1</span>
+                  <div>
+                    <span class="step-title">Revise duas histórias</span>
+                    <span class="step-desc">Escolha exemplos com situação, ação e resultado.</span>
+                  </div>
+                </li>
+                <li class="step">
+                  <span class="step-num" aria-hidden="true">2</span>
+                  <div>
+                    <span class="step-title">Aqueça a voz por 5 minutos</span>
+                    <span class="step-desc">Leia uma pergunta em voz alta antes de gravar.</span>
+                  </div>
+                </li>
+                <li class="step">
+                  <span class="step-num" aria-hidden="true">3</span>
+                  <div>
+                    <span class="step-title">Responda três perguntas</span>
+                    <span class="step-desc">Mantenha cada resposta entre um e dois minutos.</span>
+                  </div>
+                </li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= BANCO DE PERGUNTAS ================= -->
+      <section class="view" id="view-banco" aria-labelledby="banco-title" hidden>
+        <header class="page-head">
+          <div class="page-head-copy">
+            <span class="eyebrow">Banco de perguntas</span>
+            <h1 id="banco-title">Perguntas que valem ensaio</h1>
+            <p class="page-desc">Perguntas em inglês com competência e critérios de avaliação. Filtre por competência ou busque por palavra-chave.</p>
+          </div>
+          <button type="button" class="btn btn-primary" data-action="new-question">
+            <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            Adicionar pergunta
+          </button>
+        </header>
+
+        <div class="toolbar">
+          <div class="filter-row">
+            <div class="search-field">
+              <label for="question-search">Buscar pergunta</label>
+              <span class="search-icon" aria-hidden="true">
+                <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.4"/><path d="M16 16l4 4"/></svg>
+              </span>
+              <input type="search" id="question-search" placeholder="Ex.: conflito, equipe, prazo" autocomplete="off">
+            </div>
+            <div class="chips" id="competence-chips" role="group" aria-label="Filtrar por competência"></div>
+          </div>
+          <div class="result-line">
+            <span class="result-count" id="question-count">6 perguntas nesta vista</span>
+            <span class="result-count">Atualizado hoje</span>
+          </div>
+        </div>
+
+        <div class="q-list" id="question-list" aria-live="polite"></div>
+      </section>
+
+      <!-- ================= HISTÓRIAS ================= -->
+      <section class="view" id="view-historias" aria-labelledby="historias-title" hidden>
+        <header class="page-head">
+          <div class="page-head-copy">
+            <span class="eyebrow">Histórias</span>
+            <h1 id="historias-title">Histórias de preparação</h1>
+            <p class="page-desc">Notas factuais, consultadas antes de responder. Edite ou filtre por competência para encontrar o exemplo certo.</p>
+          </div>
+          <button type="button" class="btn btn-primary" data-action="new-story">
+            <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            Adicionar história
+          </button>
+        </header>
+
+        <div class="note">
+          <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+          <p><strong>Notas locais.</strong> As histórias ficam salvas apenas neste computador e nunca são enviadas automaticamente para a API.</p>
+        </div>
+
+        <div class="filter-row">
+          <div class="field" style="max-width: 340px; flex: 1 1 260px;">
+            <label for="story-filter">Filtrar por competência</label>
+            <select id="story-filter">
+              <option value="todas">Todas as competências</option>
+              <option value="Gestão de conflitos">Gestão de conflitos</option>
+              <option value="Colaboração">Colaboração</option>
+              <option value="Comunicação">Comunicação</option>
+              <option value="Organização">Organização</option>
+              <option value="Responsabilidade">Responsabilidade</option>
+              <option value="Liderança">Liderança</option>
+            </select>
+          </div>
+          <span class="result-count" id="story-count">0 histórias nesta vista</span>
+        </div>
+
+        <div id="story-list" aria-live="polite"></div>
+      </section>
+
+      <!-- ================= ENTREVISTA ================= -->
+      <section class="view" id="view-entrevista" aria-labelledby="entrevista-title" hidden>
+        <header class="page-head">
+          <div class="page-head-copy">
+            <span class="eyebrow">Entrevista</span>
+            <h1 id="entrevista-title">Sessão de prática</h1>
+            <p class="page-desc">Responda em inglês, em voz alta. O tutor registra o progresso e guarda suas anotações.</p>
+          </div>
+        </header>
+        <div id="interview-root"></div>
+      </section>
+
+      <!-- ================= HISTÓRICO ================= -->
+      <section class="view" id="view-historico" aria-labelledby="historico-title" hidden>
+        <header class="page-head">
+          <div class="page-head-copy">
+            <span class="eyebrow">Histórico</span>
+            <h1 id="historico-title">Sessões anteriores</h1>
+            <p class="page-desc">Reveja datas, duração e categorias praticadas. Repita uma sessão para treinar o mesmo tema.</p>
+          </div>
+          <button type="button" class="btn btn-primary" data-action="start-session">Iniciar nova sessão</button>
+        </header>
+        <div class="history-list" id="history-list"></div>
+      </section>
+
+      <!-- ================= CONFIGURAÇÃO ================= -->
+      <section class="view" id="view-configuracao" aria-labelledby="config-title" hidden>
+        <header class="page-head">
+          <div class="page-head-copy">
+            <span class="eyebrow">Configuração IA</span>
+            <h1 id="config-title">Como o tutor avalia</h1>
+            <p class="page-desc">Defina provedor, voz e idioma de avaliação. As notas das histórias continuam apenas neste computador.</p>
+          </div>
+        </header>
+
+        <form class="card" id="settings-form" novalidate>
+          <div class="card-head">
+            <h2>Motor de avaliação</h2>
+            <span class="status-pill">Local</span>
+          </div>
+          <p class="card-lead">As alterações valem para as próximas respostas desta sessão.</p>
+
+          <div class="form-grid">
+            <div class="field">
+              <label for="setting-provider">Provedor</label>
+              <select id="setting-provider">
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="local">Modelo local</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="setting-model">Modelo</label>
+              <input type="text" id="setting-model" value="gpt-4.1-mini" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="setting-voice">Voz da síntese</label>
+              <select id="setting-voice">
+                <option value="padrao">Voz padrão</option>
+                <option value="calma">Voz calma</option>
+                <option value="neutra">Voz neutra</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="setting-language">Idioma da avaliação</label>
+              <select id="setting-language">
+                <option value="pt-BR">Português (Brasil)</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+            <div class="field span-2">
+              <label for="setting-notes">Instruções para o tutor</label>
+              <textarea id="setting-notes" rows="3" placeholder="Ex.: respostas objetivas, com foco em resultados mensuráveis."></textarea>
+            </div>
+          </div>
+
+          <div style="margin-top: 20px;">
+            <div class="switch-row">
+              <div class="switch-copy">
+                <span class="switch-title">Avaliar respostas automaticamente</span>
+                <span class="switch-desc">Comentário breve ao final de cada resposta.</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setting-auto-eval" checked>
+                <span class="track" aria-hidden="true"></span>
+                <span class="sr-only">Avaliar respostas automaticamente</span>
+              </label>
+            </div>
+            <div class="switch-row">
+              <div class="switch-copy">
+                <span class="switch-title">Transcrever respostas</span>
+                <span class="switch-desc">Converte a fala em texto para consulta posterior.</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setting-transcribe" checked>
+                <span class="track" aria-hidden="true"></span>
+                <span class="sr-only">Transcrever respostas</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="card-foot" style="align-items: center;">
+            <button type="submit" class="btn btn-primary">Salvar configuração</button>
+            <p class="form-status" id="settings-status" role="status" style="margin-left: auto;"></p>
+          </div>
+        </form>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<!-- ================= DIALOG: PERGUNTA ================= -->
+<dialog id="question-dialog" aria-labelledby="question-dialog-title">
+  <form id="question-form" novalidate>
+    <div class="dialog-head">
+      <div>
+        <h2 id="question-dialog-title">Nova pergunta</h2>
+        <p>Escreva a pergunta em inglês. Os critérios orientam a avaliação.</p>
+      </div>
+      <button type="button" class="dialog-close" data-action="close-dialog" data-dialog="question-dialog" aria-label="Fechar">
+        <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="dialog-body">
+      <div class="field">
+        <label for="q-text">Pergunta</label>
+        <textarea id="q-text" rows="3" placeholder="Tell me about a time you..."></textarea>
+        <p class="field-error" id="q-text-error" hidden>Escreva a pergunta antes de salvar.</p>
+      </div>
+      <div class="field">
+        <label for="q-competence">Competência</label>
+        <select id="q-competence">
+          <option value="Gestão de conflitos">Gestão de conflitos</option>
+          <option value="Colaboração">Colaboração</option>
+          <option value="Comunicação">Comunicação</option>
+          <option value="Organização">Organização</option>
+          <option value="Responsabilidade">Responsabilidade</option>
+          <option value="Liderança">Liderança</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="q-criteria-1">Critério 1</label>
+        <input type="text" id="q-criteria-1" placeholder="Ex.: descreve o contexto e a própria ação.">
+      </div>
+      <div class="field">
+        <label for="q-criteria-2">Critério 2</label>
+        <input type="text" id="q-criteria-2" placeholder="Ex.: mostra o resultado concreto.">
+      </div>
+    </div>
+    <div class="dialog-foot">
+      <button type="button" class="btn btn-ghost" data-action="close-dialog" data-dialog="question-dialog">Cancelar</button>
+      <button type="submit" class="btn btn-primary" id="question-save">Salvar pergunta</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ================= DIALOG: HISTÓRIA ================= -->
+<dialog id="story-dialog" aria-labelledby="story-dialog-title">
+  <form id="story-form" novalidate>
+    <div class="dialog-head">
+      <div>
+        <h2 id="story-dialog-title">Nova história</h2>
+        <p>Registre fatos que você consiga defender na entrevista.</p>
+      </div>
+      <button type="button" class="dialog-close" data-action="close-dialog" data-dialog="story-dialog" aria-label="Fechar">
+        <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="dialog-body">
+      <div class="field">
+        <label for="s-title">Título</label>
+        <input type="text" id="s-title" placeholder="Ex.: Reorganização do plantão de suporte">
+        <p class="field-error" id="s-title-error" hidden>Dê um título à história.</p>
+      </div>
+      <div class="field">
+        <label for="s-competence">Competência</label>
+        <select id="s-competence">
+          <option value="Gestão de conflitos">Gestão de conflitos</option>
+          <option value="Colaboração">Colaboração</option>
+          <option value="Comunicação">Comunicação</option>
+          <option value="Organização">Organização</option>
+          <option value="Responsabilidade">Responsabilidade</option>
+          <option value="Liderança">Liderança</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="s-note">Nota</label>
+        <textarea id="s-note" rows="5" placeholder="Situação, ação e resultado, com números quando possível."></textarea>
+        <p class="field-error" id="s-note-error" hidden>Escreva a nota da história.</p>
+      </div>
+    </div>
+    <div class="dialog-foot">
+      <button type="button" class="btn btn-ghost" data-action="close-dialog" data-dialog="story-dialog">Cancelar</button>
+      <button type="submit" class="btn btn-primary" id="story-save">Salvar história</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ================= DIALOG: CONFIRMAR NOVA SESSÃO ================= -->
+<dialog id="confirm-dialog" aria-labelledby="confirm-title">
+  <div class="dialog-head">
+    <div>
+      <h2 id="confirm-title">Começar uma nova sessão?</h2>
+      <p>A sessão em andamento será encerrada e o progresso atual não entrará no histórico.</p>
+    </div>
+    <button type="button" class="dialog-close" data-action="close-dialog" data-dialog="confirm-dialog" aria-label="Fechar">
+      <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="dialog-foot">
+    <button type="button" class="btn btn-ghost" data-action="close-dialog" data-dialog="confirm-dialog">Cancelar</button>
+    <button type="button" class="btn btn-primary" data-action="confirm-new-session">Começar sessão</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  const seedQuestions = [
+    {
+      id: 'q1',
+      text: 'Tell me about a time you disagreed with a colleague.',
+      competence: 'Gestão de conflitos',
+      version: 1,
+      criteria: [
+        'Explicar a divergência, a ação própria e o desfecho.',
+        'Mostrar escuta ativa e busca de consenso.'
+      ]
+    },
+    {
+      id: 'q2',
+      text: 'Describe a time you helped a team work together more effectively.',
+      competence: 'Colaboração',
+      version: 1,
+      criteria: [
+        'Identificar o obstáculo e a contribuição individual.',
+        'Demonstrar impacto concreto no resultado do time.'
+      ]
+    },
+    {
+      id: 'q3',
+      text: 'Tell me about a time you had to give difficult feedback to a teammate.',
+      competence: 'Comunicação',
+      version: 1,
+      criteria: [
+        'Descrever o contexto e a escolha do momento.',
+        'Separar comportamento observado de julgamento pessoal.'
+      ]
+    },
+    {
+      id: 'q4',
+      text: 'Describe a situation where you had to prioritize competing deadlines.',
+      competence: 'Organização',
+      version: 2,
+      criteria: [
+        'Justificar os critérios de priorização usados.',
+        'Mostrar comunicação com as partes afetadas.'
+      ]
+    },
+    {
+      id: 'q5',
+      text: 'Tell me about a time you took ownership of a mistake.',
+      competence: 'Responsabilidade',
+      version: 1,
+      criteria: [
+        'Assumir o erro sem transferir culpa.',
+        'Descrever a correção e o aprendizado aplicado.'
+      ]
+    },
+    {
+      id: 'q6',
+      text: 'Describe a time you influenced a decision without formal authority.',
+      competence: 'Liderança',
+      version: 1,
+      criteria: [
+        'Explicar como construiu apoio e evidências.',
+        'Mostrar o resultado da decisão influenciada.'
+      ]
+    }
+  ];
+
+  const competencies = [
+    'Gestão de conflitos',
+    'Colaboração',
+    'Comunicação',
+    'Organização',
+    'Responsabilidade',
+    'Liderança'
+  ];
+
+  const historySeed = [
+    { id: 'h1', day: '28', month: 'out 2026', title: 'Sessão comportamental', meta: 'Todas as categorias · 3 perguntas · 14 min', status: 'Concluída' },
+    { id: 'h2', day: '21', month: 'out 2026', title: 'Conflitos e feedback', meta: 'Gestão de conflitos · 3 perguntas · 11 min', status: 'Concluída' },
+    { id: 'h3', day: '14', month: 'out 2026', title: 'Colaboração em equipe', meta: 'Colaboração · 2 perguntas · 9 min', status: 'Interrompida' }
+  ];
+
+  const state = {
+    view: 'preparacao',
+    questions: seedQuestions.map(function (q) {
+      return { id: q.id, text: q.text, competence: q.competence, version: q.version, criteria: q.criteria.slice() };
+    }),
+    stories: [],
+    history: historySeed.slice(),
+    session: { status: 'active', current: 1, total: 3, results: ['answered'] },
+    filters: { query: '', competence: 'todas' },
+    storyFilter: 'todas',
+    recording: false,
+    timer: 0,
+    timerId: null,
+    editingQuestionId: null,
+    editingStoryId: null,
+    settings: {
+      provider: 'openai',
+      model: 'gpt-4.1-mini',
+      voice: 'padrao',
+      language: 'pt-BR',
+      notes: '',
+      autoEval: true,
+      transcribe: true
+    }
+  };
+
+  const $ = function (selector, root) { return (root || document).querySelector(selector); };
+  const $$ = function (selector, root) { return Array.prototype.slice.call((root || document).querySelectorAll(selector)); };
+
+  const ICON = {
+    check: '<svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+    plus: '<svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+    mic: '<svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3M9 21h6"/></svg>',
+    book: '<svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 5.5v15"/><path d="M8 7.5h8M8 11h5.5"/></svg>'
+  };
+
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+    });
+  }
+
+  function norm(value) {
+    return String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  }
+
+  function plural(count, singular, pluralForm) {
+    return count === 1 ? singular : pluralForm;
+  }
+
+  function toast(message) {
+    const el = $('#toast');
+    if (!el) return;
+    el.textContent = message;
+    el.classList.add('is-visible');
+    window.clearTimeout(toast._timer);
+    toast._timer = window.setTimeout(function () { el.classList.remove('is-visible'); }, 3200);
+  }
+
+  /* ---------- navigation ---------- */
+  function showView(name) {
+    if (state.view === 'entrevista' && name !== 'entrevista') stopRecording();
+    state.view = name;
+
+    $$('.view').forEach(function (view) {
+      view.hidden = view.id !== 'view-' + name;
+    });
+
+    $$('.nav-item').forEach(function (button) {
+      const isActive = button.getAttribute('data-view') === name;
+      button.classList.toggle('is-active', isActive);
+      if (isActive) button.setAttribute('aria-current', 'page');
+      else button.removeAttribute('aria-current');
+    });
+
+    if (name === 'preparacao') renderPrep();
+    if (name === 'banco') renderQuestions();
+    if (name === 'historias') renderStories();
+    if (name === 'entrevista') renderInterview();
+    if (name === 'historico') renderHistory();
+    if (name === 'configuracao') renderSettings();
+
+    const titles = {
+      preparacao: 'Preparação',
+      banco: 'Banco de perguntas',
+      historias: 'Histórias',
+      entrevista: 'Entrevista',
+      historico: 'Histórico',
+      configuracao: 'Configuração IA'
+    };
+    document.title = titles[name] + ' · Tutor de entrevistas';
+
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+
+  /* ---------- session helpers ---------- */
+  function answeredCount() {
+    return state.session.results.filter(function (r) { return r === 'answered'; }).length;
+  }
+
+  function sessionIsActive() {
+    return state.session.status === 'active';
+  }
+
+  function stopRecording() {
+    state.recording = false;
+    if (state.timerId) {
+      window.clearInterval(state.timerId);
+      state.timerId = null;
+    }
+  }
+
+  function formatTimer(seconds) {
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+    return m + ':' + s;
+  }
+
+  function startTimer() {
+    stopRecording();
+    state.recording = true;
+    state.timerId = window.setInterval(function () {
+      state.timer += 1;
+      const el = $('#record-timer');
+      if (el) el.textContent = formatTimer(state.timer);
+    }, 1000);
+  }
+
+  function newSession() {
+    stopRecording();
+    state.timer = 0;
+    state.session = { status: 'active', current: 0, total: 3, results: [] };
+    renderSidebarSession();
+    showView('entrevista');
+    toast('Nova sessão iniciada.');
+  }
+
+  function requestNewSession() {
+    if (sessionIsActive()) {
+      openDialog($('#confirm-dialog'));
+      return;
+    }
+    newSession();
+  }
+
+  function finishSession() {
+    stopRecording();
+    state.session.status = 'completed';
+    renderInterview();
+    renderPrep();
+    toast('Sessão encerrada.');
+  }
+
+  function confirmAnswer() {
+    if (!sessionIsActive()) return;
+    stopRecording();
+    state.session.results.push('answered');
+    state.session.current = Math.min(state.session.current + 1, state.session.total);
+    state.timer = 0;
+    if (state.session.current >= state.session.total) {
+      state.session.status = 'completed';
+      renderInterview();
+      renderPrep();
+      toast('Sessão concluída. Veja o resumo.');
+      return;
+    }
+    renderInterview();
+    renderPrep();
+    toast('Resposta confirmada.');
+  }
+
+  function skipQuestion() {
+    if (!sessionIsActive()) return;
+    stopRecording();
+    state.session.results.push('skipped');
+    state.session.current = Math.min(state.session.current + 1, state.session.total);
+    state.timer = 0;
+    if (state.session.current >= state.session.total) {
+      state.session.status = 'completed';
+      renderInterview();
+      renderPrep();
+      toast('Sessão concluída.');
+      return;
+    }
+    renderInterview();
+    renderPrep();
+    toast('Pergunta pulada.');
+  }
+
+  /* ---------- preparação ---------- */
+  function renderPrep() {
+    const session = state.session;
+    const hero = $('#session-hero');
+    const action = $('#prep-action');
+
+    if (session.status === 'active') {
+      const total = session.total;
+      const done = session.results.length;
+      const answered = answeredCount();
+      const pct = Math.round((done / total) * 100);
+      hero.innerHTML =
+        '<div class="hero-main">' +
+          '<div class="hero-copy">' +
+            '<span class="hero-kicker"><span class="dot-live" aria-hidden="true"></span>Sessão em andamento</span>' +
+            '<h2>Retomar sessão</h2>' +
+            '<p>Sessão em curso: pergunta ' + (session.current + 1) + ' de ' + total + '. Categoria: todas as categorias.</p>' +
+          '</div>' +
+          '<button type="button" class="btn btn-inverse" data-action="resume">Retomar sessão</button>' +
+        '</div>' +
+        '<div class="hero-progress">' +
+          '<div class="progress" role="progressbar" aria-label="Progresso da sessão" aria-valuemin="0" aria-valuemax="' + total + '" aria-valuenow="' + done + '">' +
+            '<div class="progress-fill" style="--p:' + (pct / 100) + '"></div>' +
+          '</div>' +
+          '<div class="hero-stats">' +
+            '<div class="hero-stat"><span class="hero-stat-value">' + (session.current + 1) + ' de ' + total + '</span><span class="hero-stat-label">Pergunta atual</span></div>' +
+            '<div class="hero-stat"><span class="hero-stat-value">' + answered + '</span><span class="hero-stat-label">Respostas confirmadas</span></div>' +
+            '<div class="hero-stat"><span class="hero-stat-value">' + pct + '%</span><span class="hero-stat-label">Progresso</span></div>' +
+          '</div>' +
+        '</div>';
+      action.innerHTML = '<button type="button" class="btn btn-secondary" data-action="resume">Continuar sessão</button>';
+    } else {
+      const answered = answeredCount();
+      const wasCompleted = session.status === 'completed';
+      hero.innerHTML =
+        '<div class="hero-main">' +
+          '<div class="hero-copy">' +
+            '<span class="hero-kicker">' + (wasCompleted ? 'Sessão encerrada' : 'Pronto para começar') + '</span>' +
+            '<h2>' + (wasCompleted ? 'Última sessão concluída' : 'Seu próximo treino começa aqui') + '</h2>' +
+            '<p>' + (wasCompleted
+              ? 'Você confirmou ' + answered + ' de ' + session.total + ' respostas. Comece uma nova sessão para praticar outro conjunto de perguntas.'
+              : 'Escolha uma categoria, revise suas histórias e responda três perguntas em voz alta.') + '</p>' +
+          '</div>' +
+          '<button type="button" class="btn btn-inverse" data-action="start-session">Iniciar nova sessão</button>' +
+        '</div>' +
+        '<div class="hero-progress">' +
+          '<div class="hero-stats">' +
+            '<div class="hero-stat"><span class="hero-stat-value">' + state.questions.length + '</span><span class="hero-stat-label">Perguntas no banco</span></div>' +
+            '<div class="hero-stat"><span class="hero-stat-value">' + state.stories.length + '</span><span class="hero-stat-label">Histórias salvas</span></div>' +
+            '<div class="hero-stat"><span class="hero-stat-value">3</span><span class="hero-stat-label">Perguntas por sessão</span></div>' +
+          '</div>' +
+        '</div>';
+      action.innerHTML = '<button type="button" class="btn btn-primary" data-action="start-session">Iniciar nova sessão</button>';
+    }
+
+    const dbMeta = $('#db-meta');
+    if (dbMeta) {
+      dbMeta.textContent = state.questions.length + ' ' + plural(state.questions.length, 'pergunta', 'perguntas') + ' · ' +
+        state.stories.length + ' ' + plural(state.stories.length, 'história', 'histórias');
+    }
+    renderSidebarSession();
+  }
+
+  function renderSidebarSession() {
+    const box = $('#sidebar-session');
+    if (!box) return;
+    const session = state.session;
+    const hint = $('#nav-session-hint');
+
+    if (session.status === 'active') {
+      box.innerHTML =
+        '<div class="session-mini">' +
+          '<span class="session-mini-kicker"><span class="dot-live" aria-hidden="true"></span>Sessão em andamento</span>' +
+          '<span class="session-mini-title">Pergunta ' + (session.current + 1) + ' de ' + session.total + '</span>' +
+          '<span class="session-mini-meta">' + answeredCount() + ' ' + plural(answeredCount(), 'resposta confirmada', 'respostas confirmadas') + '</span>' +
+          '<button type="button" class="btn btn-secondary btn-sm" data-action="resume">Continuar</button>' +
+        '</div>';
+      if (hint) { hint.hidden = false; hint.textContent = (session.current + 1) + '/' + session.total; }
+    } else {
+      box.innerHTML =
+        '<div class="session-mini">' +
+          '<span class="session-mini-kicker">' + (session.status === 'completed' ? 'Sessão concluída' : 'Sem sessão ativa') + '</span>' +
+          '<span class="session-mini-title">' + (session.status === 'completed' ? 'Pronta para o próximo treino' : 'Comece quando quiser') + '</span>' +
+          '<span class="session-mini-meta">' + (session.status === 'completed' ? answeredCount() + ' de ' + session.total + ' respostas confirmadas' : 'Três perguntas por sessão') + '</span>' +
+          '<button type="button" class="btn btn-secondary btn-sm" data-action="start-session">Nova sessão</button>' +
+        '</div>';
+      if (hint) { hint.hidden = true; hint.textContent = ''; }
+    }
+  }
+
+  /* ---------- banco ---------- */
+  function renderChips() {
+    const wrap = $('#competence-chips');
+    if (!wrap) return;
+    const values = ['todas'].concat(competencies);
+    wrap.innerHTML = values.map(function (value) {
+      const active = state.filters.competence === value;
+      const label = value === 'todas' ? 'Todas' : value;
+      return '<button type="button" class="chip" data-action="filter-competence" data-value="' + esc(value) + '" aria-pressed="' + (active ? 'true' : 'false') + '">' + esc(label) + '</button>';
+    }).join('');
+  }
+
+  function filteredQuestions() {
+    const query = norm(state.filters.query).trim();
+    return state.questions.filter(function (q) {
+      const matchesCompetence = state.filters.competence === 'todas' || q.competence === state.filters.competence;
+      if (!matchesCompetence) return false;
+      if (!query) return true;
+      return norm(q.text).indexOf(query) !== -1 ||
+        norm(q.competence).indexOf(query) !== -1 ||
+        norm(q.criteria.join(' ')).indexOf(query) !== -1;
+    });
+  }
+
+  function renderQuestions() {
+    renderChips();
+    const list = $('#question-list');
+    const count = $('#question-count');
+    if (!list || !count) return;
+
+    const items = filteredQuestions();
+    count.textContent = items.length + ' ' + plural(items.length, 'pergunta', 'perguntas') + ' nesta vista';
+
+    if (!items.length) {
+      list.innerHTML =
+        '<div class="empty">' +
+          '<span class="empty-icon" aria-hidden="true">' + ICON.book + '</span>' +
+          '<h3>Nenhuma pergunta encontrada</h3>' +
+          '<p>Ajuste a busca ou remova o filtro de competência para ver o banco completo.</p>' +
+          '<button type="button" class="btn btn-secondary" data-action="clear-filters">Limpar filtros</button>' +
+        '</div>';
+      return;
+    }
+
+    list.innerHTML = items.map(function (q) {
+      const criteria = q.criteria.length
+        ? '<div class="q-criteria">' +
+            '<span class="meta-label">Critérios</span>' +
+            '<ul>' + q.criteria.map(function (c) { return '<li>' + esc(c) + '</li>'; }).join('') + '</ul>' +
+          '</div>'
+        : '';
+      return '<article class="q-card" data-id="' + esc(q.id) + '">' +
+        '<div class="q-head">' +
+          '<span class="tag">' + esc(q.competence) + '</span>' +
+          '<span class="version">Versão ' + q.version + '</span>' +
+        '</div>' +
+        '<h3 class="q-text">' + esc(q.text) + '</h3>' +
+        criteria +
+        '<div class="q-foot">' +
+          '<button type="button" class="btn btn-secondary btn-sm" data-action="edit-question" data-id="' + esc(q.id) + '">Editar</button>' +
+        '</div>' +
+      '</article>';
+    }).join('');
+  }
+
+  /* ---------- histórias ---------- */
+  function filteredStories() {
+    return state.stories.filter(function (story) {
+      return state.storyFilter === 'todas' || story.competence === state.storyFilter;
+    });
+  }
+
+  function renderStories() {
+    const list = $('#story-list');
+    const count = $('#story-count');
+    const select = $('#story-filter');
+    if (!list || !count) return;
+    if (select) select.value = state.storyFilter;
+
+    const items = filteredStories();
+    count.textContent = items.length + ' ' + plural(items.length, 'história', 'histórias') + ' nesta vista';
+
+    if (!items.length) {
+      const filtered = state.storyFilter !== 'todas';
+      list.innerHTML =
+        '<div class="empty">' +
+          '<span class="empty-icon" aria-hidden="true">' + ICON.book + '</span>' +
+          '<h3>' + (filtered ? 'Nenhuma história com essa competência' : 'Nenhuma história nesta vista') + '</h3>' +
+          '<p>' + (filtered
+            ? 'Remova o filtro ou registre uma história ligada a essa competência.'
+            : 'Histórias são notas locais sobre situações reais. Registre a primeira para responder com exemplos concretos.') + '</p>' +
+          (filtered
+            ? '<button type="button" class="btn btn-secondary" data-action="clear-story-filter">Remover filtro</button>'
+            : '<button type="button" class="btn btn-primary" data-action="new-story">Adicionar história</button>') +
+        '</div>';
+      return;
+    }
+
+    list.innerHTML = '<div class="q-list">' + items.map(function (story) {
+      return '<article class="q-card" data-id="' + esc(story.id) + '">' +
+        '<div class="q-head">' +
+          '<span class="tag">' + esc(story.competence) + '</span>' +
+          '<span class="version">Nota local</span>' +
+        '</div>' +
+        '<h3 class="q-text" style="font-size: 20px;">' + esc(story.title) + '</h3>' +
+        '<p style="font-size: 14px; color: var(--ink-soft); line-height: 1.6;">' + esc(story.note) + '</p>' +
+        '<div class="q-foot">' +
+          '<button type="button" class="btn btn-secondary btn-sm" data-action="edit-story" data-id="' + esc(story.id) + '">Editar</button>' +
+        '</div>' +
+      '</article>';
+    }).join('') + '</div>';
+  }
+
+  /* ---------- entrevista ---------- */
+  function renderInterview() {
+    const root = $('#interview-root');
+    if (!root) return;
+    const session = state.session;
+
+    if (session.status !== 'active') {
+      const answered = answeredCount();
+      const total = session.total;
+      const hasSession = session.status === 'completed';
+      root.innerHTML =
+        '<div class="card completion">' +
+          '<span class="completion-icon" aria-hidden="true">' + ICON.check + '</span>' +
+          '<h2>' + (hasSession ? 'Sessão concluída' : 'Nenhuma sessão ativa') + '</h2>' +
+          '<p>' + (hasSession
+            ? 'Você confirmou ' + answered + ' de ' + total + ' respostas nesta sessão. ' + (answered < total ? 'As perguntas puladas não entram na contagem.' : 'Bom trabalho — revise suas anotações e repita quando quiser.')
+            : 'Comece uma nova sessão para responder três perguntas em sequência.') + '</p>' +
+          '<div class="completion-actions">' +
+            '<button type="button" class="btn btn-primary" data-action="start-session">Nova sessão</button>' +
+            '<button type="button" class="btn btn-secondary" data-action="nav" data-view="historico">Ver histórico</button>' +
+          '</div>' +
+        '</div>';
+      return;
+    }
+
+    if (session.current >= session.total) {
+      session.status = 'completed';
+      renderInterview();
+      return;
+    }
+
+    const question = state.questions[session.current % state.questions.length];
+    const done = session.results.length;
+    const pct = Math.round((done / session.total) * 100);
+
+    const plan = state.questions.slice(0, session.total).map(function (item, index) {
+      const result = session.results[index];
+      const isCurrent = index === session.current;
+      const cls = result ? 'is-done' : (isCurrent ? 'is-current' : '');
+      const mark = result === 'answered' ? ICON.check : (result === 'skipped' ? '–' : String(index + 1));
+      const meta = result === 'answered' ? 'Respondida' : (result === 'skipped' ? 'Pulada' : (isCurrent ? 'Em andamento' : 'Pendente'));
+      return '<li class="plan-item ' + cls + '">' +
+        '<span class="plan-mark" aria-hidden="true">' + mark + '</span>' +
+        '<span class="plan-copy">' +
+          '<span class="plan-title">Pergunta ' + (index + 1) + '</span>' +
+          '<span class="plan-meta">' + meta + '</span>' +
+        '</span>' +
+      '</li>';
+    }).join('');
+
+    const recording = state.recording;
+    root.innerHTML =
+      '<div class="interview-grid">' +
+        '<article class="card session-card">' +
+          '<div class="session-top">' +
+            '<span class="eyebrow">Pergunta ' + (session.current + 1) + ' de ' + session.total + '</span>' +
+            '<span class="tag">' + esc(question.competence) + '</span>' +
+          '</div>' +
+          '<div class="progress" role="progressbar" aria-label="Progresso da sessão" aria-valuemin="0" aria-valuemax="' + session.total + '" aria-valuenow="' + done + '">' +
+            '<div class="progress-fill" style="--p:' + (pct / 100) + '"></div>' +
+          '</div>' +
+          '<h2 class="interview-question">' + esc(question.text) + '</h2>' +
+          '<p class="muted" style="font-size: 14px;">Responda em inglês, em voz alta. Estruture em situação, ação e resultado.</p>' +
+          '<div class="record-row">' +
+            '<button type="button" class="btn ' + (recording ? 'is-recording' : 'btn-secondary') + '" id="record-btn" data-action="record-toggle" aria-pressed="' + (recording ? 'true' : 'false') + '">' +
+              (recording ? '<span class="record-dot" aria-hidden="true"></span>' : ICON.mic) +
+              '<span>' + (recording ? 'Parar gravação' : 'Gravar resposta') + '</span>' +
+            '</button>' +
+            '<span class="timer" id="record-timer" aria-label="Tempo de gravação">' + formatTimer(state.timer) + '</span>' +
+          '</div>' +
+          '<div class="field">' +
+            '<label for="session-notes">Anotações da resposta</label>' +
+            '<textarea id="session-notes" rows="4" placeholder="Palavras-chave, números e o resultado que quer citar."></textarea>' +
+          '</div>' +
+          '<div class="actions">' +
+            '<button type="button" class="btn btn-ghost btn-danger-ghost" data-action="end-session">Encerrar sessão</button>' +
+            '<button type="button" class="btn btn-secondary" data-action="skip-question">Pular pergunta</button>' +
+            '<button type="button" class="btn btn-primary" data-action="confirm-answer">Confirmar resposta</button>' +
+          '</div>' +
+        '</article>' +
+        '<aside class="card">' +
+          '<h2>Roteiro da sessão</h2>' +
+          '<p class="card-lead">Três perguntas, cerca de 12 minutos.</p>' +
+          '<ol class="plan-list">' + plan + '</ol>' +
+        '</aside>' +
+      '</div>';
+  }
+
+  function updateRecordButton() {
+    const button = $('#record-btn');
+    if (!button) return;
+    button.setAttribute('aria-pressed', state.recording ? 'true' : 'false');
+    button.classList.toggle('is-recording', state.recording);
+    button.classList.toggle('btn-secondary', !state.recording);
+    button.innerHTML = (state.recording ? '<span class="record-dot" aria-hidden="true"></span>' : ICON.mic) +
+      '<span>' + (state.recording ? 'Parar gravação' : 'Gravar resposta') + '</span>';
+  }
+
+  function toggleRecording() {
+    if (!sessionIsActive()) return;
+    if (state.recording) {
+      stopRecording();
+      updateRecordButton();
+      toast('Gravação pausada.');
+    } else {
+      state.timer = state.timer || 0;
+      startTimer();
+      updateRecordButton();
+      toast('Gravando resposta…');
+    }
+  }
+
+  /* ---------- histórico ---------- */
+  function renderHistory() {
+    const list = $('#history-list');
+    if (!list) return;
+    list.innerHTML = state.history.map(function (item) {
+      const done = item.status === 'Concluída';
+      return '<div class="history-row">' +
+        '<div class="history-date">' +
+          '<span class="history-day">' + esc(item.day) + '</span>' +
+          '<span class="history-month">' + esc(item.month) + '</span>' +
+        '</div>' +
+        '<div class="history-main">' +
+          '<span class="history-title">' + esc(item.title) + '</span>' +
+          '<span class="history-meta">' + esc(item.meta) + '</span>' +
+        '</div>' +
+        '<span class="status-pill' + (done ? '' : ' is-muted') + '">' + esc(item.status) + '</span>' +
+        '<button type="button" class="btn btn-secondary btn-sm" data-action="start-session">Repetir</button>' +
+      '</div>';
+    }).join('');
+  }
+
+  /* ---------- configuração ---------- */
+  function renderSettings() {
+    const s = state.settings;
+    const provider = $('#setting-provider');
+    if (!provider) return;
+    provider.value = s.provider;
+    $('#setting-model').value = s.model;
+    $('#setting-voice').value = s.voice;
+    $('#setting-language').value = s.language;
+    $('#setting-notes').value = s.notes;
+    $('#setting-auto-eval').checked = s.autoEval;
+    $('#setting-transcribe').checked = s.transcribe;
+  }
+
+  function saveSettings() {
+    state.settings = {
+      provider: $('#setting-provider').value,
+      model: $('#setting-model').value.trim() || 'gpt-4.1-mini',
+      voice: $('#setting-voice').value,
+      language: $('#setting-language').value,
+      notes: $('#setting-notes').value.trim(),
+      autoEval: $('#setting-auto-eval').checked,
+      transcribe: $('#setting-transcribe').checked
+    };
+    const status = $('#settings-status');
+    if (status) status.textContent = 'Configuração aplicada nesta sessão.';
+    toast('Configuração salva.');
+  }
+
+  /* ---------- dialogs ---------- */
+  function openDialog(dialog) {
+    if (!dialog) return;
+    dialog._trigger = document.activeElement;
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+  }
+
+  function closeDialog(dialog) {
+    if (!dialog) return;
+    if (typeof dialog.close === 'function') dialog.close();
+    else dialog.removeAttribute('open');
+  }
+
+  function resetQuestionForm() {
+    state.editingQuestionId = null;
+    $('#question-form').reset();
+    $('#q-text-error').hidden = true;
+    $('#question-dialog-title').textContent = 'Nova pergunta';
+    $('#question-save').textContent = 'Salvar pergunta';
+  }
+
+  function resetStoryForm() {
+    state.editingStoryId = null;
+    $('#story-form').reset();
+    $('#s-title-error').hidden = true;
+    $('#s-note-error').hidden = true;
+    $('#story-dialog-title').textContent = 'Nova história';
+    $('#story-save').textContent = 'Salvar história';
+  }
+
+  function saveQuestion(event) {
+    event.preventDefault();
+    const text = $('#q-text').value.trim();
+    const competence = $('#q-competence').value;
+    const criteria = [$('#q-criteria-1').value.trim(), $('#q-criteria-2').value.trim()].filter(Boolean);
+
+    if (!text) {
+      $('#q-text-error').hidden = false;
+      $('#q-text').focus();
+      return;
+    }
+    $('#q-text-error').hidden = true;
+
+    if (state.editingQuestionId) {
+      const item = state.questions.find(function (q) { return q.id === state.editingQuestionId; });
+      if (item) {
+        item.text = text;
+        item.competence = competence;
+        item.criteria = criteria;
+        item.version += 1;
+      }
+      toast('Pergunta atualizada.');
+    } else {
+      state.questions.push({
+        id: 'q' + Date.now(),
+        text: text,
+        competence: competence,
+        version: 1,
+        criteria: criteria
+      });
+      toast('Pergunta adicionada.');
+    }
+
+    const editedId = state.editingQuestionId;
+    closeDialog($('#question-dialog'));
+    renderQuestions();
+    renderPrep();
+    if (editedId) {
+      const trigger = document.querySelector('[data-action="edit-question"][data-id="' + editedId + '"]');
+      if (trigger) trigger.focus();
+    }
+  }
+
+  function saveStory(event) {
+    event.preventDefault();
+    const title = $('#s-title').value.trim();
+    const competence = $('#s-competence').value;
+    const note = $('#s-note').value.trim();
+    let valid = true;
+
+    if (!title) { $('#s-title-error').hidden = false; valid = false; }
+    else { $('#s-title-error').hidden = true; }
+    if (!note) { $('#s-note-error').hidden = false; valid = false; }
+    else { $('#s-note-error').hidden = true; }
+    if (!valid) {
+      if (!title) $('#s-title').focus();
+      else $('#s-note').focus();
+      return;
+    }
+
+    if (state.editingStoryId) {
+      const item = state.stories.find(function (s) { return s.id === state.editingStoryId; });
+      if (item) {
+        item.title = title;
+        item.competence = competence;
+        item.note = note;
+      }
+      toast('História atualizada.');
+    } else {
+      state.stories.push({
+        id: 's' + Date.now(),
+        title: title,
+        competence: competence,
+        note: note
+      });
+      toast('História salva.');
+    }
+
+    const editedId = state.editingStoryId;
+    closeDialog($('#story-dialog'));
+    renderStories();
+    renderPrep();
+    if (editedId) {
+      const trigger = document.querySelector('[data-action="edit-story"][data-id="' + editedId + '"]');
+      if (trigger) trigger.focus();
+    }
+  }
+
+  /* ---------- availability ---------- */
+  function verifyEnvironment() {
+    const values = $$('.env-value');
+    const badge = $('#env-badge');
+    const buttons = $$('[data-action="verify-env"]');
+    buttons.forEach(function (b) { b.disabled = true; });
+    values.forEach(function (v) {
+      v.textContent = 'Verificando…';
+      v.classList.add('is-checking');
+    });
+    if (badge) { badge.textContent = 'Verificando'; badge.classList.add('is-checking'); }
+
+    window.setTimeout(function () {
+      values.forEach(function (v) {
+        v.textContent = 'Disponível';
+        v.classList.remove('is-checking');
+      });
+      if (badge) { badge.textContent = 'Pronto'; badge.classList.remove('is-checking'); }
+      buttons.forEach(function (b) { b.disabled = false; });
+      toast('Ambiente verificado: microfone e áudio prontos.');
+    }, 900);
+  }
+
+  /* ---------- events ---------- */
+  document.addEventListener('click', function (event) {
+    const trigger = event.target.closest('[data-action]');
+    if (!trigger) return;
+    const action = trigger.getAttribute('data-action');
+
+    switch (action) {
+      case 'nav':
+        showView(trigger.getAttribute('data-view'));
+        break;
+      case 'resume':
+        showView('entrevista');
+        break;
+      case 'start-session':
+        if (sessionIsActive() && state.session.results.length > 0) openDialog($('#confirm-dialog'));
+        else newSession();
+        break;
+      case 'confirm-new-session':
+        closeDialog($('#confirm-dialog'));
+        newSession();
+        break;
+      case 'verify-env':
+        verifyEnvironment();
+        break;
+      case 'reset-audio':
+        toast('Áudio local reiniciado.');
+        break;
+      case 'filter-competence':
+        state.filters.competence = trigger.getAttribute('data-value');
+        renderQuestions();
+        break;
+      case 'clear-filters':
+        state.filters.query = '';
+        state.filters.competence = 'todas';
+        $('#question-search').value = '';
+        renderQuestions();
+        break;
+      case 'clear-story-filter':
+        state.storyFilter = 'todas';
+        renderStories();
+        break;
+      case 'new-question':
+        resetQuestionForm();
+        openDialog($('#question-dialog'));
+        $('#q-text').focus();
+        break;
+      case 'edit-question': {
+        const id = trigger.getAttribute('data-id');
+        const item = state.questions.find(function (q) { return q.id === id; });
+        if (!item) break;
+        state.editingQuestionId = id;
+        $('#q-text').value = item.text;
+        $('#q-competence').value = item.competence;
+        $('#q-criteria-1').value = item.criteria[0] || '';
+        $('#q-criteria-2').value = item.criteria[1] || '';
+        $('#question-dialog-title').textContent = 'Editar pergunta';
+        $('#question-save').textContent = 'Salvar alterações';
+        $('#q-text-error').hidden = true;
+        openDialog($('#question-dialog'));
+        $('#q-text').focus();
+        break;
+      }
+      case 'new-story':
+        resetStoryForm();
+        openDialog($('#story-dialog'));
+        $('#s-title').focus();
+        break;
+      case 'edit-story': {
+        const id = trigger.getAttribute('data-id');
+        const item = state.stories.find(function (s) { return s.id === id; });
+        if (!item) break;
+        state.editingStoryId = id;
+        $('#s-title').value = item.title;
+        $('#s-competence').value = item.competence;
+        $('#s-note').value = item.note;
+        $('#story-dialog-title').textContent = 'Editar história';
+        $('#story-save').textContent = 'Salvar alterações';
+        $('#s-title-error').hidden = true;
+        $('#s-note-error').hidden = true;
+        openDialog($('#story-dialog'));
+        $('#s-title').focus();
+        break;
+      }
+      case 'close-dialog':
+        closeDialog(document.getElementById(trigger.getAttribute('data-dialog')));
+        break;
+      case 'record-toggle':
+        toggleRecording();
+        break;
+      case 'confirm-answer':
+        confirmAnswer();
+        break;
+      case 'skip-question':
+        skipQuestion();
+        break;
+      case 'end-session':
+        finishSession();
+        break;
+      default:
+        break;
+    }
+  });
+
+  document.addEventListener('input', function (event) {
+    if (event.target && event.target.id === 'question-search') {
+      state.filters.query = event.target.value;
+      renderQuestions();
+    }
+  });
+
+  document.addEventListener('change', function (event) {
+    if (event.target && event.target.id === 'story-filter') {
+      state.storyFilter = event.target.value;
+      renderStories();
+    }
+  });
+
+  $('#question-form').addEventListener('submit', saveQuestion);
+  $('#story-form').addEventListener('submit', saveStory);
+  $('#settings-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    saveSettings();
+  });
+
+  ['question-dialog', 'story-dialog', 'confirm-dialog'].forEach(function (id) {
+    const dialog = document.getElementById(id);
+    if (!dialog) return;
+    dialog.addEventListener('close', function () {
+      const trigger = dialog._trigger;
+      if (trigger && document.contains(trigger)) {
+        trigger.focus();
+        return;
+      }
+      const fallback = document.querySelector('#view-' + state.view + ' .page-head .btn');
+      if (fallback) fallback.focus();
+    });
+  });
+
+  /* ---------- init ---------- */
+  showView('preparacao');
+})();
+</script>
+</body>
+</html>

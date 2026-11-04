@@ -1,434 +1,363 @@
-:root {
-  color-scheme: light dark;
-
-  --page: #f4f1ea;
-  --surface: #fffdf8;
-  --surface-muted: #efece4;
-  --ink: #1f2420;
-  --ink-muted: #59615a;
-  --line: #cdc8bc;
-  --accent: #1f5c46;
-  --accent-ink: #ffffff;
-  --error-surface: #fbecea;
-  --error-line: #b42318;
-  --warning: #7a4b00;
-  --focus: #0b63c5;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --page: #141714;
-    --surface: #1c211d;
-    --surface-muted: #252b26;
-    --ink: #eef2ec;
-    --ink-muted: #b4bdb5;
-    --line: #3c453d;
-    --accent: #7fd0ad;
-    --accent-ink: #10221a;
-    --error-surface: #351b1a;
-    --error-line: #ff8f86;
-    --warning: #ffc46b;
-    --focus: #8ab8ff;
+@layer tokens, legacy, layout, collections;
+@layer legacy {
+  * {
+    box-sizing: border-box;
   }
-}
 
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  font-family:
-    "Segoe UI", "Segoe UI Variable", system-ui, -apple-system, sans-serif;
-  background: var(--page);
-  color: var(--ink);
-}
-
-.practice {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 2rem 1.25rem 5rem;
-  display: grid;
-  gap: 1rem;
-}
-
-.practice__header {
-  display: grid;
-  gap: 0.4rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid var(--line);
-}
-
-.practice__eyebrow {
-  margin: 0;
-  color: var(--ink-muted);
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.practice__question {
-  margin: 0;
-  font-size: clamp(1.35rem, 2.6vw, 1.9rem);
-  line-height: 1.3;
-  font-weight: 650;
-  text-wrap: balance;
-}
-
-.practice__panel,
-.practice__notice {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 1rem 1.1rem;
-}
-
-.practice__panel h2 {
-  margin: 0 0 0.75rem;
-  font-size: 1rem;
-  letter-spacing: 0.02em;
-}
-
-.practice__panel--error {
-  background: var(--error-surface);
-  border-color: var(--error-line);
-}
-
-.practice__notice--error {
-  background: var(--error-surface);
-  border-color: var(--error-line);
-}
-
-.practice__availability {
-  display: grid;
-  gap: 0.5rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.practice__availability li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.35rem 0.85rem;
-  padding: 0.45rem 0.6rem;
-  border-radius: 8px;
-  background: var(--surface-muted);
-}
-
-.practice__component {
-  font-weight: 600;
-}
-
-.practice__status {
-  font-size: 0.85rem;
-  font-weight: 600;
-  padding: 0.1rem 0.5rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-}
-
-.practice__status--missing,
-.practice__status--error {
-  border-color: var(--error-line);
-}
-
-.practice__hint {
-  color: var(--ink-muted);
-  font-size: 0.85rem;
-  margin: 0.35rem 0 0;
-}
-
-.practice__nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--line);
-}
-
-.practice__nav button[aria-current="page"] {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-
-.practice__page {
-  display: grid;
-  gap: 0.75rem;
-  align-content: start;
-}
-
-.practice__page h2 {
-  margin: 0;
-  font-size: 1.15rem;
-  letter-spacing: 0.01em;
-}
-
-.practice__form {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.practice__input,
-.practice__select {
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0.55rem 0.65rem;
-  background: var(--surface);
-  color: var(--ink);
-  font: inherit;
-}
-
-.practice__input:focus-visible,
-.practice__select:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 2px;
-}
-
-.practice__input:disabled,
-.practice__select:disabled {
-  opacity: 0.75;
-  cursor: not-allowed;
-}
-
-.practice__list {
-  display: grid;
-  gap: 0.75rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.practice__item {
-  display: grid;
-  gap: 0.35rem;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 0.85rem 0.95rem;
-  background: var(--surface-muted);
-}
-
-.practice__item h3 {
-  margin: 0;
-  font-size: 1rem;
-  line-height: 1.4;
-}
-
-.practice__meta {
-  margin: 0;
-  color: var(--ink-muted);
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.practice__sublist {
-  margin: 0.2rem 0 0;
-  padding-left: 1.2rem;
-  font-size: 0.9rem;
-  line-height: 1.5;
-}
-
-.practice__error-text {
-  margin: 0.35rem 0 0;
-  color: var(--error-line);
-  font-weight: 600;
-}
-
-.practice__state {
-  margin: 0.25rem 0;
-  font-weight: 600;
-}
-
-.practice__warning {
-  margin: 0.5rem 0 0;
-  color: var(--warning);
-  font-weight: 600;
-}
-
-.practice__field {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.practice__field + .practice__field {
-  margin-top: 1rem;
-}
-
-.practice__field label {
-  font-weight: 600;
-}
-
-.practice__textarea {
-  width: 100%;
-  resize: vertical;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0.65rem 0.75rem;
-  background: var(--surface);
-  color: var(--ink);
-  font: inherit;
-  line-height: 1.55;
-}
-
-.practice__textarea--raw {
-  background: var(--surface-muted);
-}
-
-.practice__textarea:disabled {
-  opacity: 0.75;
-  cursor: not-allowed;
-}
-
-.practice__review-status {
-  margin: 0.15rem 0 0;
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
-.practice__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.practice button {
-  min-height: 2.5rem;
-  padding: 0.5rem 0.9rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-muted);
-  color: var(--ink);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.practice button:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-.practice button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.practice button:focus-visible,
-.practice__textarea:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 2px;
-}
-
-.practice__errors {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 0.6rem;
-}
-
-.practice__errors p {
-  margin: 0;
-}
-
-.practice__decision {
-  position: fixed;
-  left: 50%;
-  bottom: 1.25rem;
-  transform: translateX(-50%);
-  width: min(640px, calc(100vw - 2rem));
-  padding: 1.1rem 1.25rem;
-  border: 1px solid var(--accent);
-  border-radius: 14px;
-  background: var(--surface);
-  box-shadow: 0 18px 40px rgb(0 0 0 / 0.22);
-  z-index: 10;
-}
-
-.practice__decision h2 {
-  margin: 0 0 0.4rem;
-  font-size: 1.05rem;
-}
-
-.practice__decision p {
-  margin: 0 0 0.75rem;
-}
-
-@media (min-width: 760px) {
   .practice {
-    grid-template-columns: 1fr 1fr;
-    align-items: start;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem 1.25rem 5rem;
+    display: grid;
+    gap: 1rem;
   }
 
-  .practice__header,
-  .practice__nav,
-  .practice__page,
-  .practice__notice,
-  .practice__panel--error,
+  .practice__question {
+    margin: 0;
+    font-size: clamp(1.35rem, 2.6vw, 1.9rem);
+    line-height: 1.3;
+    font-weight: 650;
+    text-wrap: balance;
+  }
+
+  .practice__panel,
+  .practice__notice {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 1rem 1.1rem;
+  }
+
+  .practice__panel h2 {
+    margin: 0 0 0.75rem;
+    font-size: 1rem;
+    letter-spacing: 0.02em;
+  }
+
+  .practice__panel--error {
+    background: var(--error-surface);
+    border-color: var(--error-line);
+  }
+
+  .practice__notice--error {
+    background: var(--error-surface);
+    border-color: var(--error-line);
+  }
+
+  .practice__availability {
+    display: grid;
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .practice__availability li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem 0.85rem;
+    padding: 0.45rem 0.6rem;
+    border-radius: 8px;
+    background: var(--surface-muted);
+  }
+
+  .practice__component {
+    font-weight: 600;
+  }
+
+  .practice__status {
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.1rem 0.5rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+
+  .practice__status--missing,
+  .practice__status--error {
+    border-color: var(--error-line);
+  }
+
+  .practice__hint {
+    color: var(--ink-muted);
+    font-size: 0.85rem;
+    margin: 0.35rem 0 0;
+  }
+
+  .practice__page {
+    display: grid;
+    gap: 0.75rem;
+    align-content: start;
+  }
+
+  .practice__page h2 {
+    margin: 0;
+    font-size: 1.15rem;
+    letter-spacing: 0.01em;
+  }
+
+  .practice__form {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .practice__input,
+  .practice__select {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.55rem 0.65rem;
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+  }
+
+  .practice__input:focus-visible,
+  .practice__select:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  .practice__input:disabled,
+  .practice__select:disabled {
+    opacity: 0.75;
+    cursor: not-allowed;
+  }
+
+  .practice__list {
+    display: grid;
+    gap: 0.75rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .practice__item {
+    display: grid;
+    gap: 0.35rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 0.85rem 0.95rem;
+    background: var(--surface-muted);
+  }
+
+  .practice__item h3 {
+    margin: 0;
+    font-size: 1rem;
+    line-height: 1.4;
+  }
+
+  .practice__meta {
+    margin: 0;
+    color: var(--ink-muted);
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+
+  .practice__sublist {
+    margin: 0.2rem 0 0;
+    padding-left: 1.2rem;
+    font-size: 0.9rem;
+    line-height: 1.5;
+  }
+
+  .practice__error-text {
+    margin: 0.35rem 0 0;
+    color: var(--error-line);
+    font-weight: 600;
+  }
+
+  .practice__state {
+    margin: 0.25rem 0;
+    font-weight: 600;
+  }
+
+  .practice__warning {
+    margin: 0.5rem 0 0;
+    color: var(--warning);
+    font-weight: 600;
+  }
+
+  .practice__field {
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .practice__field + .practice__field {
+    margin-top: 1rem;
+  }
+
+  .practice__field label {
+    font-weight: 600;
+  }
+
+  .practice__textarea {
+    width: 100%;
+    resize: vertical;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.65rem 0.75rem;
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    line-height: 1.55;
+  }
+
+  .practice__textarea--raw {
+    background: var(--surface-muted);
+  }
+
+  .practice__textarea:disabled {
+    opacity: 0.75;
+    cursor: not-allowed;
+  }
+
+  .practice__review-status {
+    margin: 0.15rem 0 0;
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+
+  .practice__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .practice button {
+    min-height: 2.5rem;
+    padding: 0.5rem 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface-muted);
+    color: var(--ink);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .practice button:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+
+  .practice button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .practice button:focus-visible,
+  .practice__textarea:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  .practice__errors {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 0.6rem;
+  }
+
+  .practice__errors p {
+    margin: 0;
+  }
+
   .practice__decision {
-    grid-column: 1 / -1;
+    position: fixed;
+    left: 50%;
+    bottom: 1.25rem;
+    transform: translateX(-50%);
+    width: min(640px, calc(100vw - 2rem));
+    padding: 1.1rem 1.25rem;
+    border: 1px solid var(--accent);
+    border-radius: 14px;
+    background: var(--surface);
+    box-shadow: 0 18px 40px rgb(0 0 0 / 0.22);
+    z-index: 10;
   }
 
-  .practice__panel--wide {
-    grid-column: 1 / -1;
+  .practice__decision h2 {
+    margin: 0 0 0.4rem;
+    font-size: 1.05rem;
   }
-}
 
-/* Fase 4: treino posterior, histórias, reformulação e comparação. */
-.practice__choice {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  margin-right: 1rem;
-  font-weight: 600;
-}
+  .practice__decision p {
+    margin: 0 0 0.75rem;
+  }
 
-.practice__choice input:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 2px;
-}
+  @media (min-width: 760px) {
+    .practice {
+      grid-template-columns: 1fr 1fr;
+      align-items: start;
+    }
 
-.practice__compare {
-  display: grid;
-  gap: 1rem;
-}
+    .practice__page,
+    .practice__notice,
+    .practice__panel--error,
+    .practice__decision {
+      grid-column: 1 / -1;
+    }
 
-.practice__notes {
-  display: grid;
-  gap: 0.5rem;
-  margin: 0.5rem 0;
-}
+    .practice__panel--wide {
+      grid-column: 1 / -1;
+    }
+  }
 
-.practice__notes dt {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--ink-muted);
-}
+  /* Fase 4: treino posterior, histórias, reformulação e comparação. */
+  .practice__choice {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-right: 1rem;
+    font-weight: 600;
+  }
 
-.practice__notes dd {
-  margin: 0;
-  white-space: pre-wrap;
-}
+  .practice__choice input:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
 
-.practice__page blockquote {
-  margin: 0.4rem 0;
-  padding-left: 0.75rem;
-  border-left: 3px solid var(--line);
-  overflow-wrap: anywhere;
-}
-
-.practice__page aside {
-  padding: 0.75rem;
-  border: 1px dashed var(--line);
-  border-radius: 8px;
-  background: var(--surface-muted);
-}
-
-@media (min-width: 760px) {
   .practice__compare {
-    grid-template-columns: 1fr 1fr;
+    display: grid;
+    gap: 1rem;
+  }
+
+  .practice__notes {
+    display: grid;
+    gap: 0.5rem;
+    margin: 0.5rem 0;
+  }
+
+  .practice__notes dt {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--ink-muted);
+  }
+
+  .practice__notes dd {
+    margin: 0;
+    white-space: pre-wrap;
+  }
+
+  .practice__page blockquote {
+    margin: 0.4rem 0;
+    padding-left: 0.75rem;
+    border-left: 3px solid var(--line);
+    overflow-wrap: anywhere;
+  }
+
+  .practice__page aside {
+    padding: 0.75rem;
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    background: var(--surface-muted);
+  }
+
+  @media (min-width: 760px) {
+    .practice__compare {
+      grid-template-columns: 1fr 1fr;
+    }
   }
 }
