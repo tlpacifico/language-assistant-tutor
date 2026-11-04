@@ -23,6 +23,8 @@ npm.cmd run tauri -- build --no-bundle
 
 ## O que muda no percurso
 
+Desde a alteração aprovada de 2026-11-04, a reformulação do original está também disponível durante uma entrevista IA, depois de encerrar o seguimento da pergunta, através de **Avaliar e sugerir melhorias**. O pedido avalia primeiro e só depois pede a reformulação; os resultados ficam separados e reutilizáveis. Se a avaliação terminar e a reformulação falhar, repetir só pede o que falta. Abrir ou retomar o painel não faz chamadas pagas. As práticas continuam a exigir sessão concluída. Ver [desenho](../superpowers/specs/2026-11-04-per-question-ai-coaching-design.md) e [validação](../ai-coaching/validation.md).
+
 - **Treino posterior** (a partir de uma pergunta confirmada de uma sessão concluída): ver a origem (resposta inicial, seguimento ou tentativa anterior), pedir uma reformulação em B1, B2 ou C1, ouvir a sugestão com Kokoro, abrir uma **prática** (nova tentativa) e comparar. B1 é o valor inicial; o nível é um objetivo de linguagem e não um diagnóstico CEFR.
 - Uma prática tem gravação, transcrição automática, revisão e confirmação próprias. Não reabre a sessão original, não altera `position` nem o contador de perguntas e nunca cria seguimento. Só existe uma prática não confirmada de cada vez e só se começa quando não há entrevista em curso. Pode ser retomada ou abandonada (sem eliminação).
 - **Avaliação da prática** e **reformulação** são pedidos explícitos, nunca automáticos ao confirmar, com uma chamada remota de cada vez e sem retries pagos automáticos. Os resultados válidos são imutáveis; um pedido repetido para a mesma origem/nível/versões reutiliza o resultado.

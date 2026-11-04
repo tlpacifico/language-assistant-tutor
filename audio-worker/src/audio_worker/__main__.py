@@ -153,6 +153,15 @@ def serve(
             except WorkerError as error:
                 _write_message(stdout, error_message(request.id, error))
             except Exception as error:  # falha inesperada: nunca fica em silencio
+                # Canal estruturado sem texto do erro, caminhos, nomes de
+                # utilizadores ou linhas de código. O supervisor só persiste isto.
+                frames = traceback.extract_tb(error.__traceback__)
+                own_frames = [frame for frame in frames if os.path.basename(frame.filename) in {"__main__.py", "engines.py", "protocol.py"}]
+                for frame in own_frames[-12:]:
+                    stderr.write("TUTOR_DIAGNOSTIC " + json.dumps({
+                        "component": "worker", "operation": request.op, "code": "UNEXPECTED",
+                        "durationMs": None, "file": os.path.basename(frame.filename), "line": frame.lineno,
+                    }) + "\n")
                 stderr.write(
                     f"falha ao processar {request.op} ({request.id}): "
                     f"{type(error).__name__}: {error}\n"

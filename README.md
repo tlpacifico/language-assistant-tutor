@@ -7,7 +7,9 @@ um banco de 20 perguntas, grava as respostas, reproduz o áudio, transcreve
 localmente com faster-whisper, permite rever e confirmar cada texto e guarda o
 histórico em SQLite. O modo local funciona no computador. O modo opcional com IA
 envia apenas o texto confirmado necessário para seguimentos e feedback através
-da API paga do OpenCode; as gravações permanecem locais.
+do OpenCode Go; as gravações permanecem locais. A integração Go foi autorizada em
+2026-11-04 para usar a mesma modalidade do Marlo Expenses; ver
+[preparação e validação](docs/opencode-go/validation.md).
 
 O contexto do produto, a stack e o plano das fases estão em
 [`docs/`](docs/) e em [`AGENTS.md`](AGENTS.md). A preparação real do ambiente

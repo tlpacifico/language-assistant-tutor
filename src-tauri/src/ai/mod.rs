@@ -12,6 +12,8 @@ pub use transport::*;
 pub use usage::*;
 pub use validation::*;
 pub type Result<T, E = AppError> = std::result::Result<T, E>;
+pub const OPENCODE_GO_BASE_URL: &str = "https://opencode.ai/inference/go/openai/v1";
+pub const OPENCODE_LEGACY_BASE_URL: &str = "https://opencode.ai/inference/openai/v1";
 pub fn failure(message: &str) -> AppError {
     let code = if message.contains("Credencial")
         || message.contains("credencial")
@@ -80,17 +82,9 @@ impl Default for AiSettingsView {
     fn default() -> Self {
         Self {
             version: 1,
-            base_url: "https://opencode.ai/inference/openai/v1".into(),
+            base_url: OPENCODE_GO_BASE_URL.into(),
             model: "deepseek-v4.1-flash".into(),
-            tariff: Some(Tariff {
-                model: "deepseek-v4.1-flash".into(),
-                currency: "USD".into(),
-                input_per_million: 0.30,
-                output_per_million: 1.20,
-                cached_input_per_million: Some(0.006),
-                observed_at: "2026-11-02".into(),
-                source_url: "https://opencode.ai/v2/docs/console/models/".into(),
-            }),
+            tariff: None,
             credential_configured: false,
             consent: None,
         }

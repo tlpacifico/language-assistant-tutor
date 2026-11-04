@@ -519,7 +519,7 @@ export function fakeInterviewClient(
   const client: InterviewClient = {
     loadAiSettings: vi.fn(async () => ({
       version: 1,
-      baseUrl: "https://opencode.ai/inference/openai/v1",
+      baseUrl: "https://opencode.ai/inference/go/openai/v1",
       model: "deepseek-v4.1-flash",
       tariff: null,
       credentialConfigured: false,
@@ -545,6 +545,9 @@ export function fakeInterviewClient(
     }),
     generateFeedback: vi.fn(async () => {
       throw new Error("Feedback não simulado");
+    }),
+    evaluateQuestion: vi.fn(async () => {
+      throw new Error("Avaliação individual não simulada");
     }),
     retryAiPublication: vi.fn(async () => {
       throw new Error("Publicação não simulada");

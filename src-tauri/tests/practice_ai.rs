@@ -109,6 +109,7 @@ impl AudioPort for Audio {
 /// `error`) e devolve uma reformulação ou um relatório válidos conforme a tarefa.
 struct Transport {
     calls: AtomicUsize,
+    conversations: Mutex<Vec<String>>,
     gate: Arc<tokio::sync::Notify>,
     script: Mutex<Vec<String>>,
 }
@@ -116,6 +117,7 @@ impl Transport {
     fn new(script: Vec<String>) -> Self {
         Self {
             calls: AtomicUsize::new(0),
+            conversations: Mutex::new(Vec::new()),
             gate: Arc::new(tokio::sync::Notify::new()),
             script: Mutex::new(script),
         }
@@ -126,6 +128,10 @@ impl AiTransport for Transport {
         &self,
         r: TransportRequest,
     ) -> Pin<Box<dyn Future<Output = Result<RemoteCompletion>> + Send>> {
+        self.conversations
+            .lock()
+            .unwrap()
+            .push(r.conversation_id.clone());
         let n = self.calls.fetch_add(1, Ordering::SeqCst);
         let mode = self
             .script
@@ -626,6 +632,10 @@ async fn evaluate_requires_confirmed_practice_and_report_is_not_regenerated() {
     assert!(report.report.is_some());
     assert_eq!(report.rubric_version.as_deref(), Some("star-text-v1"));
     assert_eq!(h.transport.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *h.transport.conversations.lock().unwrap(),
+        vec![practice.id.clone()]
+    );
 
     // O relatório válido não é regenerado.
     let again = h

@@ -1,5 +1,7 @@
 # Layout do tutor — 2026-11-04
 
+Alteração posterior no mesmo dia: a entrevista passou a incluir o painel «Avaliação e correções da IA», usando as classes e componentes existentes. A revisão de transcrição esclarece a sua finalidade opcional. Ver [validação funcional](../ai-coaching/validation.md); a matriz visual abaixo refere-se ao layout anterior a este painel e não constitui validação visual desta extensão.
+
 O layout foi adaptado a partir do [HTML fornecido](../Melhorar-layout-do-tutor/index.html), seguindo o [handoff](../Melhorar-layout-do-tutor/DESIGN-HANDOFF.md) e o [manifesto](../Melhorar-layout-do-tutor/DESIGN-MANIFEST.json). A implementação mantém React/TypeScript, os contratos Tauri e a persistência existentes. Um subagente tratou das coleções (banco, histórias e histórico); a estrutura, preparação, entrevista e integração foram executadas no agente principal.
 
 ## Sistema visual

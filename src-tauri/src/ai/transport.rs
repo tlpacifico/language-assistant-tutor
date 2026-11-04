@@ -6,6 +6,8 @@ pub struct TransportRequest {
     pub key: String,
     pub task: AiTask,
     pub sources: AiSources,
+    /// Identidade persistida da conversa; não regenerar por tentativa HTTP.
+    pub conversation_id: String,
 }
 #[derive(Clone, Debug)]
 pub struct RemoteCompletion {
@@ -56,6 +58,10 @@ fn complete_with_timeout(
     Box::pin(async move {
         let body = build_body(&request.settings, &request.task, &request.sources)?;
         let client = reqwest::Client::builder()
+            .user_agent(concat!(
+                "LanguageAssistantTutor/",
+                env!("CARGO_PKG_VERSION")
+            ))
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
             .timeout(timeout)
@@ -65,6 +71,10 @@ fn complete_with_timeout(
         let mut response = client
             .post(format!("{}/chat/completions", request.settings.base_url))
             .bearer_auth(request.key)
+            .header(
+                "x-opencode-session",
+                format!("language-tutor-{}", request.conversation_id),
+            )
             .json(&body)
             .send()
             .await
@@ -76,9 +86,21 @@ fn complete_with_timeout(
                 })
             })?;
         if !response.status().is_success() {
+            match response.status().as_u16() {
+                402 => return Err(AppError::new(
+                    "AI_BILLING",
+                    "Crédito indisponível no fornecedor (HTTP 402). Verifique o saldo e o estado da faturação.",
+                    true,
+                )),
+                403 => return Err(AppError::new(
+                    "AI_ACCESS",
+                    "Acesso recusado pelo fornecedor (HTTP 403). Verifique as permissões da chave e do modelo.",
+                    true,
+                )),
+                _ => {}
+            }
             return Err(failure(match response.status().as_u16() {
                 401 => "Credencial inválida.",
-                402 | 403 => "Acesso recusado ou saldo insuficiente.",
                 429 => "Limite do fornecedor; tente mais tarde.",
                 500..=599 => "Serviço indisponível; repetir pode ter novo custo.",
                 _ => "Resposta HTTP recusada.",
@@ -179,6 +201,7 @@ mod tests {
         };
         TransportRequest {
             settings,
+            conversation_id: "test-session".into(),
             key: "TEST-SECRET".into(),
             task: AiTask::FollowUp,
             sources: AiSources {
@@ -212,6 +235,42 @@ mod tests {
             .unwrap()
             .contains("Confirmed answer"));
         assert!(!raw.contains("audioPath"));
+    }
+    #[tokio::test]
+    async fn go_request_has_own_identity_stable_conversation_and_preserves_included_zero_cost() {
+        for conversation in ["session-one", "session-one", "practice-two"] {
+            let body = json!({"model":"deepseek-v4.1-flash","choices":[{"message":{"content":"{}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2,"cost":0,"opencode":{"billing_source":"go","allowance":0.01}}}).to_string();
+            let (url, captured, thread) = server("200 OK", body, "");
+            let mut input = request(format!("{url}/inference/go/openai/v1"));
+            input.conversation_id = conversation.into();
+            let response = HttpTransport.complete(input).await.unwrap();
+            thread.join().unwrap();
+            let raw = captured.lock().unwrap().to_ascii_lowercase();
+            assert!(raw.starts_with("post /inference/go/openai/v1/chat/completions "));
+            assert!(raw.contains(&format!(
+                "x-opencode-session: language-tutor-{conversation}\r\n"
+            )));
+            assert!(raw.contains("user-agent: languageassistanttutor/0.1.0\r\n"));
+            assert_eq!(response.usage.reported, Some(0.0));
+            assert_eq!(response.usage.billing_source.as_deref(), Some("go"));
+        }
+    }
+    #[tokio::test]
+    async fn billing_and_permission_failures_are_distinct_without_provider_content() {
+        for (status, code, hint) in [
+            ("402 Payment Required", "AI_BILLING", "faturação"),
+            ("403 Forbidden", "AI_ACCESS", "permissões"),
+        ] {
+            let (url, _, thread) =
+                server(status, "TEST-SECRET provider sensitive content".into(), "");
+            let error = HttpTransport.complete(request(url)).await.unwrap_err();
+            thread.join().unwrap();
+            assert_eq!(error.code, code);
+            assert!(error.message.contains(hint));
+            assert!(error.message.contains(&status[..3]));
+            assert!(!error.message.contains("TEST-SECRET"));
+            assert!(!error.message.contains("provider sensitive"));
+        }
     }
     #[tokio::test]
     async fn http_errors_are_safe_and_redirect_is_not_followed() {

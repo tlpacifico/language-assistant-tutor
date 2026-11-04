@@ -44,6 +44,9 @@ export default function AiSettings({ client }: { client: InterviewClient }) {
   return (
     <section className="practice__panel tutor-ai-settings">
       <h2>Configuração IA</h2>
+      {settings.baseUrl === "https://opencode.ai/inference/go/openai/v1" && (
+        <p>OpenCode Go — utiliza a subscrição associada à tua chave. O consumo e o custo seguem os valores devolvidos pelo fornecedor; um tarifário de referência não representa a mensalidade.</p>
+      )}
       <p>
         O áudio fica neste computador. Apenas o texto confirmado, a pergunta e
         os critérios seguem para o serviço externo. A retenção depende do
@@ -60,7 +63,7 @@ export default function AiSettings({ client }: { client: InterviewClient }) {
         />
       </label>
       <label>
-        Modelo pago
+        Modelo
         <input
           value={settings.model}
           disabled={busy}

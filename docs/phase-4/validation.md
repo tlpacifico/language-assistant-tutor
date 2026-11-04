@@ -1,5 +1,7 @@
 # Validação da fase 4
 
+Atualização de 2026-11-04: a reformulação do original após encerrar uma pergunta numa entrevista IA em curso tem evidências próprias na [validação do coaching](../ai-coaching/validation.md). As práticas continuam a exigir sessão concluída; a aceitação manual desta fase mantém-se pendente.
+
 Data: 2026-11-03. Estado: **implementada e verificada automaticamente; não aceite nem concluída.** A implementação foi autorizada pelo utilizador. Falta toda a validação humana (F4-16), a inferência paga real e a fidelidade semântica das reformulações. As pendências das fases [1](../phase-1/validation.md), [2](../phase-2/validation.md) e [3](../phase-3/validation.md) mantêm-se.
 
 Três níveis de evidência, que não se substituem:

@@ -1,11 +1,22 @@
 use language_assistant_tutor::ai::*;
 use serde_json::json;
+fn reference_tariff() -> Tariff {
+    Tariff {
+        model: "deepseek-v4.1-flash".into(),
+        currency: "USD".into(),
+        input_per_million: 0.30,
+        output_per_million: 1.20,
+        cached_input_per_million: Some(0.006),
+        observed_at: "2026-11-02".into(),
+        source_url: "https://opencode.ai/v2/docs/console/models/".into(),
+    }
+}
 #[test]
 fn cache_formula_and_unknown_usage() {
     let settings = AiSettingsView::default();
     let u = normalize_usage(
         &json!({"prompt_tokens":1000,"completion_tokens":100,"prompt_tokens_details":{"cached_tokens":200}}),
-        settings.tariff.as_ref(),
+        Some(&reference_tariff()),
         &settings.model,
     );
     assert!((u.estimated.unwrap() - 0.0003612).abs() < 1e-12);
@@ -30,7 +41,7 @@ fn explicit_zero_is_known_and_model_mismatch_has_no_estimate() {
     assert_eq!(
         normalize_usage(
             &json!({"prompt_tokens":1,"completion_tokens":1}),
-            s.tariff.as_ref(),
+            Some(&reference_tariff()),
             "other"
         )
         .estimated,
@@ -42,7 +53,7 @@ fn invalid_cache_cannot_make_negative_estimate() {
     let s = AiSettingsView::default();
     let u = normalize_usage(
         &json!({"prompt_tokens":1,"completion_tokens":1,"prompt_tokens_details":{"cached_tokens":5}}),
-        s.tariff.as_ref(),
+        Some(&reference_tariff()),
         &s.model,
     );
     assert_eq!(u.cache, None);

@@ -188,6 +188,11 @@ Configuração inicial proposta, verificada no catálogo e documentação oficia
 
 O fornecedor documenta que modelos gratuitos de chat são restritos a utilização dentro do OpenCode e podem responder 403 a clientes externos. Este desenho usa o modelo pago.
 
+> **Alteração de 2026-11-04:** a modalidade atual é OpenCode Go, com endpoint
+> `https://opencode.ai/inference/go/openai/v1/chat/completions`, após autorização
+> explícita do utilizador. Ver [desenho Go](2026-11-04-opencode-go-design.md) e
+> [validação](../../opencode-go/validation.md).
+
 A tabela consultada apresenta US$0,30 por milhão de tokens de entrada e US$1,20 de saída, com preço distinto para leitura de cache. Estes valores são uma referência datada, não uma garantia nem um preço fixo no código. Guardar a versão/data do tarifário usado na estimativa. Se não for possível distinguir tokens em cache, usar a tarifa de entrada normal como estimativa conservadora.
 
 Exemplo hipotético: 20.000 tokens de entrada e 4.000 de saída equivalem a US$0,0108, antes de outros encargos. Cem sessões iguais corresponderiam a US$1,08. Confirmar os valores na conta do fornecedor e medir sessões reais.

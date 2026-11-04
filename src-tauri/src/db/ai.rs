@@ -170,16 +170,33 @@ fn validate_outcome(a: &ReservedAttempt, result: &Result<RemoteCompletion>) -> R
 impl Database {
     pub fn ai_settings(&self) -> Result<AiSettingsView> {
         self.with_connection(|c| {
-            let raw: Option<String> = c
+            let tx = c.transaction().map_err(sql_error)?;
+            let raw: Option<String> = tx
                 .query_row("SELECT json FROM ai_settings WHERE id=1", [], |r| r.get(0))
                 .optional()
                 .map_err(sql_error)?;
-            match raw {
-                Some(s) => {
-                    serde_json::from_str(&s).map_err(|_| failure("Configuração IA inválida."))
+            let mut settings: AiSettingsView = match raw {
+                Some(s) => serde_json::from_str(&s).map_err(|_| failure("Configuração IA inválida."))?,
+                None => AiSettingsView::default(),
+            };
+            // Adaptação única da referência antiga autorizada pelo utilizador.
+            // As tentativas guardam snapshots próprios e não são reescritas.
+            let migrated: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM ai_receipts WHERE id='migration:opencode-go:v1')", [], |row| row.get(0)
+            ).map_err(sql_error)?;
+            if !migrated {
+                if settings.base_url == OPENCODE_LEGACY_BASE_URL && settings.model == "deepseek-v4.1-flash" {
+                    settings.base_url = OPENCODE_GO_BASE_URL.into();
+                    settings.version += 1;
+                    settings.consent = None;
+                    settings.tariff = None;
+                    let raw = serde_json::to_string(&settings).map_err(|_| failure("Configuração IA inválida."))?;
+                    tx.execute("UPDATE ai_settings SET version=?1,json=?2 WHERE id=1", params![settings.version as i64, raw]).map_err(sql_error)?;
                 }
-                None => Ok(AiSettingsView::default()),
+                tx.execute("INSERT INTO ai_receipts VALUES('migration:opencode-go:v1','settings_migration','opencode-go-v1',NULL)", []).map_err(sql_error)?;
             }
+            tx.commit().map_err(sql_error)?;
+            Ok(settings)
         })
     }
     pub fn ai_receipt_matches(&self, id: &str, kind: &str, payload: &str) -> Result<bool> {
@@ -266,9 +283,7 @@ json=excluded.json",
             text: c.text.clone(),
         }];
         if purpose == "feedback" {
-            if d.summary.status != crate::interview::SessionStatus::Completed {
-                return Err(failure("Termine a entrevista antes de pedir feedback."));
-            }
+            self.with_connection(|connection| require_advance(connection, question))?;
             if let Some(c) = q.follow_up.as_ref().and_then(|f| f.confirmation.as_ref()) {
                 answers.push(AiSource {
                     confirmation_id: c.id.clone(),

@@ -57,6 +57,7 @@ pub struct AppError {
 
 impl AppError {
     pub fn new(code: &str, message: impl Into<String>, retryable: bool) -> Self {
+        crate::diagnostics::record(crate::diagnostics::Event::new("rust", "error", code));
         Self {
             code: code.to_owned(),
             message: message.into(),

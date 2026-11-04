@@ -149,6 +149,7 @@ class Stub:
         self.stderr_lines = _as_int(scenario.get("stderrLines"))
         self.ignore_shutdown = _as_bool(scenario.get("ignoreShutdown"))
         self.fail_health = _as_bool(scenario.get("failHealth"))
+        self.reject_transcription = _as_bool(scenario.get("rejectTranscription"))
         self.crash_once = _as_bool(scenario.get("crashOnce"))
         self.non_json_once = _as_bool(scenario.get("nonJsonOnce"))
         self.extra_result_once = _as_bool(scenario.get("extraResultOnce"))
@@ -286,6 +287,9 @@ def handle_job(stub: Stub, request: dict[str, Any]) -> None:
     if stub.result_delay > 0:
         time.sleep(stub.result_delay)
 
+    if op == TRANSCRIBE and stub.reject_transcription:
+        write_message(error_message(request_id, "INVALID_AUDIO", "PRIVATE_WORKER_RESPONSE", True))
+        return
     payload = transcription_result() if op == TRANSCRIBE else synthesis_result(params)
     message = result_message(request_id, payload)
     write_message(message)

@@ -260,6 +260,14 @@ def test_unexpected_engine_failure_stays_inside_the_protocol():
     assert message["error"]["retryable"] is True
     # O rasto completo fica no diagnostico, nunca no stdout.
     assert "falha inesperada do motor" in diagnostics.getvalue()
+    structured = [line.removeprefix("TUTOR_DIAGNOSTIC ") for line in diagnostics.getvalue().splitlines() if line.startswith("TUTOR_DIAGNOSTIC ")]
+    assert structured
+    event = json.loads(structured[0])
+    assert event["component"] == "worker"
+    assert event["operation"] == "health"
+    assert event["code"] == "UNEXPECTED"
+    assert "falha inesperada do motor" not in json.dumps(event)
+    assert "test_protocol.py" not in json.dumps(event)
 
 
 def test_progress_and_error_helpers_shapes():

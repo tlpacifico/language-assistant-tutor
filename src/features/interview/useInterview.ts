@@ -256,12 +256,16 @@ function reconcileDraft(
   // seguintes são recusados por versão desatualizada: adota-se a versão
   // guardada e conserva-se o texto editado como alteração por guardar.
   if (saved && saved.version > draft.version) {
+    if (draft.text === draft.baseline) {
+      return fresh;
+    }
     return {
       ...draft,
       baseline: saved.text,
       version: saved.version,
       savedAt: saved.savedAt,
       sourceTranscriptId: draft.sourceTranscriptId ?? saved.sourceTranscriptId,
+      origin: draft.version === 0 ? fresh.origin : draft.origin,
     };
   }
   // Uma edição local nunca é substituída.

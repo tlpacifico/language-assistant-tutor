@@ -1,5 +1,9 @@
 # Validação da fase 3
 
+Modalidade atual, autorizada em 2026-11-04: [OpenCode Go](../opencode-go/validation.md), com identidade própria e sessão estável. Substitui o default por consumo do registo original, preservando pedidos históricos; não constitui aceitação manual da fase.
+
+Atualização de 2026-11-04: a avaliação por pergunta durante a entrevista e a reutilização no relatório final têm evidências próprias na [validação do coaching](../ai-coaching/validation.md). Esta extensão não altera as pendências de aceitação manual desta fase.
+
 Data: 2026-11-02. Estado: implementação verificada automaticamente; revisão técnica do coordenador concluída; aceitação manual pendente. A antecipação da fase 3 foi autorizada pelo utilizador; não aceita nem conclui as fases 1 e 2.
 
 ## Evidência automática
@@ -54,3 +58,5 @@ Não marcar a fase como concluída/aceite antes desta evidência. Build `--no-bu
 Revisão final do coordenador: correção da corrida de fecho conferida; execução independente final de scripts/verify.ps1 com 8/8 checks, saída 0 em 42,7 s (175 Rust, 57 React, 36 Python). O build final após a correção terminou com saída 0 em 1m18s; o arranque/fecho isolado terminou com código 0. Aceitação manual e inferência paga continuam pendentes.
 
 Configuração local em 2026-11-03: a pedido do utilizador, foi configurado o modelo deepseek-v4.1-flash e a base HTTPS do OpenCode. A chave foi guardada no Windows Credential Manager no alvo usado por keyring e a leitura foi verificada em memória, sem mostrar o segredo. A configuração pública foi persistida sem a chave. Não houve chamada de rede, inferência paga ou teste de saldo/autenticação no fornecedor. A autorização de envio de texto continua por confirmar na janela da aplicação.
+
+Em 2026-11-04 foi corrigida a apresentação de erros de pedidos e a distinção HTTP 402 (faturação) / 403 (acesso). O incidente real foi confirmado pelo utilizador como `Account.InsufficientFunds`; não foram feitas novas chamadas pagas. Ver [diagnóstico e validação](../diagnostics/validation.md#correção-de-faturação-e-erros-ocultos--2026-11-04).

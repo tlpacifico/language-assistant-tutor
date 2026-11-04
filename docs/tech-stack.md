@@ -67,18 +67,20 @@ Os modelos podem necessitar de rede na preparação inicial. Depois de disponív
 
 ## Fornecedor de IA textual
 
-Configuração de referência verificada em 2026-11-01:
+Configuração de referência atualizada por autorização do utilizador em 2026-11-04:
 
 | Parâmetro | Valor |
 | --- | --- |
-| Fornecedor | OpenCode, API de inferência paga. |
+| Fornecedor | OpenCode Go, API de inferência associada à subscrição. |
 | Modelo | `deepseek-v4.1-flash` |
-| Endpoint | `https://opencode.ai/inference/openai/v1/chat/completions` |
-| Catálogo | `https://opencode.ai/inference/v1/models` |
+| Endpoint | `https://opencode.ai/inference/go/openai/v1/chat/completions` |
+| Catálogo | `https://opencode.ai/inference/go/v1/models` |
 
 O tutor chama a API diretamente. Não depende de instalar o agente/CLI OpenCode. O modelo e a URL base ficam configuráveis; o MVP não depende das condições de acesso dos modelos gratuitos.
 
-A referência consultada indica US$0,30 por milhão de tokens de entrada e US$1,20 de saída, com tarifa própria para leitura de cache. Estes preços são datados e devem ser confirmados ao implementar e usar. Guardar o tarifário usado em cada estimativa.
+O cliente usa `User-Agent` próprio e `x-opencode-session` estável por entrevista ou prática, como a integração do Marlo Expenses. Não copia a sua chave nem identidade. A configuração antiga de referência é adaptada uma vez, preservando credencial e histórico e exigindo nova autorização para o destino Go. Ver [desenho](superpowers/specs/2026-11-04-opencode-go-design.md) e [validação](opencode-go/validation.md).
+
+O default Go não tem tarifário fixo: utilização incluída e mensalidade não são cobranças adicionais por pedido. O custo e consumo devolvidos pela API prevalecem; zero explícito é conhecido, ausência de custo continua desconhecida. Os tarifários anteriores permanecem nos snapshots históricos. Um tarifário manual continua possível e deve registar data/fonte.
 
 O registo de consumo inclui pedidos de seguimento, relatório, reformulação e avaliação de novas tentativas. Se o fornecedor não devolver consumo, apresentar como desconhecido. A estimativa não substitui a faturação do fornecedor.
 
@@ -101,6 +103,19 @@ Ver [preparação da fase 3](phase-3/setup.md) para contratos e limites concreto
 - Preservar o estado guardado ao reiniciar. Gravações ainda não finalizadas podem ter de ser refeitas.
 - Não bloquear a interface com inferência, conversão de áudio ou rede.
 - Eliminar ficheiros exclusivos ao eliminar uma sessão, preservando os modelos partilhados.
+
+## Diagnóstico local
+
+Acrescentado em 2026-11-04 para apoiar a utilização real. Usa apenas Rust/std,
+Serde e UUID já existentes, sem fornecedor de telemetria. Eventos JSONL em
+`app_data_dir()/diagnostics`, preservados entre versões, com fila limitada e
+escritor separado. Não guarda mensagens livres, credenciais ou conteúdos das
+entrevistas. O painel «Diagnóstico local» identifica versão/commit/data de build
+e exporta JSON para uma pasta indicada pelo utilizador. A identidade Tauri
+`dev.thacio.languageassistanttutor` permanece estável. Ver
+[desenho](superpowers/specs/2026-11-04-local-diagnostics-design.md),
+[plano](superpowers/plans/2026-11-04-local-diagnostics.md) e
+[validação](diagnostics/validation.md).
 
 ## Escolhas ainda por fechar
 

@@ -58,7 +58,7 @@ pub struct ExerciseSources {
 impl Database {
     /// Resolve as fontes de exercício de uma origem confirmada, sem rede.
     ///
-    /// A origem original exige sessão concluída e confirmação inicial; inclui a
+    /// A origem original exige sessão concluída ou pergunta IA encerrada e confirmação inicial; inclui a
     /// confirmação do seguimento quando existe. A origem de prática exige
     /// `status = confirmed` e devolve só a confirmação da tentativa (papel
     /// `attempt`). Nunca inclui notas de história, preparação ou relatórios.
@@ -644,9 +644,6 @@ fn load_original_sources(
         )
         .optional()
         .map_err(read_failed)?;
-    if status.as_deref() != Some("completed") {
-        return Err(session_not_completed());
-    }
     let (question_session_id, question_text, criteria_json): (String, String, String) = connection
         .query_row(
             "SELECT session_id, text, criteria_json FROM session_questions WHERE id = ?1",
@@ -658,6 +655,17 @@ fn load_original_sources(
         .ok_or_else(question_not_found)?;
     if question_session_id != session_id {
         return Err(question_mismatch());
+    }
+    if status.as_deref() != Some("completed") {
+        let mode: String = connection
+            .query_row("SELECT mode FROM sessions WHERE id=?1", [session_id], |r| {
+                r.get(0)
+            })
+            .map_err(read_failed)?;
+        if status.as_deref() != Some("in_progress") || mode != "ai_v3" {
+            return Err(session_not_completed());
+        }
+        super::ai::require_advance(connection, session_question_id)?;
     }
     let criteria = json_list(&criteria_json, "critérios")?;
 

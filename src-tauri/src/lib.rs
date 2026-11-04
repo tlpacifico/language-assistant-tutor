@@ -21,6 +21,8 @@ pub mod artifacts;
 pub mod audio;
 pub mod commands;
 pub mod db;
+pub mod diagnostics;
+mod diagnostics_commands;
 pub mod domain;
 pub mod interview;
 pub mod legacy;
@@ -69,6 +71,18 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
+            let diagnostics = diagnostics::Diagnostics::open(
+                data_dir.join("diagnostics"),
+                diagnostics::BuildInfo::current(),
+            );
+            diagnostics::install(diagnostics.clone());
+            app.manage(diagnostics_commands::DiagnosticState {
+                diagnostics,
+                default_directory: app
+                    .path()
+                    .download_dir()
+                    .unwrap_or_else(|_| data_dir.clone()),
+            });
             std::fs::create_dir_all(&data_dir)?;
             let legacy_root = data_dir.join("phase1");
             std::fs::create_dir_all(&legacy_root)?;
@@ -108,6 +122,11 @@ pub fn run() {
             let handle = app.handle().clone();
             service.subscribe(Arc::new(move |snapshot: &InterviewSnapshot| {
                 if let Err(error) = handle.emit(INTERVIEW_SNAPSHOT_EVENT, snapshot.clone()) {
+                    diagnostics::record(diagnostics::Event::new(
+                        "rust",
+                        "snapshot_publish",
+                        "UNEXPECTED",
+                    ));
                     eprintln!("Não foi possível publicar a fotografia da entrevista: {error}");
                 }
             }));
@@ -130,6 +149,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            diagnostics_commands::diagnostics_status,
+            diagnostics_commands::diagnostics_record,
+            diagnostics_commands::diagnostics_export,
             commands::interview_ai_load_ai_settings,
             commands::interview_ai_save_ai_settings,
             commands::interview_ai_save_ai_key,
@@ -138,6 +160,7 @@ pub fn run() {
             commands::interview_ai_request_follow_up,
             commands::interview_ai_waive_follow_up,
             commands::interview_ai_generate_feedback,
+            commands::interview_ai_evaluate_question,
             commands::interview_ai_load_feedback,
             commands::interview_ai_retry_ai_publication,
             commands::interview_snapshot,

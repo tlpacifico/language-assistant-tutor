@@ -53,6 +53,8 @@ as restantes escolhas de construção são propostas técnicas para revisão.
 
 ## 3. Ponto de partida e invariantes
 
+Alteração aprovada em 2026-11-04: a avaliação e reformulação do original podem ocorrer numa entrevista IA em curso, após confirmação e encerramento do seguimento da pergunta. A criação de práticas continua a exigir sessão concluída. Ver [desenho da alteração](2026-11-04-per-question-ai-coaching-design.md).
+
 O esquema SQLite v2 tem `answer_slots` para `initial`/`follow_up`, gravações,
 transcrições, revisões e confirmações. A unicidade por pergunta/papel impede
 adicionar repetições apenas reutilizando um papel. `ai_requests` é único por

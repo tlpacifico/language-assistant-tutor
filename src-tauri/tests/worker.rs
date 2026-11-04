@@ -30,6 +30,58 @@ use language_assistant_tutor::worker::{
 // Utilitários
 // ---------------------------------------------------------------------------
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn asynchronous_worker_rejection_is_persisted_without_private_message() {
+    // O logger global pertence ao ciclo de vida de um processo. Executar este
+    // cenário num processo próprio evita contaminar os restantes supervisores.
+    if std::env::var_os("TUTOR_DIAGNOSTIC_TEST_CHILD").is_none() {
+        let status = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "asynchronous_worker_rejection_is_persisted_without_private_message",
+                "--nocapture",
+            ])
+            .env("TUTOR_DIAGNOSTIC_TEST_CHILD", "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    use language_assistant_tutor::diagnostics::{self, BuildInfo, Diagnostics};
+    let logs = tempfile::tempdir().unwrap();
+    let diagnostics = Diagnostics::open(logs.path().join("logs"), BuildInfo::current());
+    diagnostics::install(diagnostics.clone());
+    let stub = Stub::new();
+    let config = stub.config_with(json!({"rejectTranscription": true}), test_deadlines());
+    let client = WorkerClient::start(config).unwrap();
+    let mut events = client.take_events().unwrap();
+    wait_health(&mut events, Duration::from_secs(10)).await;
+    client
+        .submit(
+            WorkerRequest::transcribe(
+                "diagnostic-rejection",
+                TranscribeParams::cpu(stub.path("response.wav"), stub.path("whisper")),
+                Duration::from_secs(1),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let (_, _, error) = wait_failed(&mut events, Duration::from_secs(10)).await;
+    assert_eq!(error.code, "INVALID_AUDIO");
+    let path = diagnostics.export(logs.path()).unwrap();
+    let text = fs::read_to_string(path).unwrap();
+    let value: Value = serde_json::from_str(&text).unwrap();
+    assert!(value["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|event| event["component"] == "worker"
+            && event["operation"] == "transcribe"
+            && event["code"] == "INVALID_AUDIO"));
+    assert!(!text.contains("PRIVATE_WORKER_RESPONSE"));
+    client.shutdown().unwrap();
+}
+
 /// Caminho do stub copiado do repositório.
 const STUB_SOURCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/worker_stub.py");
 
