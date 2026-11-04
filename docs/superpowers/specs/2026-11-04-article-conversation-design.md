@@ -1,6 +1,6 @@
 # Conversa sobre um artigo — desenho proposto
 
-Data: 2026-11-04. A direção funcional e o envio automático depois de terminar cada resposta foram aceites pelo utilizador. Este documento concretiza a proposta; aprovação do desenho e implementação pendentes. Não inicia a fase 5 nem altera a aceitação das fases anteriores.
+Data: 2026-11-04. A direção funcional e o envio automático depois de terminar cada resposta foram aceites pelo utilizador. Desenho aprovado explicitamente em 2026-11-04 («aprovo»). O [plano técnico](../plans/2026-11-04-article-conversation.md) concretiza a implementação, ainda não iniciada. Não inicia a fase 5 nem altera a aceitação das fases anteriores.
 
 ## Objetivo e decisões
 
