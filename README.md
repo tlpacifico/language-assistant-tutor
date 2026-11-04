@@ -114,7 +114,7 @@ de cada caminho.
 | Formatação Rust | `cargo fmt --manifest-path src-tauri/Cargo.toml` |
 | Lint Rust | `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` |
 | Compilar sem instalador (não é pacote autónomo) | `npm.cmd run tauri -- build --no-bundle` |
-| Instalador completo (fase 5) | `npm.cmd run tauri -- build` |
+| Gerar instaladores NSIS/MSI (release; instalação por validar) | `npm.cmd run tauri -- build` |
 | Criar o ambiente do auxiliar Python | `py -3.11 -m venv .venv` |
 | Preparar modelos offline (rede) | `.\.venv\Scripts\python.exe -m audio_worker.prepare --models-dir <pasta absoluta>` |
 | Testes do auxiliar Python | `.\.venv\Scripts\python.exe -m pytest audio-worker/tests -q` |
@@ -123,8 +123,8 @@ de cada caminho.
 
 `.\scripts\verify.ps1` executa typecheck, testes React, build Vite,
 `cargo fmt --check`, `clippy -D warnings`, testes Rust, pytest sem a marca
-`models` e `pip check`. Resultado real da verificação da fase 4: 8/8 checks com
-saída 0 (246 testes Rust, 97 Vitest, 36 pytest sem `models`); a duração depende
+`models` e `pip check`. Resultado real da verificação mais recente: 8/8 checks com
+saída 0 (270 testes Rust, 119 Vitest, 36 pytest sem `models`); a duração depende
 da cache de compilação e do Vitest a frio. O teste com a marca
 `models` é executado à parte, porque exige pesos preparados e um manifesto
 indicado por `LANGUAGE_TUTOR_MODELS_MANIFEST`; nesta máquina deu `2 passed`,
@@ -149,12 +149,13 @@ src/features/history/         Histórico de sessões e treinos da fase 1
 src/features/practice/        Treino posterior: prática, reformulação, comparação, consumo
 src/features/stories/         Banco de histórias locais e apoio à preparação
 src-tauri/src/                Domínio, SQLite, artefactos, áudio, worker, serviço, comandos
-src-tauri/tests/              246 testes de domínio, base, artefactos, áudio, worker, sessões, serviço
+src-tauri/tests/              270 testes de domínio, base, artefactos, áudio, worker, sessões, serviço
 contracts/                    Exemplos partilhados dos contratos v1 e v2
 config/audio.example.json     Configuração pessoal documentada (não versionar a real)
 audio-worker/                 Auxiliar Python (faster-whisper + Kokoro)
 docs/phase-1/                 setup.md e validation.md
 docs/phase-2/                 setup.md e validation.md
+docs/releases/                Notas, artefactos e pendências de cada release
 ```
 
 Os dados das sessões novas ficam em
@@ -189,7 +190,8 @@ revisão/confirmação, sair e retomar, histórico, sessão de uma pergunta,
 insuficiência, edição do banco, percurso offline e recuperação). Ver
 [`docs/phase-2/validation.md`](docs/phase-2/validation.md).
 
-A fase 3 (tutor com IA) está implementada e verificada automaticamente; a aceitação manual e a inferência paga real continuam pendentes. Ver [validação da fase 3](docs/phase-3/validation.md).
+A fase 3 (tutor com IA) está implementada e verificada automaticamente; a aceitação manual e a inferência paga real continuam pendentes. A integração passou a OpenCode Go em 2026-11-04. Ver [validação da fase 3](docs/phase-3/validation.md) e [validação Go](docs/opencode-go/validation.md).
 
+A fase 4 (melhorar e repetir) está implementada e verificada automaticamente; não está aceite: falta o roteiro manual F4-16 e a inferência real (fidelidade, utilidade, espera, custo). Ver [validação da fase 4](docs/phase-4/validation.md).
 
-A fase 4 está apenas documentada na [spec](docs/superpowers/specs/2026-11-03-phase-4-improve-repeat-design.md) e no [plano técnico](docs/superpowers/plans/2026-11-03-phase-4-improve-repeat-implementation.md), a pedido do utilizador em 2026-11-03. A implementação não está autorizada neste pedido nem foi iniciada.
+Em 2026-11-04 foi publicada a primeira release, [v0.1.0](docs/releases/v0.1.0.md), com instalador NSIS, MSI e executável portátil. O build dos instaladores e o smoke do binário passaram; a instalação empacotada, a atualização por cima de outra versão e a desinstalação continuam por validar.
