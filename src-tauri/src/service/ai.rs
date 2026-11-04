@@ -137,11 +137,14 @@ impl AppService {
     }
     pub async fn save_ai_key(&self, key: String) -> Result<AiSettingsView> {
         let _guard = self.transitions.lock().await;
-        if key.trim().is_empty() {
+        let key = key.trim().to_owned();
+        if key.is_empty() {
             return Err(failure("Introduza uma chave não vazia."));
         }
+        let destination = self.load_ai_settings().await?.base_url;
+        validate_credential(&destination, &key)?;
         let store = self.credentials.clone();
-        database_task(move || store.set(key.trim())).await?;
+        database_task(move || store.set(&key)).await?;
         self.load_ai_settings().await
     }
     pub async fn remove_ai_key(&self) -> Result<AiSettingsView> {
@@ -199,6 +202,7 @@ impl AppService {
         let key = database_task(move || store.get())
             .await?
             .ok_or_else(|| failure("Configure primeiro a chave protegida."))?;
+        validate_credential(&v.base_url, &key)?;
         Ok((v, key))
     }
     pub async fn request_follow_up(

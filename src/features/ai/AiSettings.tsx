@@ -150,6 +150,13 @@ export default function AiSettings({ client }: { client: InterviewClient }) {
           onChange={(e) => setKey(e.target.value)}
         />
       </label>
+      {settings.baseUrl.includes("opencode.ai") && (
+        <p className="practice__hint">
+          A chave da OpenCode começa por «oc_sk_» e só é mostrada uma vez, em
+          Account › Personal API keys do Console. Copie-a completa: chaves
+          expiradas ou revogadas devolvem HTTP 401.
+        </p>
+      )}
       <button
         disabled={busy || !key.trim()}
         onClick={() => void run(() => client.saveAiKey(key))}

@@ -100,7 +100,7 @@ fn complete_with_timeout(
                 _ => {}
             }
             return Err(failure(match response.status().as_u16() {
-                401 => "Credencial inválida.",
+                401 => "Credencial inválida (HTTP 401); o fornecedor recusou a chave. Substitua-a na Configuração IA.",
                 429 => "Limite do fornecedor; tente mais tarde.",
                 500..=599 => "Serviço indisponível; repetir pode ter novo custo.",
                 _ => "Resposta HTTP recusada.",

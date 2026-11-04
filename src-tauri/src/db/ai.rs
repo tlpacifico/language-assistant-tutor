@@ -98,7 +98,7 @@ pub(super) fn require_advance(c: &Connection, q: &str) -> Result<()> {
                 .map_err(sql_error)?;
         if !closed {
             return Err(failure(
-                "Resolva o seguimento: peça, repita ou dispense explicitamente antes de avançar.",
+                "Resolva o seguimento na secção «Seguimento IA»: peça, repita ou dispense explicitamente antes de avançar.",
             ));
         }
     }

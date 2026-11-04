@@ -49,6 +49,42 @@ nesse caso, confirmar na conta se a chave pertence à subscrição Go. Alterar a
 manualmente na configuração continua a apagar a chave guardada e a invalidar o
 consentimento — é o comportamento anterior, deliberadamente mantido.
 
+## Diagnóstico da credencial (2026-11-04)
+
+O utilizador reportou de novo `AI_CREDENTIAL` («Credencial inválida») e o bloqueio
+«Resolva o seguimento… antes de avançar». A investigação separou os dois factos:
+
+- A chave guardada no Windows Credential Manager tem o formato `sk_<uuid>` (39
+  caracteres, ASCII). As chaves do Console OpenCode têm o formato `oc_sk_...`
+  ([API Overview](https://opencode.ai/v2/docs/console/api/)). Uma chamada `GET`
+  direta a `https://opencode.ai/inference/go/v1/models` e a
+  `https://opencode.ai/inference/v1/models`, com o cabeçalho exatamente igual ao
+  que o tutor envia, devolveu **401** com `Invalid credential` nos dois destinos.
+  Logo, a causa é o valor da chave, não o pedido do tutor, o modelo, o cabeçalho
+  `x-opencode-session` nem o segmento `/go/`.
+- `AI_CREDENTIAL` aparece no painel de erros como último erro persistido da
+  sessão; quando é pedido o avanço antes de resolver o seguimento, surge
+  `AI_INVALID_RESULT`. Não são dois defeitos independentes: a falha do
+  seguimento impede o avanço até ser repetida ou dispensada.
+
+Alterações aplicadas para evitar a recorrência:
+
+- Uma chave guardada para o destino oficial (`opencode.ai`) passa a ser validada
+  no formato `oc_sk_…`; valores como `sk_<uuid>` são recusados ao guardar e
+  detetados localmente antes de qualquer pedido pago, sem `HTTP 401` e sem
+  custo. Destinos configuráveis mantêm o comportamento anterior.
+- O erro de `HTTP 401` passou a dizer que a chave foi recusada e onde a
+  substituir; a Configuração IA indica o formato e a origem da chave.
+- A recusa de avanço passou a indicar a secção «Seguimento IA», onde estão
+  «Repetir pedido de seguimento» e «Dispensar seguimento explicitamente»; o
+  painel do seguimento explica que dispensar desbloqueia o avanço quando a
+  causa é a chave.
+
+Continua por fazer a validação manual com uma chave `oc_sk_` real: obter a chave
+em Account › Personal API keys, substituir na Configuração IA, autorizar o
+destino Go e repetir o seguimento. Nenhum pedido pago foi feito nesta
+investigação.
+
 A documentação do [Go](https://opencode.ai/v2/docs/console/go/) apresenta o plano
 para agentes de programação. Essa condição foi comunicada antes da autorização.
 O tutor identifica-se honestamente e não imita tráfego ou identidade de outro

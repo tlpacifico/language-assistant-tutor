@@ -84,7 +84,8 @@ export default function AiStep({
       {stage === "failed" && (
         <p>
           Repetir pode gerar um novo custo se o fornecedor já processou o pedido
-          anterior.
+          anterior. Se a causa for a chave, substitua-a na Configuração IA;
+          também pode dispensar o seguimento para desbloquear o avanço.
         </p>
       )}
       {snapshot.pendingAiPublication && (

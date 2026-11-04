@@ -1,6 +1,30 @@
 use super::*;
 use serde_json::{json, Value};
 use std::collections::HashSet;
+/// Prefixo das chaves criadas no Console da OpenCode (pessoais ou de conta de
+/// serviço). Ver `https://opencode.ai/v2/docs/console/api`.
+pub const OPENCODE_KEY_PREFIX: &str = "oc_sk_";
+/// Recusa localmente uma chave que o destino oficial não pode aceitar, para não
+/// descobrir o 401 depois de preparar e enviar o texto.
+pub fn validate_credential(destination: &str, key: &str) -> Result<()> {
+    let host = reqwest::Url::parse(destination)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned));
+    if host.as_deref() != Some("opencode.ai") {
+        return Ok(());
+    }
+    let well_formed = key.starts_with(OPENCODE_KEY_PREFIX)
+        && key.len() > OPENCODE_KEY_PREFIX.len()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if well_formed {
+        return Ok(());
+    }
+    Err(failure(
+        "A chave da OpenCode começa por oc_sk_ e só é mostrada uma vez, em Account › Personal API keys do Console. Copie-a completa e volte a guardar.",
+    ))
+}
 pub(super) const DIMENSIONS: [&str; 6] = [
     "relevance",
     "situation",

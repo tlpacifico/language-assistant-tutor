@@ -44,6 +44,7 @@ describe("Tutor IA", () => {
     fireEvent.click(screen.getByText("Guardar chave protegida"));
     await screen.findByText("Falhou guardar");
     expect(field).toHaveValue("");
+    expect(screen.getByText(/oc_sk_/)).toBeVisible();
     expect(
       screen.getByText("https://opencode.ai/inference/go/openai/v1"),
     ).toBeVisible();

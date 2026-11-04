@@ -211,7 +211,7 @@ impl Harness {
     }
     async fn consent(&self) {
         self.service
-            .save_ai_key("TEST-SECRET".into())
+            .save_ai_key("oc_sk_test_secret_0001".into())
             .await
             .unwrap();
         let s = self.service.load_ai_settings().await.unwrap();
@@ -852,4 +852,50 @@ async fn closing_queued_before_batch_reservation_prevents_new_attempts() {
     h.done().await;
     assert_eq!(h.transport.calls.load(Ordering::SeqCst), 0);
     assert!(h.db.load_feedback(&id).unwrap().attempts.is_empty());
+}
+
+#[tokio::test]
+async fn opencode_key_must_have_the_documented_shape_to_be_stored() {
+    let h = Harness::new(1, vec![]).await;
+    let error = h
+        .service
+        .save_ai_key("sk_1a2b3c4d-5e6f-47a8-9b0c-1d2e3f4a5b6c".into())
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "AI_CREDENTIAL");
+    assert!(error.message.contains("oc_sk_"));
+    assert!(h.store.get().unwrap().is_none());
+    let saved = h
+        .service
+        .save_ai_key("oc_sk_abc123_def456".into())
+        .await
+        .unwrap();
+    assert!(saved.credential_configured);
+    assert_eq!(
+        h.store.get().unwrap().as_deref(),
+        Some("oc_sk_abc123_def456")
+    );
+}
+
+#[tokio::test]
+async fn stored_legacy_key_is_refused_locally_before_any_http_call() {
+    let h = Harness::new(1, vec![]).await;
+    h.store
+        .set("sk_1a2b3c4d-5e6f-47a8-9b0c-1d2e3f4a5b6c")
+        .unwrap();
+    let current = h.service.load_ai_settings().await.unwrap();
+    h.service
+        .accept_ai_consent(AcceptAiConsent {
+            request_id: "legacy-key".into(),
+            expected_settings_version: current.version,
+            destination: current.base_url,
+            notice_version: "text-external-v1".into(),
+        })
+        .await
+        .unwrap();
+    h.answer().await;
+    let error = h.service.request_follow_up(h.command()).await.unwrap_err();
+    assert_eq!(error.code, "AI_CREDENTIAL");
+    assert!(error.message.contains("oc_sk_"));
+    assert_eq!(h.transport.calls.load(Ordering::SeqCst), 0);
 }

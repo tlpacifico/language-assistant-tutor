@@ -419,7 +419,7 @@ impl Harness {
 
     async fn consent(&self) {
         self.service
-            .save_ai_key("TEST-SECRET".into())
+            .save_ai_key("oc_sk_test_secret_0001".into())
             .await
             .unwrap();
         let s = self.service.load_ai_settings().await.unwrap();
