@@ -201,7 +201,7 @@ fn fresh_database_has_version_two() {
         .expect("ler o esquema criado");
 
     assert_eq!(report.0, i64::from(DATABASE_VERSION));
-    assert_eq!(report.0, 3, "a migração deve fixar user_version = 3");
+    assert_eq!(report.0, 4, "a migração deve fixar user_version = 4");
     assert_eq!(report.1, 1, "foreign_keys deve ficar ativo");
     assert_eq!(report.2, 3000, "busy_timeout deve ser 3000 ms");
     assert_eq!(report.3, 2, "synchronous deve ser FULL (2)");
