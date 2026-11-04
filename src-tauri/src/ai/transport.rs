@@ -250,7 +250,10 @@ mod tests {
             assert!(raw.contains(&format!(
                 "x-opencode-session: language-tutor-{conversation}\r\n"
             )));
-            assert!(raw.contains("user-agent: languageassistanttutor/0.1.0\r\n"));
+            assert!(raw.contains(&format!(
+                "user-agent: languageassistanttutor/{}\r\n",
+                env!("CARGO_PKG_VERSION")
+            )));
             assert_eq!(response.usage.reported, Some(0.0));
             assert_eq!(response.usage.billing_source.as_deref(), Some("go"));
         }

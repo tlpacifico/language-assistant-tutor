@@ -131,7 +131,7 @@ de cada caminho.
 `.\scripts\verify.ps1` executa typecheck, testes React, build Vite,
 `cargo fmt --check`, `clippy -D warnings`, testes Rust, pytest sem a marca
 `models` e `pip check`. Resultado real da verificação mais recente: 8/8 checks com
-saída 0 (270 testes Rust, 119 Vitest, 36 pytest sem `models`); a duração depende
+saída 0 (275 testes Rust, 120 Vitest, 39 pytest sem `models`); a duração depende
 da cache de compilação e do Vitest a frio. O teste com a marca
 `models` é executado à parte, porque exige pesos preparados e um manifesto
 indicado por `LANGUAGE_TUTOR_MODELS_MANIFEST`; nesta máquina deu `2 passed`,
@@ -156,7 +156,7 @@ src/features/history/         Histórico de sessões e treinos da fase 1
 src/features/practice/        Treino posterior: prática, reformulação, comparação, consumo
 src/features/stories/         Banco de histórias locais e apoio à preparação
 src-tauri/src/                Domínio, SQLite, artefactos, áudio, worker, serviço, comandos
-src-tauri/tests/              270 testes de domínio, base, artefactos, áudio, worker, sessões, serviço
+src-tauri/tests/               275 testes de domínio, base, artefactos, áudio, worker, sessões, serviço
 contracts/                    Exemplos partilhados dos contratos v1 e v2
 config/audio.example.json     Configuração pessoal documentada (não versionar a real)
 audio-worker/                 Auxiliar Python (faster-whisper + Kokoro)
@@ -202,3 +202,5 @@ A fase 3 (tutor com IA) está implementada e verificada automaticamente; a aceit
 A fase 4 (melhorar e repetir) está implementada e verificada automaticamente; não está aceite: falta o roteiro manual F4-16 e a inferência real (fidelidade, utilidade, espera, custo). Ver [validação da fase 4](docs/phase-4/validation.md).
 
 Em 2026-11-04 foi publicada a primeira release, [v0.1.0](docs/releases/v0.1.0.md), com instalador NSIS, MSI e executável portátil. O build dos instaladores e o smoke do binário passaram; a instalação empacotada, a atualização por cima de outra versão e a desinstalação continuam por validar.
+
+Ainda em 2026-11-04 foi publicada a [v0.2.0](docs/releases/v0.2.0.md): modelos de voz carregados ao abrir a entrevista (fim da espera da primeira reprodução/transcrição) e validação local da chave OpenCode `oc_sk_…` antes de qualquer pedido pago, com mensagens acionáveis para 401 e para o bloqueio do seguimento. Verificação 8/8 checks (275 Rust, 120 Vitest, 39 Python), build dos instaladores e smoke do portátil com saída 0. A instalação dos pacotes continua por validar e nenhum pedido pago foi feito.
