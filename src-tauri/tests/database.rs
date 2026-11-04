@@ -230,6 +230,14 @@ fn fresh_database_has_version_two() {
             "ai_settings",
             "ai_stages",
             "answer_slots",
+            "article_artifacts",
+            "article_branches",
+            "article_receipts",
+            "article_reports",
+            "article_requests",
+            "article_sessions",
+            "article_turns",
+            "article_versions",
             "command_receipts",
             "confirmations",
             "content_seeds",
@@ -251,7 +259,7 @@ fn fresh_database_has_version_two() {
             "story_versions",
             "transcripts",
         ],
-        "as tabelas das fases 2, 3 e 4 devem existir"
+        "as tabelas das fases 2, 3 e 4 e dos artigos devem existir"
     );
     assert_eq!(
         report.9, 1,
