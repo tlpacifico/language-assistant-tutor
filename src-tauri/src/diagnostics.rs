@@ -466,6 +466,7 @@ fn safe_code(code: &str) -> &str {
         "AI_CONSENT",
         "AI_LIMIT",
         "AI_INVALID_RESULT",
+        "ARTICLE_DELETED",
     ];
     if CODES.contains(&code) {
         code

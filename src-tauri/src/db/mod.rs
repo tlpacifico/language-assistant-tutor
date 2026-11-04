@@ -28,6 +28,7 @@ use crate::interview::Result;
 
 pub(crate) mod ai;
 mod answers;
+mod articles;
 mod operations;
 mod outputs;
 mod practice;
@@ -44,7 +45,7 @@ pub use rewrites::ExerciseSources;
 pub use stories::{missing_fields, validate_story_input, PreparationReservation};
 
 /// Versão do esquema escrita em `PRAGMA user_version`.
-pub const DATABASE_VERSION: u32 = 3;
+pub const DATABASE_VERSION: u32 = 4;
 
 /// Esquema inicial da fase 2, aplicado numa única transação.
 pub const MIGRATION_V1: &str = include_str!("migrations/001_guided_interview.sql");
@@ -54,6 +55,9 @@ pub const MIGRATION_V2: &str = include_str!("migrations/002_ai_tutor.sql");
 
 /// Migração da fase 4 (melhorar e repetir).
 pub const MIGRATION_V3: &str = include_str!("migrations/003_improve_repeat.sql");
+
+/// Migração da conversa sobre artigos.
+pub const MIGRATION_V4: &str = include_str!("migrations/004_article_conversation.sql");
 
 /// Ligação SQLite partilhável. Os clones referem a mesma ligação protegida.
 #[derive(Clone)]
@@ -80,18 +84,24 @@ impl Database {
     /// [`MIGRATION_V3`]; os testes de rollback injetam um esquema inválido para
     /// provar que a transação reverte.
     pub fn open_with_schema(path: PathBuf, schema: &str) -> Result<Self> {
-        Self::open_with_migrations(path, schema, MIGRATION_V2, MIGRATION_V3)
+        Self::open_with_migrations(path, schema, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4)
     }
 
-    /// Abre a base com as três migrações explícitas, sem aplicar o banco de perguntas.
+    /// Abre a base com as quatro migrações explícitas, sem aplicar o banco de perguntas.
     ///
-    /// Suporta vazio→v1→v2→v3, v1→v2→v3 e v2→v3, cada abertura numa única
+    /// Suporta qualquer versão anterior até v4, cada abertura numa única
     /// transação. A versão é lida antes de qualquer escrita; uma versão futura é
     /// recusada sem alterar nada. As chaves estrangeiras ficam desativadas
     /// apenas durante a transação de migração e voltam a ativar-se em todos os
     /// caminhos; `foreign_key_check` é verificada antes do commit. Uma falha
     /// reverte dados e `user_version`.
-    pub fn open_with_migrations(path: PathBuf, v1: &str, v2: &str, v3: &str) -> Result<Self> {
+    pub fn open_with_migrations(
+        path: PathBuf,
+        v1: &str,
+        v2: &str,
+        v3: &str,
+        v4: &str,
+    ) -> Result<Self> {
         let mut connection = Connection::open(&path).map_err(open_failed)?;
 
         // A versão é lida antes de qualquer alteração persistente.
@@ -124,6 +134,9 @@ impl Database {
                 }
                 if version <= 2 {
                     tx.execute_batch(v3).map_err(migration_failed)?;
+                }
+                if version <= 3 {
+                    tx.execute_batch(v4).map_err(migration_failed)?;
                 }
                 let bad = tx
                     .prepare("PRAGMA foreign_key_check")
