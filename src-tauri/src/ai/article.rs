@@ -198,7 +198,7 @@ fn exact_keys(value: &Value, keys: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn bounded<'a>(value: &'a Value, max_chars: usize) -> Result<&'a str> {
+fn bounded(value: &Value, max_chars: usize) -> Result<&str> {
     value
         .as_str()
         .map(str::trim)
