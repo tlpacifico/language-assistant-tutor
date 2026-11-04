@@ -95,6 +95,13 @@ Sem Python, `audio.json` ou modelos, a janela abre e indica o componente em
 falta; preparar a sessão, editar o banco, rever texto e consultar o histórico
 continuam disponíveis.
 
+Na primeira abertura de uma entrevista, a aplicação pede ao auxiliar que
+carregue os modelos de voz em segundo plano (Whisper e Kokoro). Nesta máquina
+são cerca de 10 s a quente e 14 s a frio, com um pico de ~1,7 GiB de memória;
+enquanto isso os botões de áudio esperam, em vez de falharem com o auxiliar
+ocupado. Depois do primeiro carregamento, os modelos ficam residentes no
+processo do auxiliar até a aplicação fechar.
+
 No primeiro arranque são criados `phase1\` e `tutor.sqlite3` na pasta de dados
 da aplicação; a pasta `sessions\` aparece na primeira gravação. Ver
 [`docs/phase-2/setup.md`](docs/phase-2/setup.md) para o formato e o significado

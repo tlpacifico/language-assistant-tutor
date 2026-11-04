@@ -17,9 +17,10 @@ PROTOCOL_VERSION = 1
 HEALTH = "health"
 TRANSCRIBE = "transcribe"
 SYNTHESIZE = "synthesize"
+PRELOAD = "preload"
 SHUTDOWN = "shutdown"
 
-OPERATIONS = (HEALTH, TRANSCRIBE, SYNTHESIZE, SHUTDOWN)
+OPERATIONS = (HEALTH, TRANSCRIBE, SYNTHESIZE, PRELOAD, SHUTDOWN)
 
 #: Etapas aceites nas mensagens de progresso.
 PROGRESS_STAGES = ("loading", "processing")

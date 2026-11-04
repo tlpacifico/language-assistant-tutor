@@ -109,6 +109,57 @@ def test_voice_and_text_cache_key():
     assert set(first_key) <= set("0123456789abcdef")
 
 
+def test_preload_loads_available_models_once_and_reports_ready(tmp_path: Path, monkeypatch):
+    manifest = write_manifest(tmp_path)
+    registry = EngineRegistry(manifest)
+    paths = registry.paths()
+    create_whisper_assets(paths)
+    create_kokoro_assets(paths)
+    monkeypatch.setattr(engines, "missing_transcription_assets", lambda paths: [])
+    monkeypatch.setattr(engines, "missing_synthesis_assets", lambda paths: [])
+    loaded: list[str] = []
+    monkeypatch.setattr(
+        engines, "load_whisper_model", lambda path, **kwargs: loaded.append("whisper") or object()
+    )
+    monkeypatch.setattr(
+        engines, "load_kokoro_pipeline", lambda paths, **kwargs: loaded.append("kokoro") or object()
+    )
+    stages: list[str] = []
+
+    states = registry.preload(stages.append)
+
+    assert stages == ["loading"]
+    assert loaded == ["whisper", "kokoro"]
+    assert states == {
+        "transcription": {"status": "ready", "message": None},
+        "synthesis": {"status": "ready", "message": None},
+    }
+
+    # Um segundo pedido não volta a construir os modelos.
+    registry.preload(lambda stage: None)
+    assert loaded == ["whisper", "kokoro"]
+
+
+def test_preload_reports_missing_assets_without_loading(tmp_path: Path, monkeypatch):
+    registry = EngineRegistry(write_manifest(tmp_path))
+    monkeypatch.setattr(
+        engines, "missing_transcription_assets", lambda paths: ["Falta o modelo de transcrição."]
+    )
+    monkeypatch.setattr(engines, "missing_synthesis_assets", lambda paths: [])
+    loaded: list[str] = []
+    monkeypatch.setattr(
+        engines, "load_kokoro_pipeline", lambda paths, **kwargs: loaded.append("kokoro") or object()
+    )
+
+    states = registry.preload(lambda stage: None)
+
+    assert states["transcription"]["status"] == "missing"
+    assert "transcrição" in states["transcription"]["message"]
+    # A síntese disponível é carregada na mesma; a falha de uma não bloqueia a outra.
+    assert loaded == ["kokoro"]
+    assert states["synthesis"]["status"] == "ready"
+
+
 def test_missing_manifest_reports_both_components(tmp_path: Path, monkeypatch):
     registry = EngineRegistry(None)
 

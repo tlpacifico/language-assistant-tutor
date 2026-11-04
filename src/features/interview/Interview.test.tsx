@@ -341,6 +341,14 @@ describe("Interview", () => {
     expect(screen.queryByText(/pontuação|nota|feedback/i)).toBeNull();
   });
 
+  it("asks_the_worker_to_preload_models_once_per_session", async () => {
+    const { fake } = renderPage(recordedSnapshot());
+
+    await waitFor(() =>
+      expect(fake.client.preloadModels).toHaveBeenCalledTimes(1),
+    );
+  });
+
   it("save_does_not_enable_next_until_confirmation", async () => {
     const user = userEvent.setup();
     const base = recordedSnapshot();

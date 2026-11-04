@@ -49,6 +49,7 @@ PROTOCOL_VERSION = 1
 HEALTH = "health"
 TRANSCRIBE = "transcribe"
 SYNTHESIZE = "synthesize"
+PRELOAD = "preload"
 SHUTDOWN = "shutdown"
 
 SCENARIO_ENV = "LANGUAGE_TUTOR_STUB_SCENARIO"
@@ -252,6 +253,13 @@ def synthesis_result(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def preload_result() -> dict[str, Any]:
+    return {
+        "transcription": component("ready"),
+        "synthesis": component("ready"),
+    }
+
+
 def handle_job(stub: Stub, request: dict[str, Any]) -> None:
     request_id = str(request.get("id", ""))
     op = str(request.get("op", ""))
@@ -290,7 +298,13 @@ def handle_job(stub: Stub, request: dict[str, Any]) -> None:
     if op == TRANSCRIBE and stub.reject_transcription:
         write_message(error_message(request_id, "INVALID_AUDIO", "PRIVATE_WORKER_RESPONSE", True))
         return
-    payload = transcription_result() if op == TRANSCRIBE else synthesis_result(params)
+    payload = (
+        transcription_result()
+        if op == TRANSCRIBE
+        else preload_result()
+        if op == PRELOAD
+        else synthesis_result(params)
+    )
     message = result_message(request_id, payload)
     write_message(message)
     if stub.extra_result_once and stub.consume_once("extra"):

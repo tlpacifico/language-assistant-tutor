@@ -185,6 +185,7 @@ pub fn run() {
             commands::interview_restart_worker,
             commands::interview_prepare_close,
             commands::interview_retry_database,
+            commands::interview_preload_models,
             commands::interview_create_practice,
             commands::interview_load_practice,
             commands::interview_list_practices,

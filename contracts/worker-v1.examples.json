@@ -31,6 +31,12 @@
         "speed": 1.0
       }
     },
+        "preload": {
+      "protocolVersion": 1,
+      "id": "req-preload-1",
+      "op": "preload",
+      "params": {}
+    },
     "shutdown": {
       "protocolVersion": 1,
       "id": "req-shutdown-1",
@@ -39,6 +45,22 @@
     }
   },
   "responses": {
+        "preloadResult": {
+      "protocolVersion": 1,
+      "id": "req-preload-1",
+      "event": "result",
+      "ok": true,
+      "result": {
+        "transcription": {
+          "status": "ready",
+          "message": null
+        },
+        "synthesis": {
+          "status": "ready",
+          "message": null
+        }
+      }
+    },
     "healthResult": {
       "protocolVersion": 1,
       "id": "req-health-1",

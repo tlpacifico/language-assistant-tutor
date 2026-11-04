@@ -40,8 +40,8 @@ use protocol::{
 };
 
 pub use protocol::{
-    HealthResult, ShutdownResult, SynthesisResult, SynthesizeParams, TranscribeParams,
-    TranscriptionResult, WorkerResult,
+    HealthResult, PreloadResult, ShutdownResult, SynthesisResult, SynthesizeParams,
+    TranscribeParams, TranscriptionResult, WorkerResult,
 };
 
 /// Nome fixo do módulo do auxiliar instalado no ambiente virtual.
@@ -282,6 +282,11 @@ impl WorkerRequest {
         let mut request = Self::new(id, WorkerOp::Synthesize, params_value(&params)?);
         request.artifact = Some(params.output_path.clone());
         Ok(request)
+    }
+
+    /// Pedido `preload`: carrega os modelos disponíveis antes do primeiro uso.
+    pub fn preload(id: impl Into<String>) -> Self {
+        Self::new(id, WorkerOp::Preload, json!({}))
     }
 }
 
@@ -748,7 +753,9 @@ impl Supervisor {
         let window = match request.op {
             WorkerOp::Health => self.config.deadlines.handshake,
             WorkerOp::Shutdown => self.config.deadlines.shutdown,
-            WorkerOp::Transcribe | WorkerOp::Synthesize => self.config.deadlines.model_load,
+            WorkerOp::Transcribe | WorkerOp::Synthesize | WorkerOp::Preload => {
+                self.config.deadlines.model_load
+            }
         };
         self.used.insert(request.id.clone());
         self.busy.store(true, Ordering::SeqCst);
@@ -996,7 +1003,9 @@ impl Supervisor {
                             deadlines.transcription(pending.audio_duration.unwrap_or_default())
                         }
                         WorkerOp::Synthesize => deadlines.synthesis,
-                        WorkerOp::Health | WorkerOp::Shutdown => deadlines.model_load,
+                        WorkerOp::Health | WorkerOp::Preload | WorkerOp::Shutdown => {
+                            deadlines.model_load
+                        }
                     };
                     pending.deadline = Instant::now() + window;
                 }

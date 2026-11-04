@@ -80,6 +80,8 @@ export interface InterviewClient {
   waiveFollowUp(request: WaiveFollowUp): Promise<InterviewSnapshot>;
   generateFeedback(request: AiSessionCommand): Promise<FeedbackView>;
   evaluateQuestion(request: AiQuestionCommand): Promise<FeedbackView>;
+  /** Antecipa o carregamento dos modelos de voz; repetir quando já estão prontos é inofensivo. */
+  preloadModels(): Promise<InterviewSnapshot>;
   loadFeedback(id: string): Promise<FeedbackView>;
   retryAiPublication(id: string): Promise<InterviewSnapshot>;
   /** Fotografia atual, sem alterar o estado. */
@@ -242,6 +244,7 @@ export function createInterviewClient(): InterviewClient {
     stopAudio: () => invoke<InterviewSnapshot>("interview_stop_audio"),
     refreshAvailability: () =>
       invoke<InterviewSnapshot>("interview_refresh_availability"),
+    preloadModels: () => invoke<InterviewSnapshot>("interview_preload_models"),
     restartWorker: () => invoke<InterviewSnapshot>("interview_restart_worker"),
     prepareClose: () => invoke<InterviewSnapshot>("interview_prepare_close"),
     retryDatabase: () => invoke<InterviewSnapshot>("interview_retry_database"),

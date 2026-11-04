@@ -421,6 +421,55 @@ class EngineRegistry:
         except WorkerError:
             return WHISPER_MODEL_NAME
 
+    # -- antecipacao -------------------------------------------------------
+
+    def preload(self, progress: ProgressCallback) -> dict:
+        """Carrega os modelos disponiveis e devolve o estado de cada componente.
+
+        Nao falha por modelos em falta: ``health`` ja distingue ausente de pronto
+        e este pedido e apenas uma antecipacao do primeiro trabalho real.
+        """
+        progress("loading")
+        try:
+            paths = self.paths()
+        except ManifestError as error:
+            state = component_state(error.status, error.message)
+            return {"transcription": dict(state), "synthesis": dict(state)}
+
+        states: dict[str, dict] = {}
+
+        problems = missing_transcription_assets(paths)
+        if problems:
+            states["transcription"] = _state_from(problems)
+        else:
+            try:
+                self._whisper(str(paths.whisper_dir))
+            except Exception:
+                states["transcription"] = component_state(
+                    "error",
+                    "Não foi possível carregar o modelo de transcrição; execute de novo "
+                    "a preparação offline.",
+                )
+            else:
+                states["transcription"] = component_state("ready")
+
+        problems = missing_synthesis_assets(paths)
+        if problems:
+            states["synthesis"] = _state_from(problems)
+        else:
+            try:
+                self._kokoro(paths)
+            except Exception:
+                states["synthesis"] = component_state(
+                    "error",
+                    "Não foi possível carregar o modelo de voz; execute de novo "
+                    "a preparação offline.",
+                )
+            else:
+                states["synthesis"] = component_state("ready")
+
+        return states
+
     # -- transcricao -------------------------------------------------------
 
     def transcribe(self, params: Mapping[str, Any], progress: ProgressCallback) -> dict:

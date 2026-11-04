@@ -642,6 +642,7 @@ export function fakeInterviewClient(
     playAudio: vi.fn(async () => current),
     stopAudio: vi.fn(async () => current),
     refreshAvailability: vi.fn(async () => current),
+    preloadModels: vi.fn(async () => current),
     restartWorker: vi.fn(async () => current),
     prepareClose: vi.fn(async () => current),
     retryDatabase: vi.fn(async () => {

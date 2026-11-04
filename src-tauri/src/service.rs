@@ -402,6 +402,8 @@ pub struct AppService {
     pending_publish: Mutex<Option<PendingPublication>>,
     /// Pedido `health` em curso, para reportar uma falha de verificação.
     health_request: Mutex<Option<String>>,
+    /// Pedido `preload` em curso; evita repetir o carregamento dos modelos.
+    preload_request: Mutex<Option<String>>,
     /// Pedido de síntese em curso: identidade, cache esperada e destino.
     synthesis: Mutex<Option<PendingSynthesis>>,
     /// Coordenador serial: uma transição de cada vez.
@@ -443,6 +445,7 @@ impl AppService {
             capture: Mutex::new(None),
             pending_publish: Mutex::new(None),
             health_request: Mutex::new(None),
+            preload_request: Mutex::new(None),
             synthesis: Mutex::new(None),
             transitions: tokio::sync::Mutex::new(()),
             listener: Mutex::new(None),
@@ -667,6 +670,53 @@ impl AppService {
         }
     }
 
+    /// Carrega os modelos de voz antes do primeiro uso.
+    ///
+    /// Chamado quando a entrevista abre: o carregamento corre enquanto o
+    /// utilizador lê a pergunta. Nunca espera por um trabalho em curso nem
+    /// repete um pedido pendente; falhas ficam no estado de disponibilidade,
+    /// sem interromper a entrevista.
+    pub async fn preload_models(&self) -> Result<InterviewSnapshot, AppError> {
+        let _transition = self.transitions.lock().await;
+        if self.lock_state().model_job.is_some() || self.lock_preload().is_some() {
+            return Ok(self.snapshot());
+        }
+        let ready = {
+            let state = self.lock_state();
+            state.availability.transcription.status == ComponentStatus::Ready
+                && state.availability.synthesis.status == ComponentStatus::Ready
+        };
+        if ready {
+            return Ok(self.snapshot());
+        }
+        let Some(control) = self.worker_control() else {
+            return Ok(self.snapshot());
+        };
+        if !control.is_running() {
+            return Ok(self.snapshot());
+        }
+
+        let request_id = format!("preload-{}", uuid::Uuid::new_v4());
+        let request = WorkerRequest::preload(request_id.clone());
+        match worker_task(move || control.submit(request)).await {
+            Ok(()) => {
+                *self.lock_preload() = Some(request_id);
+                Ok(self.commit(|state| {
+                    if state.availability.transcription.status != ComponentStatus::Ready {
+                        state.availability.transcription = ComponentState::loading();
+                    }
+                    if state.availability.synthesis.status != ComponentStatus::Ready {
+                        state.availability.synthesis = ComponentState::loading();
+                    }
+                }))
+            }
+            // Um trabalho do utilizador começou entretanto: o pedido de
+            // carregamento volta a ser tentado na próxima abertura.
+            Err(error) if error.code == error_code::BUSY => Ok(self.snapshot()),
+            Err(_) => Ok(self.snapshot()),
+        }
+    }
+
     /// Reinicia o auxiliar e reabre o áudio quando está livre.
     ///
     /// Reiniciar volta a amostrar a disponibilidade do microfone e da saída e
@@ -700,6 +750,7 @@ impl AppService {
             Ok(()) => {
                 let generation = control.generation();
                 *self.lock_health() = None;
+                *self.lock_preload() = None;
                 self.generation.store(generation, Ordering::SeqCst);
                 Ok(self.commit(|state| {
                     state.set_worker_generation(generation);
@@ -712,6 +763,7 @@ impl AppService {
                 // O reinício recusado substitui a verificação pendente: uma
                 // falha tardia dela não pode reescrever este erro.
                 *self.lock_health() = None;
+                *self.lock_preload() = None;
                 let shown = error.clone();
                 self.commit(|state| {
                     state.availability.transcription = error_state(&shown);
@@ -1021,6 +1073,16 @@ impl AppService {
                 self.apply_synthesis(request_id, generation, synthesis)
                     .await;
             }
+            WorkerResult::Preload(preload) => {
+                let current =
+                    generation != 0 && generation == self.generation.load(Ordering::SeqCst);
+                if current && self.clear_preload_request(request_id) {
+                    self.commit(|state| {
+                        state.availability.transcription = preload.transcription;
+                        state.availability.synthesis = preload.synthesis;
+                    });
+                }
+            }
             WorkerResult::Shutdown(_) => {}
         }
     }
@@ -1301,6 +1363,15 @@ impl AppService {
     }
 
     async fn apply_worker_failure(&self, request_id: &str, generation: u64, error: AppError) {
+        // Um `preload` também não é um `ModelJob`: sem este tratamento, os
+        // componentes ficariam em `loading` e os botões de áudio desativados.
+        if self.clear_preload_request(request_id) {
+            self.commit(|state| {
+                state.availability.transcription = error_state(&error);
+                state.availability.synthesis = error_state(&error);
+            });
+            return;
+        }
         // Uma verificação de disponibilidade não é um `ModelJob`: sem este
         // tratamento, a falha deixaria os componentes em `loading` para sempre.
         if self.clear_health_request(request_id) {
@@ -1411,6 +1482,7 @@ impl AppService {
             slot.error = None;
         }
         *self.lock_health() = None;
+        *self.lock_preload() = None;
         self.generation.store(generation, Ordering::SeqCst);
         self.commit(|state| {
             state.set_worker_generation(generation);
@@ -1531,6 +1603,23 @@ impl AppService {
         self.health_request
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    fn lock_preload(&self) -> std::sync::MutexGuard<'_, Option<String>> {
+        self.preload_request
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// Consome o pedido `preload` pendente quando o identificador coincide.
+    fn clear_preload_request(&self, request_id: &str) -> bool {
+        let mut pending = self.lock_preload();
+        if pending.as_deref() == Some(request_id) {
+            *pending = None;
+            true
+        } else {
+            false
+        }
     }
 
     fn lock_synthesis(&self) -> std::sync::MutexGuard<'_, Option<PendingSynthesis>> {

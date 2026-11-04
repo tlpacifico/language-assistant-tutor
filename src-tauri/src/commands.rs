@@ -221,6 +221,14 @@ pub async fn interview_retry_database(
     service.retry_database().await
 }
 
+/// Carrega os modelos de voz antes do primeiro uso, sem bloquear a interface.
+#[tauri::command]
+pub async fn interview_preload_models(
+    service: State<'_, Arc<AppService>>,
+) -> Result<InterviewSnapshot, AppError> {
+    service.preload_models().await
+}
+
 /// Cria uma prática a partir de uma pergunta confirmada de uma sessão concluída.
 #[tauri::command]
 pub async fn interview_create_practice(

@@ -23,6 +23,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub const HEALTH: &str = "health";
 pub const TRANSCRIBE: &str = "transcribe";
 pub const SYNTHESIZE: &str = "synthesize";
+pub const PRELOAD: &str = "preload";
 pub const SHUTDOWN: &str = "shutdown";
 
 /// Comprimento máximo do identificador de um pedido.
@@ -34,6 +35,7 @@ pub enum WorkerOp {
     Health,
     Transcribe,
     Synthesize,
+    Preload,
     Shutdown,
 }
 
@@ -43,6 +45,7 @@ impl WorkerOp {
             Self::Health => HEALTH,
             Self::Transcribe => TRANSCRIBE,
             Self::Synthesize => SYNTHESIZE,
+            Self::Preload => PRELOAD,
             Self::Shutdown => SHUTDOWN,
         }
     }
@@ -136,12 +139,22 @@ pub struct ShutdownResult {
     pub stopped: bool,
 }
 
+/// Resultado de `preload`: os estados de cada componente depois de carregar o
+/// que estava disponível. Não falha por modelos em falta — devolve o motivo.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreloadResult {
+    pub transcription: ComponentState,
+    pub synthesis: ComponentState,
+}
+
 /// Resultado final já validado de uma operação.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WorkerResult {
     Health(HealthResult),
     Transcription(TranscriptionResult),
     Synthesis(SynthesisResult),
+    Preload(PreloadResult),
     Shutdown(ShutdownResult),
 }
 
@@ -314,6 +327,7 @@ pub fn parse_result(op: WorkerOp, value: Value) -> Result<WorkerResult, AppError
         WorkerOp::Health => typed(value).map(WorkerResult::Health),
         WorkerOp::Transcribe => typed(value).map(WorkerResult::Transcription),
         WorkerOp::Synthesize => typed(value).map(WorkerResult::Synthesis),
+        WorkerOp::Preload => typed(value).map(WorkerResult::Preload),
         WorkerOp::Shutdown => typed(value).map(WorkerResult::Shutdown),
     }
 }
@@ -391,6 +405,33 @@ mod tests {
         )
         .expect("codificar shutdown");
         assert_eq!(encoded(&line), *shutdown);
+
+        let preload = &examples["requests"]["preload"];
+        let line = encode_request(
+            preload["id"].as_str().expect("id do exemplo"),
+            WorkerOp::Preload,
+            &json!({}),
+        )
+        .expect("codificar preload");
+        assert_eq!(encoded(&line), *preload);
+    }
+
+    #[test]
+    fn decodes_the_preload_example() {
+        let examples = examples();
+        let response = decode_response(&examples["responses"]["preloadResult"].to_string())
+            .expect("descodificar preload");
+        let WorkerResponse::Result { ok, result, .. } = response else {
+            panic!("preload devolve um resultado");
+        };
+        assert!(ok);
+        let parsed = parse_result(WorkerOp::Preload, result.expect("resultado presente"))
+            .expect("tipar preload");
+        let WorkerResult::Preload(preload) = parsed else {
+            panic!("preload produz PreloadResult");
+        };
+        assert_eq!(preload.transcription.status, ComponentStatus::Ready);
+        assert_eq!(preload.synthesis.status, ComponentStatus::Ready);
     }
 
     #[test]

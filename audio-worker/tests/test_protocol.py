@@ -43,7 +43,13 @@ def load_examples() -> dict:
 def test_protocol_examples():
     examples = load_examples()
     assert examples["protocolVersion"] == PROTOCOL_VERSION
-    assert set(examples["requests"]) == {"health", "transcribe", "synthesize", "shutdown"}
+    assert set(examples["requests"]) == {
+        "health",
+        "transcribe",
+        "synthesize",
+        "preload",
+        "shutdown",
+    }
 
     parsed = {}
     for op, message in examples["requests"].items():
@@ -64,6 +70,8 @@ def test_protocol_examples():
     assert " " in request.params["audioPath"]
     assert parsed["synthesize"].params["voice"] == "af_heart"
     assert parsed["synthesize"].params["speed"] == 1.0
+    # O carregamento antecipado não leva parâmetros.
+    assert parsed["preload"].params == {}
 
     for name, message in examples["responses"].items():
         assert message["protocolVersion"] == PROTOCOL_VERSION, name
@@ -214,6 +222,39 @@ def test_stdout_contains_only_json():
     # O ruido das bibliotecas foi desviado para stderr.
     assert "aviso de uma biblioteca qualquer" in diagnostics.getvalue()
     assert "barulho durante o carregamento" in diagnostics.getvalue()
+
+
+def test_preload_is_served_with_component_states():
+    class Registry:
+        def preload(self, progress):
+            progress("loading")
+            return {
+                "transcription": component_state("ready"),
+                "synthesis": component_state("missing", "Falta a voz af_heart."),
+            }
+
+    stdin = io.StringIO(
+        "\n".join(
+            [
+                json.dumps(
+                    {"protocolVersion": 1, "id": "req-preload-1", "op": "preload", "params": {}}
+                ),
+                json.dumps(load_examples()["requests"]["shutdown"]),
+                "",
+            ]
+        )
+    )
+    capture = io.StringIO()
+
+    code = worker_main.serve(stdin, capture, io.StringIO(), registry=Registry())
+
+    messages = [json.loads(line) for line in capture.getvalue().splitlines()]
+    assert code == 0
+    assert [message["event"] for message in messages] == ["progress", "result", "result"]
+    assert messages[1]["result"] == {
+        "transcription": {"status": "ready", "message": None},
+        "synthesis": {"status": "missing", "message": "Falta a voz af_heart."},
+    }
 
 
 def test_blank_lines_and_eof_produce_no_output(tmp_path: Path):

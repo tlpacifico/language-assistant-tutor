@@ -18,6 +18,7 @@ from typing import Any, Callable, TextIO
 
 from .protocol import (
     HEALTH,
+    PRELOAD,
     SHUTDOWN,
     SYNTHESIZE,
     TRANSCRIBE,
@@ -108,6 +109,8 @@ def _dispatch(registry: Any, op: str, params: dict, report_progress: Callable[[s
         return registry.transcribe(params, report_progress)
     if op == SYNTHESIZE:
         return registry.synthesize(params, report_progress)
+    if op == PRELOAD:
+        return registry.preload(report_progress)
     # ``parse_request`` so aceita operacoes conhecidas e ``shutdown`` sai antes.
     raise WorkerError(f"Operação não suportada: {op}.", code="WORKER_PROTOCOL")
 

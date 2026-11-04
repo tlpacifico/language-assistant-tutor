@@ -62,6 +62,7 @@ Nem os ficheiros de áudio nem o banco completo de histórias são enviados auto
 - Síntese: Kokoro-82M com uma voz inglesa e velocidade ajustável.
 - Guardar a gravação original separadamente de conversões e áudios sintetizados.
 - Preparar pesos e dependências com progresso visível ou seleção de ficheiros existentes, conforme o motor.
+- Carregamento antecipado desde 2026-11-04: ao abrir uma entrevista, a aplicação pede `preload` ao auxiliar e os modelos ficam residentes no processo (≈10 s a quente, ≈14 s a frio, pico de ~1,7 GiB nesta máquina). Os botões de áudio esperam enquanto a disponibilidade está em `loading`, em vez de receberem um pedido recusado por o auxiliar estar ocupado; o arranque da aplicação continua sem carregar pesos.
 
 Os modelos podem necessitar de rede na preparação inicial. Depois de disponíveis, transcrição e síntese funcionam localmente. A avaliação textual continua a depender da ligação à API.
 

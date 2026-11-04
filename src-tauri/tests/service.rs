@@ -41,8 +41,8 @@ use language_assistant_tutor::service::{
 };
 use language_assistant_tutor::worker::protocol::WorkerOp;
 use language_assistant_tutor::worker::{
-    HealthResult, SynthesisResult, TranscriptionResult, WorkerEvent, WorkerMessage, WorkerRequest,
-    WorkerResult,
+    HealthResult, PreloadResult, SynthesisResult, TranscriptionResult, WorkerEvent, WorkerMessage,
+    WorkerRequest, WorkerResult,
 };
 
 /// Segunda pergunta do banco inicial, mantida para sessões de duas perguntas.
@@ -3035,4 +3035,84 @@ async fn database_snapshot_is_ready_with_the_seeded_bank() {
 
     let ids: HashSet<String> = unique_ids(questions.iter().map(|question| question.id.clone()));
     assert_eq!(ids.len(), 2);
+}
+
+#[tokio::test]
+async fn preload_loads_models_once_and_publishes_the_component_states() {
+    let harness = Harness::new().await;
+
+    // Sem `health`, os componentes estão por verificar: o pedido antecipa o
+    // carregamento em vez de esperar pela primeira síntese ou transcrição.
+    let snapshot = harness
+        .service
+        .preload_models()
+        .await
+        .expect("pedido de carregamento aceite");
+    assert_eq!(
+        snapshot.availability.transcription.status,
+        ComponentStatus::Loading
+    );
+
+    let request = harness
+        .requests()
+        .into_iter()
+        .rfind(|request| request.op == WorkerOp::Preload)
+        .expect("pedido preload enviado ao auxiliar");
+    assert!(request.id.starts_with("preload-"));
+
+    harness
+        .service
+        .on_worker_event(WorkerEvent {
+            generation: 1,
+            message: WorkerMessage::Completed {
+                request_id: request.id,
+                result: WorkerResult::Preload(PreloadResult {
+                    transcription: ComponentState::ready(),
+                    synthesis: ComponentState::ready(),
+                }),
+            },
+        })
+        .await;
+
+    let warm = harness.snapshot();
+    assert_eq!(
+        warm.availability.transcription.status,
+        ComponentStatus::Ready
+    );
+    assert_eq!(warm.availability.synthesis.status, ComponentStatus::Ready);
+
+    // Com tudo pronto, abrir outra entrevista não volta a carregar os modelos.
+    harness
+        .service
+        .preload_models()
+        .await
+        .expect("segundo pedido aceite");
+    assert_eq!(
+        harness
+            .requests()
+            .iter()
+            .filter(|request| request.op == WorkerOp::Preload)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn preload_gives_way_when_the_worker_is_busy() {
+    let harness = Harness::new().await;
+    harness.worker.fail_next_submit_busy();
+
+    harness
+        .service
+        .preload_models()
+        .await
+        .expect("um auxiliar ocupado não é um erro para o pedido antecipado");
+
+    assert!(
+        harness
+            .requests()
+            .iter()
+            .all(|request| request.op != WorkerOp::Preload),
+        "o pedido recusado não fica registado"
+    );
 }

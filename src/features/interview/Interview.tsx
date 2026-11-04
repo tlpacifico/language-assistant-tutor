@@ -15,7 +15,7 @@ import QuestionCoaching from "../ai/QuestionCoaching";
  * aplicação para a decisão de guardar/descartar e para o fecho da janela.
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { AppError } from "../../lib/contracts";
 import { toAppError } from "../../lib/app-error";
@@ -154,6 +154,7 @@ export default function Interview({
   const advanceIntention = useRef<{ key: string; requestId: string } | null>(
     null,
   );
+  const preloadedSession = useRef<string | null>(null);
 
   const session = snapshot.activeSession;
   const current = activeAnswer(snapshot.current);
@@ -166,6 +167,26 @@ export default function Interview({
   const captureBusy = recording || finalizing;
   const modelJob = snapshot.modelJob;
   const last = session !== null && session.position >= session.count;
+  // O auxiliar carrega os modelos ao abrir a entrevista; enquanto isso os
+  // botões de áudio esperam, em vez de receberem um pedido recusado por ocupado.
+  const audioWarming =
+    snapshot.availability.transcription.status === "loading" ||
+    snapshot.availability.synthesis.status === "loading";
+
+  useEffect(() => {
+    const sessionId = session?.id;
+    if (!sessionId || question === null || preloadedSession.current === sessionId) {
+      return;
+    }
+    preloadedSession.current = sessionId;
+    void client
+      .preloadModels()
+      .then(onSnapshot)
+      .catch(() => {
+        // Antecipar o carregamento nunca interrompe a entrevista: a falha
+        // aparece na disponibilidade e o primeiro pedido real volta a tentar.
+      });
+  }, [client, onSnapshot, question, session?.id]);
 
   async function run(
     action: () => Promise<InterviewSnapshot>,
@@ -327,7 +348,8 @@ export default function Interview({
     );
   }
 
-  const canUseAudio = !captureBusy && busyAction === null && !closing;
+  const canUseAudio =
+    !captureBusy && busyAction === null && !closing && !audioWarming;
   const canRecord =
     question !== null &&
     confirmation === null &&
@@ -336,7 +358,8 @@ export default function Interview({
     !captureBusy &&
     modelJob === null &&
     busyAction === null &&
-    !closing;
+    !closing &&
+    !audioWarming;
   const canSaveOrConfirm = !captureBusy && busyAction === null && !closing;
   const playback = snapshot.playback;
   const errors: AppError[] = [];

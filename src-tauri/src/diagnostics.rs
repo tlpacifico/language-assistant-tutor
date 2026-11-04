@@ -531,6 +531,7 @@ const COMMANDS: &[&str] = &[
     "interview_load_session",
     "interview_load_training_usage",
     "interview_play_audio",
+    "interview_preload_models",
     "interview_prepare_close",
     "interview_refresh_availability",
     "interview_request_rewrite",
