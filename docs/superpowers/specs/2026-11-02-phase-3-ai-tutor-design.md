@@ -1,5 +1,7 @@
 # Fase 3 — Tutor com IA
 
+Alteração autorizada em 2026-11-04: a modalidade atual é OpenCode Go, substituindo o default por consumo deste desenho histórico. Headers, adaptação única da configuração e conservação de chave/histórico são definidos na [spec Go](2026-11-04-opencode-go-design.md); as restantes regras de confirmação, fontes e recuperação mantêm-se.
+
 Data: 2026-11-02  
 Estado: revista e aprovada tecnicamente pelo coordenador, por delegação do utilizador; implementação verificada automaticamente; revisão técnica do coordenador concluída; aceitação manual pendente.  
 Base: [fases](../plans/2026-11-01-star-interview-tutor-phases.md), [desenho aprovado](2026-11-01-star-interview-tutor-design.md), [stack](../../tech-stack.md) e [fase 2](2026-11-02-phase-2-guided-interview-design.md).
@@ -186,6 +188,8 @@ marcar resultado incerto e manter dados confirmados; não afirmar que a resposta
 remota foi guardada. Não apagar ou regravar o áudio como recuperação.
 
 ## 7. Contrato do feedback e evidências
+
+Alteração aprovada em 2026-11-04: a avaliação pode ser pedida por pergunta assim que a resposta esteja confirmada e o seguimento encerrado. A ação explícita pode pedir também uma reformulação pela infraestrutura da fase 4. O feedback final reutiliza esses relatórios. Os contratos e restantes garantias desta secção mantêm-se. Ver [desenho da alteração](2026-11-04-per-question-ai-coaching-design.md).
 
 No fim, «Gerar feedback» pede relatórios das perguntas que ainda não têm um
 relatório válido, sequencialmente. Cada pedido recebe pergunta/critérios e

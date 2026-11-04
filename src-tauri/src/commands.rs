@@ -412,6 +412,13 @@ pub async fn interview_ai_waive_follow_up(
     service.waive_follow_up(request).await
 }
 #[tauri::command]
+pub async fn interview_ai_evaluate_question(
+    request: AiQuestionCommand,
+    service: State<'_, Arc<AppService>>,
+) -> std::result::Result<FeedbackView, AppError> {
+    service.evaluate_question(request).await
+}
+#[tauri::command]
 pub async fn interview_ai_generate_feedback(
     request: AiSessionCommand,
     service: State<'_, Arc<AppService>>,

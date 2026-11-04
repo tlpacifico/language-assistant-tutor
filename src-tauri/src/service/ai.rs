@@ -9,25 +9,30 @@ pub(super) struct AiRuntime {
     pub pending: HashMap<Id, (ReservedAttempt, crate::ai::Result<RemoteCompletion>)>,
 }
 impl AppService {
-    async fn follow_up_replayed(&self, c: &AiQuestionCommand) -> Result<bool> {
+    async fn question_request_replayed(
+        &self,
+        c: &AiQuestionCommand,
+        purpose: &'static str,
+    ) -> Result<bool> {
         let db = self.database()?;
         let c = c.clone();
         database_task(move || {
             db.with_connection(|db| {
-                use rusqlite::OptionalExtension;
-                let expected = crate::db::ai::hash(&(&c, "follow_up"))?;
-                let old: Option<String> = db
-                    .query_row(
-                        "SELECT payload_hash FROM ai_attempts WHERE command_id=?1",
-                        [&c.request_id],
-                        |r| r.get(0),
-                    )
-                    .optional()
-                    .map_err(crate::db::ai::sql_error)?;
-                match old {
-                    Some(h) if h == expected => Ok(true),
-                    Some(_) => Err(failure("Identificador reutilizado com conteúdo diferente.")),
-                    None => Ok(false),
+                use crate::db::ai::{
+                    lookup_command_identity, CommandIdentity, CommandIdentityLocation,
+                };
+                if c.request_id.trim().is_empty() {
+                    return Err(failure("Pedido sem identificador."));
+                }
+                let expected = crate::db::ai::hash(&(&c, purpose))?;
+                match lookup_command_identity(db, &c.request_id)? {
+                    CommandIdentity::Found {
+                        location: CommandIdentityLocation::AiAttempt,
+                        payload_hash,
+                        ..
+                    } if payload_hash == expected => Ok(true),
+                    CommandIdentity::NotFound => Ok(false),
+                    _ => Err(failure("Identificador reutilizado com conteúdo diferente.")),
                 }
             })
         })
@@ -201,7 +206,10 @@ impl AppService {
         command: AiQuestionCommand,
     ) -> Result<InterviewSnapshot> {
         let _guard = self.transitions.lock().await;
-        if self.follow_up_replayed(&command).await? {
+        if self
+            .question_request_replayed(&command, "follow_up")
+            .await?
+        {
             return Ok(self.snapshot());
         }
         if self.ai_busy() {
@@ -257,6 +265,7 @@ impl AppService {
                 key,
                 task: a.task.clone(),
                 sources: a.sources.clone(),
+                conversation_id: a.practice_id.as_ref().unwrap_or(&a.session_id).clone(),
             })
         };
         let result = response.await;
@@ -356,6 +365,66 @@ impl AppService {
         }
         Ok(view)
     }
+    /// Avalia uma pergunta com fontes fixas, sem bloquear transições durante a rede.
+    /// O comando só termina depois de publicar; o frontend pode então pedir a reformulação.
+    pub async fn evaluate_question(
+        self: &Arc<Self>,
+        command: AiQuestionCommand,
+    ) -> Result<FeedbackView> {
+        let guard = self.transitions.lock().await;
+        let db = self.database()?;
+        if self.question_request_replayed(&command, "feedback").await? {
+            return self.load_feedback(command.session_id).await;
+        }
+        let saved = db.clone();
+        let c = command.clone();
+        database_task(move || saved.ai_sources(&c.session_id, &c.session_question_id, "feedback"))
+            .await?;
+        let existing = self.load_feedback(command.session_id.clone()).await?;
+        if existing
+            .reports
+            .iter()
+            .any(|r| r["questionId"] == command.session_question_id)
+        {
+            return Ok(existing);
+        }
+        if self.ai_busy() {
+            return Err(AppError::busy(
+                "Existe um pedido IA ou resultado por guardar.",
+            ));
+        }
+        let (settings, key) = self.ai_configuration().await?;
+        let saved = db.clone();
+        let c = command.clone();
+        let attempt = database_task(move || saved.reserve_ai(&c, "feedback", &settings)).await?;
+        let Some(attempt) = attempt else {
+            return self.load_feedback(command.session_id).await;
+        };
+        self.ai_runtime
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .busy = true;
+        self.ai_job(&attempt);
+        drop(guard);
+        // A tarefa continua a guardar o resultado mesmo se o chamador deixar de o aguardar.
+        let service = Arc::clone(self);
+        let session_id = command.session_id;
+        let work = tokio::spawn(async move {
+            let valid = service.run_attempt(db, attempt, key).await;
+            service
+                .ai_runtime
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .busy = false;
+            service.commit(|s| s.ai_job = None);
+            valid
+        });
+        if !work.await.unwrap_or(false) {
+            return Err(failure("A avaliação não ficou disponível. Consulte o erro e repita apenas o pedido em falta; pode gerar novo custo."));
+        }
+        self.load_feedback(session_id).await
+    }
+
     pub async fn generate_feedback(
         self: &Arc<Self>,
         command: AiSessionCommand,

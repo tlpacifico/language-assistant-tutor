@@ -1,5 +1,7 @@
 # Preparação e execução da fase 3
 
+**Modalidade atual, 2026-11-04:** por pedido explícito do utilizador, a integração passa a OpenCode Go, com endpoint `/inference/go/openai/v1`, identidade própria e sessão HTTP estável. A configuração antiga de referência é adaptada uma vez, sem apagar chave ou histórico; abrir Configuração IA e autorizar o destino Go antes de repetir um pedido. Os exemplos por consumo abaixo são históricos. Ver [preparação/validação Go](../opencode-go/validation.md).
+
 Data: 2026-11-02. A fase 3 foi antecipada por autorização explícita do utilizador. As aceitações manuais das fases 1 e 2 continuam pendentes.
 
 ## Executar
@@ -21,8 +23,8 @@ Na preparação, o modo predefinido continua **Local, sem IA**. Escolher **Tutor
 
 ## Configurar IA
 
-1. Abrir **Configuração IA**. Confirmar a base `https://opencode.ai/inference/openai/v1` e o modelo pago `deepseek-v4.1-flash`.
-2. Guardar configuração e, se necessário, editar as tarifas em USD por milhão. A referência inicial é datada de 2026-11-02; a faturação do fornecedor prevalece.
+1. Abrir **Configuração IA**. A base atual é `https://opencode.ai/inference/go/openai/v1` (OpenCode Go) e o modelo `deepseek-v4.1-flash`. Se a configuração guardada ainda tiver a base por consumo, a aplicação adapta-a uma vez ao abrir a configuração.
+2. Guardar configuração e confirmar o modelo. No default Go não há tarifário fixo: um tarifário manual em USD por milhão continua possível e deve registar data e fonte; o consumo e o custo devolvidos pelo fornecedor prevalecem. Os exemplos de preços abaixo são históricos.
 3. Introduzir a chave no campo protegido e escolher **Guardar chave protegida**. O núcleo usa o Windows Credential Manager através de `keyring` 3.6.3, service `language-assistant-tutor`, user `opencode-api`. A chave não é devolvida nem guardada no SQLite.
 4. Ler o aviso e autorizar o envio para o destino guardado. Alterar a base remove a credencial anterior e invalida o consentimento. Não há envio ao guardar configuração.
 
@@ -34,7 +36,9 @@ Confirmar uma resposta guarda-a localmente. **Pedir seguimento** é uma ação d
 
 Se a API falhar, repetir ou dispensar explicitamente o seguimento antes de avançar. Dispensa não significa que a IA considerou a resposta suficiente. O serviço não repete automaticamente pedidos pagos. Um resultado atrasado de etapa dispensada só pode acrescentar consumo conhecido.
 
-Ao terminar, **Gerar ou repetir feedback em falta** avalia cada pergunta, preservando relatórios válidos. O histórico apresenta feedback parcial/pronto, fontes confirmadas e consumo por tentativa. **Guardar resultado recebido sem novo pedido** repete apenas a publicação local quando a resposta remota já chegou e a escrita falhou. Após crash nesse intervalo, o resultado pode ser desconhecido; não se promete recuperação de memória perdida.
+Desde a alteração aprovada de 2026-11-04, depois de confirmar a resposta e resolver o seguimento, **Avaliar e sugerir melhorias** permite obter avaliação, correções explicadas e reformulação antes de avançar. A revisão de transcrição é opcional quando existe texto utilizável: serve para corrigir reconhecimento, preservando o inglês dito para avaliação. Confirmar continua a ser apenas uma escrita local. O botão de avaliação é uma ação explícita de envio, sujeita ao consentimento configurado e a custo.
+
+Ao terminar, **Gerar ou repetir feedback em falta** avalia apenas as perguntas sem relatório válido, reutilizando também os relatórios pedidos durante a entrevista. O histórico apresenta feedback parcial/pronto, fontes confirmadas e consumo por tentativa. **Guardar resultado recebido sem novo pedido** repete apenas a publicação local quando a resposta remota já chegou e a escrita falhou. Após crash nesse intervalo, o resultado pode ser desconhecido; não se promete recuperação de memória perdida. Ver [desenho](../superpowers/specs/2026-11-04-per-question-ai-coaching-design.md) e [validação](../ai-coaching/validation.md).
 
 Os áudios ficam locais; só pergunta/critérios e texto confirmado necessário seguem para a API. Não se envia o banco inteiro, rascunhos, ficheiros ou transcrição automática diferente da versão confirmada.
 

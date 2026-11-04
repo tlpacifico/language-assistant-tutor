@@ -12,6 +12,25 @@ import {
 } from "../../test/fake-interview-client";
 import type { FeedbackView } from "../../lib/ai-contracts";
 describe("Tutor IA", () => {
+  it.each([
+    [JSON.stringify({ code: "AI_ACCESS", message: "Acesso recusado ou saldo insuficiente.", retryable: true }), "Acesso recusado ou saldo insuficiente."],
+    ["PRIVATE_RAW_SECRET", "Não foi possível concluir o pedido. Consulte o diagnóstico local."],
+  ])("mostra o motivo da tentativa falhada sem expor erros ilegíveis", async (storedError, message) => {
+    const f = fakeInterviewClient();
+    const value: FeedbackView = {
+      sessionId: "s", state: "pending", reports: [], priorities: [],
+      usage: { knownReportedSubtotal: 0, knownEstimatedSubtotal: 0, unknownAttemptCount: 1, input: null, output: null, complete: false },
+      attempts: [{ id: "attempt-1", state: "failed", purpose: "follow_up", requestedModel: "deepseek-v4.1-flash", returnedModel: null, usage: { input: null, output: null, reported: null, estimated: null }, error: storedError }],
+    };
+    vi.mocked(f.client.loadFeedback).mockResolvedValue(value);
+    render(<FeedbackPanel client={f.client} sessionId="s" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByRole("alert")).toBeVisible();
+    fireEvent.click(screen.getByText("Pedidos e consumo"));
+    expect(screen.getByText(/Seguimento: Falhou/)).toBeVisible();
+    expect(screen.queryByText(/PRIVATE_RAW_SECRET/)).not.toBeInTheDocument();
+    expect(f.client.generateFeedback).not.toHaveBeenCalled();
+  });
   it("limpa chave em falha e apresenta destino antes de autorizar", async () => {
     const f = fakeInterviewClient();
     vi.mocked(f.client.saveAiKey).mockRejectedValue({
@@ -26,7 +45,7 @@ describe("Tutor IA", () => {
     await screen.findByText("Falhou guardar");
     expect(field).toHaveValue("");
     expect(
-      screen.getByText("https://opencode.ai/inference/openai/v1"),
+      screen.getByText("https://opencode.ai/inference/go/openai/v1"),
     ).toBeVisible();
   });
   it("pedido segue ação explícita e dispensa não espera pelo HTTP", async () => {

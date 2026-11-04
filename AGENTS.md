@@ -7,6 +7,7 @@ Este projeto é um tutor desktop de entrevistas comportamentais em inglês, por 
 Antes de trabalhar, consultar os documentos relevantes para a tarefa:
 
 - [Validação do layout](docs/layout/validation.md): referência visual, adaptações aos contratos, recuperação áudio em todas as páginas e matriz reproduzível de sete páginas.
+- [Avaliação e correções por pergunta](docs/ai-coaching/validation.md): alteração aprovada em 2026-11-04; avaliação e reformulação durante a entrevista IA, preservação das fontes, reutilização no relatório final e correção da inicialização do editor.
 
 - [Ideia e objetivos](docs/ideia-e-objetivos.md): problema, público, ciclo de aprendizagem e limites do MVP.
 - [Stack técnica](docs/tech-stack.md): tecnologias escolhidas, responsabilidades e integrações.
@@ -22,6 +23,7 @@ Antes de trabalhar, consultar os documentos relevantes para a tarefa:
 - [Desenho aprovado](docs/superpowers/specs/2026-11-01-star-interview-tutor-design.md): regras funcionais e técnicas detalhadas.
 - [Preparação](docs/phase-4/setup.md) e [validação](docs/phase-4/validation.md) da fase 4, com a [spec](docs/superpowers/specs/2026-11-03-phase-4-improve-repeat-design.md) e o [plano](docs/superpowers/plans/2026-11-03-phase-4-improve-repeat-implementation.md): reformulação, práticas, comparação e histórias locais.
 - [Spec da fase 3](docs/superpowers/specs/2026-11-02-phase-3-ai-tutor-design.md), [plano](docs/superpowers/plans/2026-11-02-phase-3-ai-tutor-implementation.md), [preparação](docs/phase-3/setup.md) e [validação](docs/phase-3/validation.md): tutor IA, consentimento, credenciais, seguimentos, evidências e recuperação.
+- [Integração OpenCode Go](docs/opencode-go/validation.md): modalidade autorizada em 2026-11-04 (endpoint `/inference/go/openai/v1`, identidade própria do tutor, sessão estável por conversa e adaptação única da configuração antiga), com o que está verificado e o que falta confirmar no fornecedor.
 
 As instruções atuais do utilizador têm prioridade. Estes documentos registam as decisões anteriores; mantê-los coerentes quando uma decisão mudar.
 
@@ -42,7 +44,7 @@ As instruções atuais do utilizador têm prioridade. Estes documentos registam 
 - Rust + Tauri 2 para a aplicação desktop, sessões, dados e chamadas à API.
 - Processo Python auxiliar para faster-whisper e Kokoro-82M.
 - SQLite para dados estruturados e ficheiros locais para áudios.
-- DeepSeek Flash através da API paga do OpenCode para seguimentos e avaliação textual.
+- DeepSeek Flash através do OpenCode Go para seguimentos e avaliação textual (modalidade autorizada em 2026-11-04, substituindo o default por consumo; ver [integração Go](docs/opencode-go/validation.md)).
 - Windows como primeiro alvo.
 
 Consultar a [stack técnica](docs/tech-stack.md) antes de introduzir dependências. As bibliotecas de gravação, reamostragem e credenciais serão escolhidas no plano da fase correspondente.
@@ -73,6 +75,8 @@ Consultar a [stack técnica](docs/tech-stack.md) antes de introduzir dependênci
 
 ## Verificação
 
+- O diagnóstico local e a identidade de builds estão descritos na [spec](docs/superpowers/specs/2026-11-04-local-diagnostics-design.md), no [plano](docs/superpowers/plans/2026-11-04-local-diagnostics.md) e na [validação](docs/diagnostics/validation.md). Preservar a identidade Tauri e `app_data_dir()/diagnostics` entre versões. Não registar mensagens livres, credenciais, áudio ou conteúdo das entrevistas; novas operações/códigos exigem atualização das listas fechadas. A distribuição por instalador continua por validar.
+
 - Executar verificações adequadas ao que mudou. Alterações apenas documentais exigem conferir conteúdo, coerência e links locais.
 - Para implementação, testar especialmente regras da sessão, preservação de versões, evidências do feedback e recuperação de falhas.
 - Validar áudio e desempenho com gravações reais; testes automáticos não substituem essa experiência.
@@ -93,3 +97,7 @@ A fase 3 tem implementação e verificação automática verde em 2026-11-02: 8/
 
 
 Em 2026-11-03, o utilizador pediu a spec e o plano da fase 4 e, depois, autorizou executá-lo («termine as tarefas»). A fase 4 (melhorar e repetir) está implementada (esquema v3, práticas, reformulação B1/B2/C1, voz da sugestão, comparação local, histórias locais, consumo de treino) e a verificação automática está verde: `.\scriptserify.ps1` com 8/8 checks (246 Rust, 97 Vitest, 36 Python), build release `--no-bundle` e smoke com dados temporários/saída 0. Ver [validação da fase 4](docs/phase-4/validation.md). A fase 4 **não** está aceite nem concluída: faltam o roteiro manual F4-16, a inferência paga real (fidelidade, utilidade, espera, custo) e as pendências das fases anteriores. Não iniciar a fase 5 sem instrução.
+
+Em 2026-11-04, o utilizador aprovou e autorizou avaliação, correções explicadas e reformulação por pergunta durante a entrevista IA. Implementação verificada automaticamente: verify.ps1 com 8/8 checks (252 Rust, 112 React e 36 Python), TypeScript/build Vite, formatação/Clippy e pip check aprovados. Avaliação só após confirmação e seguimento encerrado; o relatório final reutiliza resultados válidos. Corrigida a reconciliação de rascunho vazio quando chega a transcrição automática. Ver [validação](docs/ai-coaching/validation.md). Inferência paga, utilidade semântica, áudio real e aceitação manual continuam pendentes; não inicia a fase 5.
+
+Em 2026-11-04, depois de comparar o contentor do Marlo Expenses, o utilizador pediu a mesma modalidade («utilize o msm forma do Marlo Expense»). A integração passou a OpenCode Go: endpoint `/inference/go/openai/v1`, `User-Agent` próprio do tutor e `x-opencode-session` estável por entrevista ou prática, sem copiar chave ou identidade do Marlo. O default deixou de ter tarifário fixo; a configuração antiga de referência é adaptada uma vez, preservando chave e histórico e exigindo nova autorização do destino. Verificação automática: 8/8 checks (270 Rust, 119 React, 36 Python), build release `--no-bundle` com saída 0 e smoke do binário com código 0. Ver [validação Go](docs/opencode-go/validation.md). Continua por verificar se o fornecedor aceita tráfego do tutor na modalidade Go, o custo real e a utilidade semântica; não houve pedido pago. Não inicia a fase 5.

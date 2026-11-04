@@ -1,4 +1,5 @@
 import AiSettings from "./features/ai/AiSettings";
+import DiagnosticsPanel from "./features/diagnostics/DiagnosticsPanel";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -557,6 +558,7 @@ export default function App({
             <p>{PAGE_COPY[page].description}</p>
           </header>
 
+          <DiagnosticsPanel />
           {page !== "setup" && (
             <details className="tutor-audio-recovery">
               <summary>Áudio e recuperação</summary>

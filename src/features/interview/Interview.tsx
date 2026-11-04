@@ -1,6 +1,7 @@
 import { activeAnswer } from "../../lib/interview-contracts";
 import AiStep from "../ai/AiStep";
 import FeedbackPanel from "../ai/FeedbackPanel";
+import QuestionCoaching from "../ai/QuestionCoaching";
 /**
  * Ecrã da entrevista guiada: pergunta, captura, revisão, confirmação e avanço.
  *
@@ -642,6 +643,10 @@ export default function Interview({
                     {reviewStatus}
                   </p>
                   <p className="practice__hint">
+                    A revisão é opcional: corrija apenas palavras mal reconhecidas.
+                    Mantenha o inglês que disse para a IA o avaliar.
+                  </p>
+                  <p className="practice__hint">
                     «Guardar revisão» mantém o texto editável e não confirma a
                     resposta. Ao confirmar, o texto mostrado fica fixo e apenas
                     de leitura.
@@ -777,6 +782,8 @@ export default function Interview({
           </section>
         </div>
       </div>
+
+      <QuestionCoaching client={client} snapshot={snapshot} onSnapshot={onSnapshot} />
 
       {errors.length > 0 ? (
         <section

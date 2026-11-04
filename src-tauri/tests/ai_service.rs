@@ -88,6 +88,7 @@ impl AudioPort for Audio {
 }
 struct Transport {
     calls: AtomicUsize,
+    conversations: Mutex<Vec<String>>,
     gate: Arc<tokio::sync::Notify>,
     script: Mutex<Vec<String>>,
 }
@@ -95,6 +96,7 @@ impl Transport {
     fn new(script: Vec<String>) -> Self {
         Self {
             calls: AtomicUsize::new(0),
+            conversations: Mutex::new(Vec::new()),
             gate: Arc::new(tokio::sync::Notify::new()),
             script: Mutex::new(script),
         }
@@ -110,6 +112,10 @@ impl AiTransport for Transport {
                 + Send,
         >,
     > {
+        self.conversations
+            .lock()
+            .unwrap()
+            .push(r.conversation_id.clone());
         let n = self.calls.fetch_add(1, Ordering::SeqCst);
         let value = self
             .script
@@ -121,7 +127,7 @@ impl AiTransport for Transport {
         let future = self.gate.clone().notified_owned();
         let s = r.settings.clone();
         Box::pin(async move {
-            if value == "gate" {
+            if value == "gate" || value == "gated_report" {
                 future.await;
             }
             if value == "error" {
@@ -129,8 +135,15 @@ impl AiTransport for Transport {
             }
             let content = if value == "gate" || value == "ask" {
                 json!({"schemaVersion":SCHEMA,"decision":"ask","reason":"Falta resultado","missingDimension":"result","question":"What happened as a result?"}).to_string()
-            } else if value == "report" {
+            } else if value == "report" || value == "gated_report" {
                 valid_report(&r.sources)
+            } else if value == "rewrite" {
+                let first = &r.sources.answers[0];
+                json!({"schemaVersion":"rewrite-v1","level":"B1","segments":[{
+                    "id":"s1","text":"I learned from a failed deployment.","evidence":[{
+                        "confirmationId":first.confirmation_id,"role":first.role,"quote":first.text
+                    }]}],"necessaryChanges":[],"optionalStyle":[],"missingInformation":[]})
+                .to_string()
             } else {
                 value
             };
@@ -289,6 +302,218 @@ impl Harness {
     }
 }
 #[tokio::test]
+async fn individual_evaluation_rejects_identifier_used_by_waiver() {
+    let h = Harness::new(2, vec!["report".into()]).await;
+    h.consent().await;
+    h.answer().await;
+    let c = h.command();
+    h.service
+        .waive_follow_up(WaiveFollowUp {
+            command: c.clone(),
+            reason: "unavailable".into(),
+        })
+        .await
+        .unwrap();
+    assert!(h.service.evaluate_question(c).await.is_err());
+    assert_eq!(h.transport.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn late_individual_evaluation_keeps_original_target_and_allows_next_capture() {
+    let h = Harness::new(2, vec!["gated_report".into()]).await;
+    h.consent().await;
+    h.answer().await;
+    h.service
+        .waive_follow_up(WaiveFollowUp {
+            command: h.command(),
+            reason: "unavailable".into(),
+        })
+        .await
+        .unwrap();
+    let c = h.command();
+    let first = c.session_question_id.clone();
+    let service = h.service.clone();
+    let work = tokio::spawn(async move { service.evaluate_question(c).await });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while h.transport.calls.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    h.advance().await;
+    h.answer().await;
+    let second = h.command().session_question_id;
+    h.transport.gate.notify_one();
+    let view = work.await.unwrap().unwrap();
+    assert_eq!(view.reports.len(), 1);
+    assert_eq!(view.reports[0]["questionId"], first);
+    assert_eq!(h.service.snapshot().current.unwrap().question.id, second);
+}
+
+#[tokio::test]
+async fn closed_question_rewrite_is_persisted_and_reused_before_session_end() {
+    use language_assistant_tutor::practice::{
+        ReportState, ResponseOrigin, RewriteCommand, RewriteLevel,
+    };
+    let h = Harness::new(2, vec!["rewrite".into()]).await;
+    h.consent().await;
+    h.answer().await;
+    h.service
+        .waive_follow_up(WaiveFollowUp {
+            command: h.command(),
+            reason: "unavailable".into(),
+        })
+        .await
+        .unwrap();
+    let c = h.command();
+    let request = RewriteCommand {
+        request_id: uuid::Uuid::new_v4().to_string(),
+        level: RewriteLevel::B1,
+        origin: ResponseOrigin::Original {
+            session_id: c.session_id,
+            session_question_id: c.session_question_id,
+        },
+    };
+    h.service.request_rewrite(request.clone()).await.unwrap();
+    h.done().await;
+    let saved = h
+        .service
+        .request_rewrite(RewriteCommand {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            ..request
+        })
+        .await
+        .unwrap();
+    assert_eq!(saved.state, ReportState::Ready);
+    assert_eq!(
+        saved.segments[0].text,
+        "I learned from a failed deployment."
+    );
+    assert_eq!(h.transport.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        h.service
+            .snapshot()
+            .current
+            .unwrap()
+            .confirmation
+            .unwrap()
+            .text,
+        "I learned from a failed deployment."
+    );
+}
+
+#[tokio::test]
+async fn individual_feedback_is_reused_by_final_feedback_without_another_call() {
+    let h = Harness::new(2, vec!["report".into(), "report".into()]).await;
+    assert!(h.service.evaluate_question(h.command()).await.is_err());
+    h.answer().await;
+    h.service
+        .waive_follow_up(WaiveFollowUp {
+            command: h.command(),
+            reason: "unavailable".into(),
+        })
+        .await
+        .unwrap();
+    assert!(h.service.evaluate_question(h.command()).await.is_err());
+    assert_eq!(h.transport.calls.load(Ordering::SeqCst), 0);
+    h.consent().await;
+    let c = h.command();
+    let view = h.service.evaluate_question(c.clone()).await.unwrap();
+    assert_eq!(view.reports.len(), 1);
+    assert_eq!(view.reports[0]["questionId"], c.session_question_id);
+    h.service.evaluate_question(c).await.unwrap();
+    h.service.evaluate_question(h.command()).await.unwrap();
+    assert_eq!(h.transport.calls.load(Ordering::SeqCst), 1);
+    h.advance().await;
+    h.answer().await;
+    let session_id = h.command().session_id;
+    h.waive_advance().await;
+    h.service
+        .generate_feedback(AiSessionCommand {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            session_id: session_id.clone(),
+        })
+        .await
+        .unwrap();
+    h.done().await;
+    let final_view = h.service.load_feedback(session_id).await.unwrap();
+    assert_eq!(final_view.reports.len(), 2);
+    assert_eq!(final_view.state, "ready");
+    assert_eq!(h.transport.calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn closed_question_can_be_evaluated_and_rewritten_before_session_end() {
+    let h = Harness::new(2, vec![]).await;
+    h.answer().await;
+    let c = h.command();
+    assert!(h
+        .db
+        .ai_sources(&c.session_id, &c.session_question_id, "feedback")
+        .is_err());
+    let origin = language_assistant_tutor::practice::ResponseOrigin::Original {
+        session_id: c.session_id.clone(),
+        session_question_id: c.session_question_id.clone(),
+    };
+    assert!(h.db.load_exercise_sources(&origin).is_err());
+    h.service
+        .waive_follow_up(WaiveFollowUp {
+            command: c.clone(),
+            reason: "unavailable".into(),
+        })
+        .await
+        .unwrap();
+    let sources =
+        h.db.ai_sources(&c.session_id, &c.session_question_id, "feedback")
+            .unwrap();
+    assert_eq!(sources.answers.len(), 1);
+    assert_eq!(
+        sources.answers[0].text,
+        "I learned from a failed deployment."
+    );
+    let rewrite = h.db.load_exercise_sources(&origin).unwrap();
+    assert_eq!(
+        rewrite.sources.answers[0].confirmation_id,
+        sources.answers[0].confirmation_id
+    );
+    // Disponibilizar coaching não antecipa práticas de uma entrevista em curso.
+    assert!(h
+        .db
+        .create_practice(language_assistant_tutor::practice::CreatePractice {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            session_id: c.session_id,
+            session_question_id: c.session_question_id,
+            previous_practice_id: None,
+        })
+        .is_err());
+}
+
+#[tokio::test]
+async fn unconfirmed_follow_up_blocks_both_final_sources() {
+    let h = Harness::new(2, vec!["ask".into()]).await;
+    h.consent().await;
+    h.answer().await;
+    h.service.request_follow_up(h.command()).await.unwrap();
+    h.done().await;
+    let c = h.command();
+    assert!(h
+        .db
+        .ai_sources(&c.session_id, &c.session_question_id, "feedback")
+        .is_err());
+    h.answer().await;
+    let sources =
+        h.db.ai_sources(&c.session_id, &c.session_question_id, "feedback")
+            .unwrap();
+    assert_eq!(sources.answers.len(), 2);
+    assert_eq!(sources.answers[1].role, "follow_up");
+    assert_ne!(
+        sources.answers[0].confirmation_id,
+        sources.answers[1].confirmation_id
+    );
+}
+
+#[tokio::test]
 async fn no_network_before_confirmation_and_destination_consent() {
     let h = Harness::new(1, vec!["ask".into()]).await;
     assert!(h.service.request_follow_up(h.command()).await.is_err());
@@ -410,6 +635,64 @@ async fn partial_feedback_retries_only_missing_reports() {
     assert_eq!(ready.reports.len(), 3);
     assert_eq!(h.transport.calls.load(Ordering::SeqCst), 4);
 }
+#[tokio::test]
+async fn go_migration_preserves_the_protected_key_and_requires_new_consent() {
+    let h = Harness::new(1, vec![]).await;
+    h.store.set("TEST-SECRET").unwrap();
+    let old = AiSettingsView {
+        version: 7,
+        base_url: "https://opencode.ai/inference/openai/v1".into(),
+        consent: Some(Consent {
+            destination: "https://opencode.ai/inference/openai/v1".into(),
+            notice_version: "text-external-v1".into(),
+            accepted_at: "now".into(),
+        }),
+        ..Default::default()
+    };
+    h.db.with_connection(|c| {
+        c.execute(
+            "INSERT OR REPLACE INTO ai_settings VALUES(1,?1,?2)",
+            rusqlite::params![old.version as i64, serde_json::to_string(&old).unwrap()],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    let updated = h.service.load_ai_settings().await.unwrap();
+    assert_eq!(
+        updated.base_url,
+        "https://opencode.ai/inference/go/openai/v1"
+    );
+    assert!(updated.credential_configured);
+    assert!(updated.consent.is_none());
+    assert_eq!(h.store.get().unwrap().as_deref(), Some("TEST-SECRET"));
+    h.answer().await;
+    assert!(h
+        .service
+        .request_follow_up(h.command())
+        .await
+        .unwrap_err()
+        .message
+        .contains("Autorize"));
+    assert_eq!(h.transport.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn go_conversation_is_the_session_and_stays_stable_after_retry() {
+    let h = Harness::new(1, vec!["error".into(), "skip".into()]).await;
+    h.consent().await;
+    h.answer().await;
+    let session = h.service.snapshot().active_session.unwrap().id;
+    h.service.request_follow_up(h.command()).await.unwrap();
+    h.done().await;
+    h.service.request_follow_up(h.command()).await.unwrap();
+    h.done().await;
+    assert_eq!(
+        *h.transport.conversations.lock().unwrap(),
+        vec![session.clone(), session]
+    );
+}
+
 #[tokio::test]
 async fn settings_remove_secret_and_consent_on_destination_change() {
     let h = Harness::new(1, vec![]).await;

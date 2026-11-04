@@ -246,6 +246,10 @@ INSERT INTO reviews (recording_id, version, source_transcript_id, origin, text, 
 INSERT INTO confirmations (id, session_question_id, recording_id, review_version, source_transcript_id, origin, text, confirmed_at) VALUES
  ('c1', 'sq1', 'rec1', 1, NULL, 'manual_explicit', 'I failed a release.', '2026-11-02T09:09:00Z'),
  ('c2', 'sq2', 'rec2', 1, NULL, 'manual_explicit', 'I disagreed on the checklist.', '2026-11-02T10:09:00Z');
+
+-- Uma sessão IA só pode terminar depois de encerrar a etapa de seguimento.
+INSERT INTO ai_stages (question_id, stage, generation, reason) VALUES
+ ('sq2', 'waived', 1, 'unavailable');
 "#,
                 )
                 .map_err(|error| AppError::new("TEST_SQLITE", error.to_string(), false))?;

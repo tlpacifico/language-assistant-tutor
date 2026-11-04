@@ -16,13 +16,37 @@ const dimensions: Record<string, string> = {
   result: "Resultado",
   learning: "Aprendizagem",
 };
+const attemptStates: Record<string, string> = {
+  running: "Em processamento",
+  completed: "Concluído",
+  failed: "Falhou",
+  interrupted: "Interrompido",
+  discarded: "Descartado",
+};
+
+/** O núcleo guarda AppError em JSON; não apresentar JSON/raw ilegível ao utilizador. */
+function attemptError(raw: string | null): string {
+  try {
+    const error: unknown = JSON.parse(raw ?? "null");
+    if (typeof error === "object" && error !== null &&
+      "message" in error && typeof error.message === "string" && error.message.trim() &&
+      "code" in error && typeof error.code === "string") {
+      return `${error.message} Código: ${error.code}.`;
+    }
+  } catch { /* Registo legado ilegível: não expor o conteúdo bruto. */ }
+  return "Não foi possível concluir o pedido. Consulte o diagnóstico local.";
+}
 function EvidenceView({ e }: { e: Evidence }) {
   return e.type === "quote" ? (
     <blockquote>
       {e.quote}
       <footer>
-        {e.role === "follow_up" ? "Seguimento" : e.role === "attempt" ? "Tentativa" : "Resposta inicial"} —{" "}
-        {e.confirmationId}
+        {e.role === "follow_up"
+          ? "Seguimento"
+          : e.role === "attempt"
+            ? "Tentativa"
+            : "Resposta inicial"}{" "}
+        — {e.confirmationId}
       </footer>
     </blockquote>
   ) : (
@@ -63,6 +87,65 @@ export function CorrectionView({ o }: { o: Correction }) {
         Sugestão: <q>{o.replacement}</q>
       </p>
     </div>
+  );
+}
+export function QuestionReportView({
+  r,
+}: {
+  r: FeedbackView["reports"][number];
+}) {
+  return (
+    <article>
+      <h4>
+        Pergunta {r.position}: {r.questionText}
+      </h4>
+      <h5>Conteúdo e STAR</h5>
+      {r.report.content.map((o) => (
+        <ObservationView key={o.id} o={o} />
+      ))}
+      <h5>Pontos fortes</h5>
+      {r.report.strengths.map((o) => (
+        <ObservationView key={o.id} o={o} />
+      ))}
+      <h5>Lacunas</h5>
+      {r.report.gaps.map((o) => (
+        <ObservationView key={o.id} o={o} />
+      ))}
+      <h5>Correções necessárias no texto inglês</h5>
+      {r.report.english.necessaryCorrections.length === 0 && (
+        <p>Nenhuma correção necessária identificada pela IA.</p>
+      )}
+      {r.report.english.necessaryCorrections.map((o) => (
+        <CorrectionView key={o.id} o={o} />
+      ))}
+      <h5>Alternativas opcionais de estilo</h5>
+      {r.report.english.optionalStyle.map((o) => (
+        <CorrectionView key={o.id} o={o} />
+      ))}
+      {r.report.priorities.length > 0 && (
+        <>
+          <h5>Prioridades de treino</h5>
+          <ul>
+            {r.report.priorities.map((p, i) => (
+              <li key={i}>{p.action}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      <p>{r.report.fewerPrioritiesReason}</p>
+      <details>
+        <summary>Textos confirmados avaliados</summary>
+        {r.sources.map((s) => (
+          <div key={s.confirmationId}>
+            <p>
+              {s.role === "initial" ? "Resposta inicial" : "Seguimento"} —{" "}
+              {s.confirmationId}
+            </p>
+            <pre lang="en">{s.text}</pre>
+          </div>
+        ))}
+      </details>
+    </article>
   );
 }
 export default function FeedbackPanel({
@@ -128,6 +211,11 @@ export default function FeedbackPanel({
             }[v.state] ?? v.state)
           : "A carregar…"}
       </p>
+      {!error && v?.attempts.at(-1)?.state === "failed" && (
+        <p className="practice__notice practice__notice--error" role="alert">
+          {attemptError(v.attempts.at(-1)!.error)}
+        </p>
+      )}
       {v?.state !== "ready" && (
         <>
           <button
@@ -192,7 +280,7 @@ export default function FeedbackPanel({
               <article key={a.id}>
                 <p>
                   {a.purpose === "follow_up" ? "Seguimento" : "Feedback"}:{" "}
-                  {a.state}. Modelo pedido: {a.requestedModel ?? "desconhecido"}
+                  {attemptStates[a.state] ?? a.state}. Modelo pedido: {a.requestedModel ?? "desconhecido"}
                   ; devolvido: {a.returnedModel ?? "desconhecido"}.
                 </p>
                 <p>
@@ -207,48 +295,12 @@ export default function FeedbackPanel({
                     : `US$${a.usage.estimated.toFixed(6)}`}
                   .
                 </p>
+                {a.state === "failed" && <p>{attemptError(a.error)}</p>}
               </article>
             ))}
           </details>
           {v.reports.map((r) => (
-            <article key={r.questionId}>
-              <h4>
-                Pergunta {r.position}: {r.questionText}
-              </h4>
-              <h5>Conteúdo e STAR</h5>
-              {r.report.content.map((o) => (
-                <ObservationView key={o.id} o={o} />
-              ))}
-              <h5>Pontos fortes</h5>
-              {r.report.strengths.map((o) => (
-                <ObservationView key={o.id} o={o} />
-              ))}
-              <h5>Lacunas</h5>
-              {r.report.gaps.map((o) => (
-                <ObservationView key={o.id} o={o} />
-              ))}
-              <h5>Correções necessárias no texto inglês</h5>
-              {r.report.english.necessaryCorrections.map((o) => (
-                <CorrectionView key={o.id} o={o} />
-              ))}
-              <h5>Alternativas opcionais de estilo</h5>
-              {r.report.english.optionalStyle.map((o) => (
-                <CorrectionView key={o.id} o={o} />
-              ))}
-              <p>{r.report.fewerPrioritiesReason}</p>
-              <details>
-                <summary>Textos confirmados avaliados</summary>
-                {r.sources.map((s) => (
-                  <div key={s.confirmationId}>
-                    <p>
-                      {s.role === "initial" ? "Resposta inicial" : "Seguimento"}{" "}
-                      — {s.confirmationId}
-                    </p>
-                    <pre>{s.text}</pre>
-                  </div>
-                ))}
-              </details>
-            </article>
+            <QuestionReportView key={r.questionId} r={r} />
           ))}
         </>
       )}

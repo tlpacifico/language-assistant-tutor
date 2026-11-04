@@ -779,6 +779,39 @@ describe("Interview", () => {
     expect(locked).toHaveValue("edited before the new take");
   });
 
+  it("transcript_arriving_after_empty_draft_seeds_the_editor_and_automatic_origin", async () => {
+    const initial = interviewSnapshot({
+      recordings: [
+        makeRecording({
+          id: "recording-1",
+          sessionQuestionId: "sq-2",
+          transcripts: [],
+        }),
+      ],
+    });
+    const page = renderPage(initial);
+    expect(await screen.findByLabelText("Revisão editável")).toHaveValue("");
+    const transcribed = recordedSnapshot("I planned a migration.");
+    page.publish(reviewedSnapshot(transcribed, "I planned a migration."));
+    expect(screen.getByLabelText("Revisão editável")).toHaveValue(
+      "I planned a migration.",
+    );
+    expect(screen.queryByText(/Texto introduzido manualmente/)).toBeNull();
+    expect(screen.queryByText("Alterações por guardar")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar resposta" }));
+    await waitFor(() =>
+      expect(page.fake.client.confirmAnswer).toHaveBeenCalled(),
+    );
+    expect(page.fake.client.confirmAnswer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "I planned a migration.",
+        origin: "automatic",
+        sourceTranscriptId: "transcript-1",
+        expectedReviewVersion: 1,
+      }),
+    );
+  });
+
   it("local_edit_adopts_the_review_version_created_by_the_core", async () => {
     const user = userEvent.setup();
     const initial = interviewSnapshot({

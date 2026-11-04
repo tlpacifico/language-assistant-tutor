@@ -17,7 +17,7 @@ import type {
  * português de Portugal).
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { diagnosticInvoke as invoke } from "./diagnostics";
 import { listen } from "@tauri-apps/api/event";
 
 import type {
@@ -79,6 +79,7 @@ export interface InterviewClient {
   requestFollowUp(request: AiQuestionCommand): Promise<InterviewSnapshot>;
   waiveFollowUp(request: WaiveFollowUp): Promise<InterviewSnapshot>;
   generateFeedback(request: AiSessionCommand): Promise<FeedbackView>;
+  evaluateQuestion(request: AiQuestionCommand): Promise<FeedbackView>;
   loadFeedback(id: string): Promise<FeedbackView>;
   retryAiPublication(id: string): Promise<InterviewSnapshot>;
   /** Fotografia atual, sem alterar o estado. */
@@ -191,6 +192,8 @@ export function createInterviewClient(): InterviewClient {
       invoke<InterviewSnapshot>("interview_ai_waive_follow_up", { request }),
     generateFeedback: (request) =>
       invoke<FeedbackView>("interview_ai_generate_feedback", { request }),
+    evaluateQuestion: (request) =>
+      invoke<FeedbackView>("interview_ai_evaluate_question", { request }),
     loadFeedback: (id) =>
       invoke<FeedbackView>("interview_ai_load_feedback", { id }),
     retryAiPublication: (id) =>

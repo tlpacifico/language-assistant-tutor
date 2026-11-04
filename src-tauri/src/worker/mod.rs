@@ -1044,6 +1044,11 @@ impl Supervisor {
             let error = error.unwrap_or_else(|| {
                 protocol::protocol_error("O auxiliar recusou o pedido sem indicar o erro.")
             });
+            crate::diagnostics::record(crate::diagnostics::Event::new(
+                "worker",
+                op.as_str(),
+                &error.code,
+            ));
             self.remove_artifact(&artifact);
             self.emit(
                 generation,
@@ -1307,6 +1312,9 @@ fn spawn_stderr_reader(stderr: ChildStderr, tail: Arc<Mutex<Vec<u8>>>) -> JoinHa
             match reader.read_line(&mut line).await {
                 Ok(0) => break,
                 Ok(_) => {
+                    if let Some(event) = crate::diagnostics::worker_event(&line) {
+                        crate::diagnostics::record(event);
+                    }
                     if let Ok(mut buffer) = tail.lock() {
                         buffer.extend_from_slice(line.as_bytes());
                         let excess = buffer.len().saturating_sub(STDERR_TAIL);
