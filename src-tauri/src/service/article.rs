@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Weak;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tokio::task::JoinHandle;
@@ -48,6 +48,7 @@ pub(super) struct ArticleTranscription {
     request_id: String,
     session_id: String,
     turn_id: String,
+    started: Instant,
 }
 
 /// Voz do tutor em curso: blocos aceites só pela ordem e na pasta do pedido.
@@ -55,6 +56,8 @@ pub(super) struct ArticleTranscription {
 pub(super) struct ArticleSpeech {
     request_id: String,
     sequence: ChunkSequence,
+    started: Instant,
+    first_reported: bool,
 }
 
 /// Estado em memória do modo artigo.
@@ -75,6 +78,13 @@ impl ArticleRuntime {
     fn busy(&self) -> bool {
         self.capture.is_some() || self.transcription.is_some()
     }
+}
+
+/// Métrica de um turno: operação fechada, código estável e duração; nunca conteúdo.
+fn record_metric(operation: &str, code: &str, started: Instant) {
+    let mut event = crate::diagnostics::Event::new("rust", operation, code);
+    event.duration_ms = Some(started.elapsed().as_millis() as u64);
+    crate::diagnostics::record(event);
 }
 
 fn article_error(error: &AppError) -> ArticleError {
@@ -452,6 +462,7 @@ impl AppService {
             request_id,
             session_id: capture.session_id.clone(),
             turn_id: capture.turn_id.clone(),
+            started: Instant::now(),
         });
         // Depois de parar a voz o auxiliar pode demorar um instante a ficar livre.
         let mut attempts = 0;
@@ -540,6 +551,11 @@ impl AppService {
         };
         self.lock_article().transcription = None;
         self.set_article_busy();
+        let code = match message {
+            WorkerMessage::Failed { error, .. } => error.code.as_str(),
+            _ => "OK",
+        };
+        record_metric("article_transcribe", code, job.started);
 
         let Ok(database) = self.database() else {
             return true;
@@ -631,6 +647,7 @@ impl AppService {
             // Nada a pedir ou já há um pedido pendente (clique duplo): não repete.
             _ => return,
         };
+        let started = Instant::now();
         let task = match ticket.kind {
             ArticleRequestKind::Opening => ArticleAiTask::Opening,
             ArticleRequestKind::Reply => ArticleAiTask::Reply,
@@ -678,6 +695,16 @@ impl AppService {
             }
         };
 
+        let code = match &outcome {
+            ArticleOutcome::Failed(error) => error.code.clone(),
+            _ => "OK".to_owned(),
+        };
+        let operation = if ticket.kind == ArticleRequestKind::Feedback {
+            "article_feedback"
+        } else {
+            "article_reply"
+        };
+        record_metric(operation, &code, started);
         let db = database.clone();
         let request_id = ticket.request_id.clone();
         let finished = database_task(move || {
@@ -758,6 +785,8 @@ impl AppService {
         self.lock_article().speech = Some(ArticleSpeech {
             request_id,
             sequence: ChunkSequence::new(directory),
+            started: Instant::now(),
+            first_reported: false,
         });
         self.set_playback(session_id, turn_id, Some(ArticlePlayback::Playing));
         if let Err(error) = worker_task(move || control.submit(request)).await {
@@ -884,7 +913,16 @@ impl AppService {
                     Some(Ok(path)) if current => {
                         let audio = Arc::clone(&self.audio);
                         match audio_task(move || audio.append(path)).await {
-                            Ok(()) => self.lock_article().drained = false,
+                            Ok(()) => {
+                                let mut runtime = self.lock_article();
+                                runtime.drained = false;
+                                if let Some(speech) = runtime.speech.as_mut() {
+                                    if !speech.first_reported {
+                                        speech.first_reported = true;
+                                        record_metric("article_first_audio", "OK", speech.started);
+                                    }
+                                }
+                            }
                             Err(error) => self.fail_article_speech(&error).await,
                         }
                     }

@@ -1247,3 +1247,78 @@ async fn a_momentarily_empty_queue_is_not_the_end_of_the_request() {
     h.service.on_audio_event(AudioEvent::PlaybackFinished).await;
     assert_eq!(playback(&h, &id).await, ArticlePlayback::Idle);
 }
+
+#[tokio::test]
+async fn turn_metrics_use_closed_operations_with_durations_and_no_content() {
+    use language_assistant_tutor::diagnostics::{self, BuildInfo, Diagnostics};
+    let dir = tempfile::tempdir().unwrap();
+    let diag = Diagnostics::open(
+        dir.path().join("diag"),
+        BuildInfo {
+            version: "0.0.0".into(),
+            revision: "abc1234".into(),
+            dirty: false,
+            built_at: "123".into(),
+        },
+    );
+    diagnostics::install(diag.clone());
+
+    let h = Harness::new().await;
+    let ready = h.ready().await; // abertura: article_reply
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await; // article_first_audio
+    h.record(&ready).await;
+    h.transcript("Remote work helps people focus.").await; // article_transcribe
+    let replied = h.snapshot(&id).await;
+    h.service.article_finish(h.cmd(&replied)).await.unwrap();
+    h.service.article_settle().await; // article_feedback
+
+    diag.flush().unwrap();
+    let export = diag.export(dir.path()).unwrap();
+    let text = std::fs::read_to_string(export).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let events = value["events"].as_array().unwrap();
+    let mine: Vec<_> = events
+        .iter()
+        .filter(|e| e["operation"].as_str().unwrap().starts_with("article_"))
+        .collect();
+    let mut operations: Vec<&str> = mine
+        .iter()
+        .map(|e| e["operation"].as_str().unwrap())
+        .collect();
+    operations.sort_unstable();
+    operations.dedup();
+    assert_eq!(
+        operations,
+        vec![
+            "article_feedback",
+            "article_first_audio",
+            "article_reply",
+            "article_transcribe"
+        ]
+    );
+    // O registo é global ao processo: outros testes também escrevem nele, por
+    // isso cada operação exige pelo menos um evento bem-sucedido e todos têm duração.
+    for event in &mine {
+        assert!(event["durationMs"].is_u64(), "{event}");
+    }
+    for operation in &operations {
+        assert!(
+            mine.iter()
+                .any(|e| e["operation"] == *operation && e["code"] == "OK"),
+            "{operation}"
+        );
+    }
+    // Nenhum conteúdo, título nem caminho nos diagnósticos.
+    for secret in [
+        "Remote work helps",
+        "Remote work changed",
+        "main argument",
+        "original.wav",
+        "articles/",
+        "chunk-0000",
+    ] {
+        assert!(!text.contains(secret), "{secret}");
+    }
+}

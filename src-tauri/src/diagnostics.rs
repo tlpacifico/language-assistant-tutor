@@ -490,6 +490,10 @@ fn safe_operation(operation: &str) -> &str {
         "synthesize",
         "shutdown",
         "snapshot_publish",
+        "article_transcribe",
+        "article_reply",
+        "article_first_audio",
+        "article_feedback",
     ];
     if OPERATIONS.contains(&operation) || COMMANDS.contains(&operation) {
         operation

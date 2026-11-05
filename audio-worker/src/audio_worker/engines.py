@@ -493,6 +493,15 @@ class EngineRegistry:
                 code=WORKER_PROTOCOL,
             )
 
+        # Opcional (medições): o default do motor só muda depois de comparada a fidelidade.
+        beam_size = params.get("beamSize")
+        if beam_size is not None and (
+            isinstance(beam_size, bool) or not isinstance(beam_size, int) or beam_size not in (1, 5)
+        ):
+            raise WorkerError(
+                "O parâmetro «beamSize» só aceita 1 ou 5.", code=WORKER_PROTOCOL
+            )
+
         model_path = params.get("modelPath")
         if model_path is None:
             model_path = str(self.paths().whisper_dir)
@@ -534,11 +543,13 @@ class EngineRegistry:
         progress("processing")
         started = time.perf_counter()
         try:
+            options = {} if beam_size is None else {"beam_size": beam_size}
             segments_iterator, _info = model.transcribe(
                 str(audio),
                 language=WHISPER_LANGUAGE,
                 task="transcribe",
                 vad_filter=True,
+                **options,
             )
             segments = [
                 {
