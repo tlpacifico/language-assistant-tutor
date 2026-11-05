@@ -153,7 +153,7 @@ fn retry_returns_to_the_step_that_failed() {
 fn authorize_can_only_resume_to_a_state_that_matches_the_conversation() {
     use ArticleEvent::*;
     use ArticleState::*;
-    for target in [AwaitingTutor, Ready, NeedsReview] {
+    for target in [AwaitingTutor, Ready, NeedsReview, Finishing] {
         assert_eq!(
             transition(Draft, Authorize { resume_to: target }).unwrap(),
             target

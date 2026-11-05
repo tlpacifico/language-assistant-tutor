@@ -9,7 +9,8 @@ use crate::domain::{error_code, AppError};
 #[serde(rename_all = "snake_case")]
 pub enum ArticleEvent {
     /// `resume_to`: passo da conversa a retomar (`AwaitingTutor` sem turnos ou
-    /// com resposta por enviar, `Ready` depois do tutor, `NeedsReview`).
+    /// com resposta por enviar, `Ready` depois do tutor, `NeedsReview`, ou
+    /// `Finishing` quando o feedback final falhou antes da revogação).
     Authorize {
         resume_to: ArticleState,
     },
@@ -47,7 +48,7 @@ pub fn transition(state: ArticleState, event: ArticleEvent) -> Result<ArticleSta
         (
             S::Draft,
             E::Authorize {
-                resume_to: target @ (S::AwaitingTutor | S::Ready | S::NeedsReview),
+                resume_to: target @ (S::AwaitingTutor | S::Ready | S::NeedsReview | S::Finishing),
             },
         ) => target,
         (S::AwaitingTutor, E::TutorReplied) => S::Ready,

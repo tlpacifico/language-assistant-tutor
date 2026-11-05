@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use language_assistant_tutor::db::{
     CommandIdentity, CommandIdentityLocation, Database, DATABASE_VERSION, MIGRATION_V1,
-    MIGRATION_V2, MIGRATION_V4,
+    MIGRATION_V2, MIGRATION_V4, MIGRATION_V5,
 };
 use language_assistant_tutor::practice::CaptureOwner;
 use rusqlite::Connection;
@@ -417,6 +417,7 @@ fn migration_rollback_restores_v2() {
         MIGRATION_V2,
         broken_v3,
         MIGRATION_V4,
+        MIGRATION_V5,
     )
     .expect_err("a migração v3 injetada deve falhar");
     assert!(error.retryable, "uma falha de migração é recuperável");

@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use language_assistant_tutor::db::{
-    Database, DATABASE_VERSION, MIGRATION_V1, MIGRATION_V2, MIGRATION_V3,
+    Database, DATABASE_VERSION, MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4,
+    MIGRATION_V5,
 };
 use rusqlite::Connection;
 
@@ -34,13 +35,13 @@ fn table_exists(connection: &Connection, name: &str) -> bool {
         > 0
 }
 
-/// Aplica as migrações 1..=`upto` e semeia conteúdo STAR.
+/// Aplica as migrações 1..=`upto` (até à v4) e semeia conteúdo STAR.
 fn apply_upto(path: &Path, upto: u32) {
     let connection = raw(path);
     connection
         .execute_batch("PRAGMA foreign_keys=OFF;")
         .expect("desativar FKs");
-    for (n, sql) in [MIGRATION_V1, MIGRATION_V2, MIGRATION_V3]
+    for (n, sql) in [MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4]
         .iter()
         .enumerate()
     {
@@ -90,6 +91,17 @@ fn star_dump(connection: &Connection) -> String {
     out
 }
 
+fn has_failed_from(connection: &Connection) -> bool {
+    connection
+        .query_row(
+            "SELECT count(*) FROM pragma_table_info('article_sessions') WHERE name = 'failed_from'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("pragma_table_info")
+        > 0
+}
+
 const ARTICLE_TABLES: [&str; 8] = [
     "article_sessions",
     "article_branches",
@@ -102,16 +114,17 @@ const ARTICLE_TABLES: [&str; 8] = [
 ];
 
 #[test]
-fn every_previous_version_migrates_to_v4_keeping_star_content() {
-    assert_eq!(DATABASE_VERSION, 4);
-    for upto in 1..=3u32 {
+fn every_previous_version_migrates_to_v5_keeping_star_content() {
+    assert_eq!(DATABASE_VERSION, 5);
+    for upto in 1..=4u32 {
         let (_directory, path) = temp_path();
         apply_upto(&path, upto);
         let before = star_dump(&raw(&path));
         let database = Database::open(path.clone()).expect("migrar para v4");
         drop(database);
         let connection = raw(&path);
-        assert_eq!(user_version(&connection), 4, "v{upto}→v4");
+        assert_eq!(user_version(&connection), 5, "v{upto}→v5");
+        assert!(has_failed_from(&connection), "failed_from após v{upto}");
         for table in ARTICLE_TABLES {
             assert!(table_exists(&connection, table), "{table} após v{upto}");
         }
@@ -123,11 +136,12 @@ fn every_previous_version_migrates_to_v4_keeping_star_content() {
             .expect("foreign_key_check");
         assert_eq!(violations, 0);
     }
-    // v0 → v4.
+    // v0 → v5.
     let (_directory, path) = temp_path();
-    drop(Database::open(path.clone()).expect("v0→v4"));
+    drop(Database::open(path.clone()).expect("v0→v5"));
     let connection = raw(&path);
-    assert_eq!(user_version(&connection), 4);
+    assert_eq!(user_version(&connection), 5);
+    assert!(has_failed_from(&connection));
     assert!(table_exists(&connection, "article_sessions"));
 }
 
@@ -160,6 +174,7 @@ fn invalid_v4_migration_rolls_back_to_v3() {
         MIGRATION_V2,
         MIGRATION_V3,
         broken,
+        MIGRATION_V5,
     )
     .expect_err("v4 inválida");
     assert!(error.retryable);
@@ -167,4 +182,26 @@ fn invalid_v4_migration_rolls_back_to_v3() {
     assert_eq!(user_version(&connection), 3);
     assert!(!table_exists(&connection, "article_sessions"));
     assert_eq!(star_dump(&connection), before);
+}
+
+#[test]
+fn invalid_v5_migration_rolls_back_to_v4_keeping_article_data() {
+    let (_directory, path) = temp_path();
+    apply_upto(&path, 4);
+    let broken = "ALTER TABLE article_sessions ADD COLUMN failed_from TEXT;
+                  INSERT INTO tabela_inexistente (id) VALUES (1);";
+    let error = Database::open_with_migrations(
+        path.clone(),
+        MIGRATION_V1,
+        MIGRATION_V2,
+        MIGRATION_V3,
+        MIGRATION_V4,
+        broken,
+    )
+    .expect_err("v5 inválida");
+    assert!(error.retryable);
+    let connection = raw(&path);
+    assert_eq!(user_version(&connection), 4);
+    assert!(table_exists(&connection, "article_sessions"));
+    assert!(!has_failed_from(&connection));
 }

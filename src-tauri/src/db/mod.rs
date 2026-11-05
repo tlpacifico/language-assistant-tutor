@@ -45,7 +45,7 @@ pub use rewrites::ExerciseSources;
 pub use stories::{missing_fields, validate_story_input, PreparationReservation};
 
 /// Versão do esquema escrita em `PRAGMA user_version`.
-pub const DATABASE_VERSION: u32 = 4;
+pub const DATABASE_VERSION: u32 = 5;
 
 /// Esquema inicial da fase 2, aplicado numa única transação.
 pub const MIGRATION_V1: &str = include_str!("migrations/001_guided_interview.sql");
@@ -58,6 +58,9 @@ pub const MIGRATION_V3: &str = include_str!("migrations/003_improve_repeat.sql")
 
 /// Migração da conversa sobre artigos.
 pub const MIGRATION_V4: &str = include_str!("migrations/004_article_conversation.sql");
+
+/// Origem da falha recuperável da conversa sobre artigos.
+pub const MIGRATION_V5: &str = include_str!("migrations/005_article_failed_from.sql");
 
 /// Ligação SQLite partilhável. Os clones referem a mesma ligação protegida.
 #[derive(Clone)]
@@ -84,12 +87,19 @@ impl Database {
     /// [`MIGRATION_V3`]; os testes de rollback injetam um esquema inválido para
     /// provar que a transação reverte.
     pub fn open_with_schema(path: PathBuf, schema: &str) -> Result<Self> {
-        Self::open_with_migrations(path, schema, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4)
+        Self::open_with_migrations(
+            path,
+            schema,
+            MIGRATION_V2,
+            MIGRATION_V3,
+            MIGRATION_V4,
+            MIGRATION_V5,
+        )
     }
 
-    /// Abre a base com as quatro migrações explícitas, sem aplicar o banco de perguntas.
+    /// Abre a base com as cinco migrações explícitas, sem aplicar o banco de perguntas.
     ///
-    /// Suporta qualquer versão anterior até v4, cada abertura numa única
+    /// Suporta qualquer versão anterior até v5, cada abertura numa única
     /// transação. A versão é lida antes de qualquer escrita; uma versão futura é
     /// recusada sem alterar nada. As chaves estrangeiras ficam desativadas
     /// apenas durante a transação de migração e voltam a ativar-se em todos os
@@ -101,6 +111,7 @@ impl Database {
         v2: &str,
         v3: &str,
         v4: &str,
+        v5: &str,
     ) -> Result<Self> {
         let mut connection = Connection::open(&path).map_err(open_failed)?;
 
@@ -137,6 +148,9 @@ impl Database {
                 }
                 if version <= 3 {
                     tx.execute_batch(v4).map_err(migration_failed)?;
+                }
+                if version <= 4 {
+                    tx.execute_batch(v5).map_err(migration_failed)?;
                 }
                 let bad = tx
                     .prepare("PRAGMA foreign_key_check")

@@ -251,6 +251,17 @@ impl Database {
             }
             tx.execute("DELETE FROM article_sessions WHERE id = ?1", [session_id])
                 .map_err(write_failed)?;
+            // Recibos: só o da criação sobrevive (repetir a criação não duplica a
+            // sessão) e é podado ao fim de 30 dias; os restantes saem já.
+            tx.execute(
+                "DELETE FROM article_receipts
+                 WHERE (session_id = ?1 AND operation <> 'create')
+                    OR (operation = 'create'
+                        AND created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')
+                        AND session_id NOT IN (SELECT id FROM article_sessions))",
+                [session_id],
+            )
+            .map_err(write_failed)?;
             tx.commit().map_err(write_failed)?;
             Ok(true)
         })
@@ -677,10 +688,13 @@ fn build_snapshot(connection: &Connection, session: SessionRow) -> Result<Articl
                 || !t.text.is_empty()
                 || (awaiting_review && *index == last)
         })
-        .map(|(_, t)| ArticleTurnView {
+        .map(|(_, t)| t)
+        .enumerate()
+        // Posição visível (1, 2, 3…): turnos escondidos não deixam lacunas.
+        .map(|(position, t)| ArticleTurnView {
             id: t.id.clone(),
             branch_id: t.branch_id.clone(),
-            index: t.ordinal,
+            index: position as u32 + 1,
             speaker: t.speaker,
             version: ArticleVersionView {
                 id: t.version_id.clone(),
@@ -833,12 +847,13 @@ fn apply(
             if destination.trim().is_empty() || notice_version != ARTICLE_NOTICE_VERSION {
                 return Err(invalid("A autorização não corresponde ao aviso atual."));
             }
-            state = transition(
-                state,
-                ArticleEvent::Authorize {
-                    resume_to: resume_target(&turns),
-                },
-            )?;
+            // Feedback final falhado antes da revogação: a nova autorização retoma o relatório.
+            let resume_to = if session.failed_from == Some(ArticleState::Finishing) {
+                ArticleState::Finishing
+            } else {
+                resume_target(&turns)
+            };
+            state = transition(state, ArticleEvent::Authorize { resume_to })?;
             auth = Some(ArticleAuthorization {
                 destination,
                 notice_version,
@@ -848,6 +863,10 @@ fn apply(
             state = transition(state, ArticleEvent::Revoke)?;
             auth = None;
             generation += 1;
+            // Só a intenção de terminar sobrevive à revogação.
+            failed_from = session
+                .failed_from
+                .filter(|from| *from == ArticleState::Finishing);
         }
         ArticleMutation::Pause => {
             paused_from = Some(state);
@@ -975,7 +994,7 @@ fn apply(
         }
     }
     // A origem da falha só se mantém enquanto a falha existe (incl. em pausa).
-    if !matches!(operation, "fail" | "pause" | "resume") {
+    if !matches!(operation, "fail" | "pause" | "resume" | "revoke") {
         failed_from = None;
     }
     tx.execute(

@@ -723,3 +723,82 @@ fn a_forked_branch_projects_the_ancestor_prefix_and_latest_versions() {
     assert_eq!(context.turn_ids[1], "u1");
     assert_eq!(context.source_version_ids[1], "b2-v1");
 }
+
+#[test]
+fn reauthorizing_after_a_failed_final_feedback_resumes_the_report() {
+    let (_d, mut flow) = Flow::new("Article.");
+    flow.authorize_and_ask();
+    flow.answer("u1", "My answer.");
+    flow.apply(ArticleMutation::AddTutorTurn {
+        text: "More?".into(),
+    });
+    flow.apply(ArticleMutation::Finish);
+    flow.apply(ArticleMutation::Fail { error: failure() });
+    let revoked = flow.apply(ArticleMutation::Revoke);
+    assert_eq!(revoked.session.state, ArticleState::Draft);
+    assert!(revoked.session.authorization.is_none());
+    // Sem nova autorização nada se repete; ao autorizar, o relatório retoma.
+    assert_eq!(
+        flow.apply(authorize()).session.state,
+        ArticleState::Finishing
+    );
+    // A intenção de terminar não sobrevive a uma falha de outro tipo.
+    let (_d, mut flow) = Flow::new("Article.");
+    flow.authorize_and_ask();
+    flow.answer("u1", "My answer.");
+    flow.apply(ArticleMutation::Fail { error: failure() });
+    flow.apply(ArticleMutation::Revoke);
+    assert_eq!(
+        flow.apply(authorize()).session.state,
+        ArticleState::AwaitingTutor
+    );
+}
+
+#[test]
+fn turn_indexes_stay_contiguous_after_an_abandoned_recording() {
+    let (_d, mut flow) = Flow::new("Article.");
+    flow.authorize_and_ask();
+    flow.start("u1");
+    flow.apply(ArticleMutation::Fail { error: failure() });
+    flow.apply(ArticleMutation::Retry);
+    flow.answer("u2", "Real answer.");
+    let indexes: Vec<u32> = flow.snapshot.turns.iter().map(|t| t.index).collect();
+    assert_eq!(indexes, vec![1, 2]);
+    assert_eq!(flow.snapshot.turns[1].id, "u2");
+}
+
+#[test]
+fn purging_keeps_only_the_create_receipt_and_prunes_old_ones() {
+    let (_d, mut flow) = Flow::new("Article.");
+    flow.authorize_and_ask();
+    let id = flow.id();
+    // Recibo antigo de uma conversa já limpa e outro recente.
+    flow.database
+        .with_connection(|c| {
+            c.execute_batch(
+                "INSERT INTO article_receipts VALUES ('old', 'gone-1', 'create', 1, '2020-01-01T00:00:00.000Z');
+                 INSERT INTO article_receipts VALUES ('recent', 'gone-2', 'create', 1, strftime('%Y-%m-%dT%H:%M:%fZ','now'));",
+            )
+            .unwrap();
+            Ok(())
+        })
+        .unwrap();
+    flow.apply(ArticleMutation::Delete);
+    assert!(flow.database.purge_article_if_clean(&id).unwrap());
+    let ids: Vec<String> = flow
+        .database
+        .with_connection(|c| {
+            let mut st = c
+                .prepare("SELECT request_id FROM article_receipts ORDER BY request_id")
+                .unwrap();
+            let rows = st
+                .query_map([], |r| r.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            Ok(rows)
+        })
+        .unwrap();
+    // `c1` (criação desta sessão) e `recent` ficam; passos intermédios e `old` saem.
+    assert_eq!(ids, vec!["c1".to_string(), "recent".to_string()]);
+}
