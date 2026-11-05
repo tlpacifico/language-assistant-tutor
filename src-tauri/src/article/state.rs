@@ -8,9 +8,10 @@ use crate::domain::{error_code, AppError};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ArticleEvent {
-    /// `resume_ready`: já existem turnos, por isso volta a `Ready` sem novo pedido.
+    /// `resume_to`: passo da conversa a retomar (`AwaitingTutor` sem turnos ou
+    /// com resposta por enviar, `Ready` depois do tutor, `NeedsReview`).
     Authorize {
-        resume_ready: bool,
+        resume_to: ArticleState,
     },
     Revoke,
     TutorReplied,
@@ -22,7 +23,9 @@ pub enum ArticleEvent {
     TranscriptReady,
     TranscriptFailed,
     ManualText,
-    Retry,
+    /// Repete o passo que falhou; o argumento é o estado de onde veio a falha
+    /// (`AwaitingTutor`, `Finishing` ou `Recording`).
+    Retry(ArticleState),
     Finish,
     ReportReady,
     Pause,
@@ -41,13 +44,12 @@ pub fn transition(state: ArticleState, event: ArticleEvent) -> Result<ArticleSta
     use ArticleEvent as E;
     use ArticleState as S;
     let next = match (state, event) {
-        (S::Draft, E::Authorize { resume_ready: true }) => S::Ready,
         (
             S::Draft,
             E::Authorize {
-                resume_ready: false,
+                resume_to: target @ (S::AwaitingTutor | S::Ready | S::NeedsReview),
             },
-        ) => S::AwaitingTutor,
+        ) => target,
         (S::AwaitingTutor, E::TutorReplied) => S::Ready,
         (S::AwaitingTutor, E::RequestFailed) => S::RecoverableError,
         (S::AwaitingTutor | S::Ready | S::NeedsReview | S::RecoverableError, E::Revoke) => S::Draft,
@@ -57,7 +59,10 @@ pub fn transition(state: ArticleState, event: ArticleEvent) -> Result<ArticleSta
         (S::Transcribing, E::TranscriptReady) => S::AwaitingTutor,
         (S::Transcribing, E::TranscriptFailed) => S::NeedsReview,
         (S::NeedsReview, E::ManualText) => S::AwaitingTutor,
-        (S::RecoverableError, E::Retry) => S::AwaitingTutor,
+        (S::RecoverableError, E::Retry(S::AwaitingTutor)) => S::AwaitingTutor,
+        (S::RecoverableError, E::Retry(S::Finishing)) => S::Finishing,
+        // Gravação interrompida: o turno não tem texto, volta a gravar.
+        (S::RecoverableError, E::Retry(S::Recording)) => S::Ready,
         (S::AwaitingTutor | S::Ready | S::NeedsReview | S::RecoverableError, E::Finish) => {
             S::Finishing
         }

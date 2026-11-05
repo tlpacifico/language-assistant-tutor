@@ -1,8 +1,10 @@
 //! Domínio puro da conversa sobre artigos: limites, contexto, consentimento e estados.
 
 use language_assistant_tutor::article::{
-    can_send_automatically, transition, validate_article, ArticleAuthorization, ArticleContext,
-    ArticleCreate, ArticleEvent, ArticleState, ContextRole, ContextTurn, ARTICLE_NOTICE_VERSION,
+    can_send_automatically, transition, validate_answer_text, validate_article,
+    ArticleAuthorization, ArticleContext, ArticleCreate, ArticleEvent, ArticleState, ContextRole,
+    ContextTurn, ARTICLE_NOTICE_VERSION, MAX_ANSWER_BYTES, MAX_CONTEXT_BYTES,
+    MAX_TUTOR_REPLY_BYTES, NEXT_ANSWER_RESERVE_BYTES,
 };
 
 fn create(text: String) -> ArticleCreate {
@@ -44,6 +46,7 @@ fn article_context_reserves_next_answer() {
         turns: vec![turn(10_000)],
         branch_id: "b".into(),
         source_version_ids: vec![],
+        turn_ids: vec![],
     };
     assert!(context.has_room_for_next_answer());
     // 48 000 - 16 000 = 32 000 bytes disponíveis antes de reservar a resposta.
@@ -76,7 +79,7 @@ fn automatic_send_requires_consent() {
         transition(
             ArticleState::Draft,
             ArticleEvent::Authorize {
-                resume_ready: false
+                resume_to: ArticleState::AwaitingTutor
             }
         )
         .unwrap(),
@@ -119,4 +122,77 @@ fn recording_only_stops_on_user_action() {
     assert_eq!(transition(Ready, Finish).unwrap(), Finishing);
     assert_eq!(transition(Finishing, ReportReady).unwrap(), Completed);
     assert!(transition(Completed, StartRecording).is_err());
+}
+
+#[test]
+fn retry_returns_to_the_step_that_failed() {
+    use ArticleEvent::*;
+    use ArticleState::*;
+    // Pedido de resposta falhado: repete a resposta.
+    assert_eq!(
+        transition(RecoverableError, Retry(AwaitingTutor)).unwrap(),
+        AwaitingTutor
+    );
+    // Feedback final falhado: repete o relatório, não um turno de diálogo.
+    assert_eq!(
+        transition(RecoverableError, Retry(Finishing)).unwrap(),
+        Finishing
+    );
+    // Gravação interrompida: o turno não tem texto, por isso volta a gravar.
+    assert_eq!(
+        transition(RecoverableError, Retry(Recording)).unwrap(),
+        Ready
+    );
+    // Nenhum outro destino é aceite e só se repete a partir do erro.
+    assert!(transition(RecoverableError, Retry(Draft)).is_err());
+    assert!(transition(RecoverableError, Retry(Completed)).is_err());
+    assert!(transition(Ready, Retry(AwaitingTutor)).is_err());
+}
+
+#[test]
+fn authorize_can_only_resume_to_a_state_that_matches_the_conversation() {
+    use ArticleEvent::*;
+    use ArticleState::*;
+    for target in [AwaitingTutor, Ready, NeedsReview] {
+        assert_eq!(
+            transition(Draft, Authorize { resume_to: target }).unwrap(),
+            target
+        );
+    }
+    assert!(transition(
+        Draft,
+        Authorize {
+            resume_to: Recording
+        }
+    )
+    .is_err());
+    assert!(transition(
+        Draft,
+        Authorize {
+            resume_to: Completed
+        }
+    )
+    .is_err());
+}
+
+#[test]
+fn next_answer_and_tutor_reply_always_fit_in_the_context_window() {
+    // Pior caso em UTF-8: 4 bytes por carácter.
+    assert!(validate_answer_text(&"𝄞".repeat(MAX_ANSWER_BYTES / 4)).is_ok());
+    assert!(validate_answer_text(&"𝄞".repeat(MAX_ANSWER_BYTES / 4 + 1)).is_err());
+    // Resposta e comentário+pergunta do tutor cabem na reserva.
+    const { assert!(MAX_ANSWER_BYTES + MAX_TUTOR_REPLY_BYTES <= NEXT_ANSWER_RESERVE_BYTES) };
+    assert_eq!(MAX_TUTOR_REPLY_BYTES, (500 + 300) * 4);
+    // Com margem para uma resposta, o contexto final nunca passa do teto.
+    const {
+        assert!(
+            (MAX_CONTEXT_BYTES - NEXT_ANSWER_RESERVE_BYTES)
+                + MAX_ANSWER_BYTES
+                + MAX_TUTOR_REPLY_BYTES
+                <= MAX_CONTEXT_BYTES
+        )
+    };
+    // 8 000 caracteres de 1 byte continuam a ser aceites.
+    assert!(validate_answer_text(&"a".repeat(8_000)).is_ok());
+    assert!(validate_answer_text(&"a".repeat(8_001)).is_err());
 }

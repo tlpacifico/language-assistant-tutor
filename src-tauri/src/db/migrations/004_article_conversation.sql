@@ -12,6 +12,8 @@ CREATE TABLE article_sessions (
         'draft', 'awaiting_tutor', 'ready', 'recording', 'transcribing',
         'needs_review', 'recoverable_error', 'finishing', 'completed', 'paused')),
     paused_from TEXT,
+    -- Estado de onde veio a falha recuperável (para repetir o passo certo).
+    failed_from TEXT,
     version INTEGER NOT NULL CHECK (version >= 1),
     -- Incrementa ao revogar, terminar ou corrigir: invalida pedidos em curso.
     generation INTEGER NOT NULL DEFAULT 1 CHECK (generation >= 1),

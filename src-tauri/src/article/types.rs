@@ -18,6 +18,16 @@ pub const MAX_TURNS_PER_BRANCH: usize = 20;
 pub const SUGGEST_FINISH_AFTER: usize = 5;
 pub const MAX_CONTEXT_BYTES: usize = 48_000;
 pub const NEXT_ANSWER_RESERVE_BYTES: usize = 16_000;
+/// Comentário (500) + pergunta (300) do tutor, no pior caso UTF-8 (4 bytes).
+pub const MAX_TUTOR_REPLY_BYTES: usize = (MAX_COMMENT_CHARS + MAX_QUESTION_CHARS) * 4;
+/// Teto de uma resposta em bytes: resposta e réplica do tutor cabem sempre na
+/// reserva, por isso o feedback final nunca excede `MAX_CONTEXT_BYTES`.
+/// Teto do artigo em bytes: deixa espaço, na parte do contexto anterior à
+/// reserva, para o título (200 caracteres) e a pergunta de abertura do tutor
+/// (300 caracteres), no pior caso UTF-8.
+pub const MAX_ARTICLE_BYTES: usize =
+    MAX_CONTEXT_BYTES - NEXT_ANSWER_RESERVE_BYTES - (MAX_TITLE_CHARS + MAX_QUESTION_CHARS) * 4;
+pub const MAX_ANSWER_BYTES: usize = NEXT_ANSWER_RESERVE_BYTES - MAX_TUTOR_REPLY_BYTES;
 pub const MAX_REQUEST_BYTES: usize = 160_000;
 pub const MAX_COMMENT_CHARS: usize = 500;
 pub const MAX_QUESTION_CHARS: usize = 300;
@@ -230,7 +240,10 @@ pub struct ArticleContext {
     pub title: Option<String>,
     pub turns: Vec<ContextTurn>,
     pub branch_id: String,
+    /// Versão efetiva de cada fala; paralelo a `turns`.
     pub source_version_ids: Vec<String>,
+    /// Identificador do turno de cada fala; paralelo a `turns`.
+    pub turn_ids: Vec<String>,
 }
 
 impl ArticleContext {
@@ -262,7 +275,7 @@ pub fn validate_article(input: &ArticleCreate) -> Result<()> {
             "O artigo excede 12 000 caracteres. Reduza o texto; a aplicação não o corta.",
         ));
     }
-    if text.len() > MAX_CONTEXT_BYTES - NEXT_ANSWER_RESERVE_BYTES {
+    if text.len() > MAX_ARTICLE_BYTES {
         return Err(invalid(
             "O artigo é demasiado extenso para a conversa. Reduza o texto; a aplicação não o corta.",
         ));
@@ -281,9 +294,9 @@ pub fn validate_answer_text(text: &str) -> Result<()> {
     if text.is_empty() {
         return Err(invalid("A resposta está vazia."));
     }
-    if text.chars().count() > MAX_ANSWER_CHARS {
+    if text.chars().count() > MAX_ANSWER_CHARS || text.len() > MAX_ANSWER_BYTES {
         return Err(invalid(
-            "A resposta excede 8 000 caracteres. Reveja o texto antes de o enviar.",
+            "A resposta é demasiado longa (máximo 8 000 caracteres e 12 800 bytes). Reveja o texto antes de o enviar.",
         ));
     }
     Ok(())

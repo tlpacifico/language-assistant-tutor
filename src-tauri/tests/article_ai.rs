@@ -21,12 +21,14 @@ fn turn(role: ContextRole, text: &str) -> ContextTurn {
 
 fn context(article: &str, turns: Vec<ContextTurn>) -> ArticleContext {
     let ids = (0..turns.len()).map(|i| format!("v{i}")).collect();
+    let turn_ids = (0..turns.len()).map(|i| format!("t{i}")).collect();
     ArticleContext {
         article: article.into(),
         title: None,
         turns,
         branch_id: "b1".into(),
         source_version_ids: ids,
+        turn_ids,
     }
 }
 
@@ -176,7 +178,8 @@ fn report_cites_only_real_user_quotes() {
     let report = validate_article_report(&good, &ctx).unwrap();
     assert_eq!(report.branch_id, "b1");
     assert_eq!(report.version_ids, ["v0", "v1", "v2", "v3"]);
-    assert_eq!(report.coherence.evidence[0].turn_id, "v1");
+    // A evidência aponta para o turno (não para a versão), como o contrato TypeScript.
+    assert_eq!(report.coherence.evidence[0].turn_id, "t1");
 
     // Citação inexistente.
     let invented = report_json(

@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::types::ArticleError;
+
 /// Alteração pedida ao repositório; as transições são validadas no núcleo.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -37,6 +39,12 @@ pub enum ArticleMutation {
         text: String,
     },
     Finish,
+    /// Falha recuperável de um pedido ou da gravação; guarda de onde veio.
+    Fail {
+        error: ArticleError,
+    },
+    /// Repete o passo que falhou.
+    Retry,
     /// Eliminação lógica; os ficheiros são removidos depois.
     Delete,
 }

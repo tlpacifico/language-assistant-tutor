@@ -5,6 +5,8 @@
 //! Fontes, turnos, versões e relatórios são imutáveis (triggers); a eliminação é
 //! lógica primeiro e só depois, sem ficheiros pendentes, remove as linhas.
 
+use std::collections::{HashMap, HashSet};
+
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use uuid::Uuid;
 
@@ -26,6 +28,7 @@ struct SessionRow {
     text: String,
     state: ArticleState,
     paused_from: Option<ArticleState>,
+    failed_from: Option<ArticleState>,
     version: u64,
     generation: u64,
     branch: String,
@@ -44,6 +47,8 @@ pub(crate) struct ProjectedTurn {
     pub source: Option<ArticleVersionSource>,
     pub text: String,
     pub audio: bool,
+    /// Fala já confirmada (tutor, revista ou transcrição dentro dos limites).
+    pub sendable: bool,
 }
 
 impl Database {
@@ -64,8 +69,11 @@ impl Database {
         let now = utc_now();
         self.with_connection(|connection| {
             let tx = begin(connection)?;
-            if let Some(session_id) = receipt(&tx, &request_id)? {
-                return snapshot(&tx, &session_id);
+            if let Some((session_id, operation)) = receipt(&tx, &request_id)? {
+                if operation != "create" {
+                    return Err(reused_request());
+                }
+                return replay(&tx, &session_id, snapshot);
             }
             let active: bool = tx
                 .query_row(
@@ -104,6 +112,18 @@ impl Database {
         })
     }
 
+    /// Contexto textual exato do ramo ativo (só falas confirmadas), para os pedidos à IA.
+    pub fn article_context(&self, session_id: &str) -> Result<ArticleContext> {
+        self.with_connection(|connection| {
+            let session = load_session(connection, session_id)?;
+            if session.deleted {
+                return Err(deleted());
+            }
+            let turns = project_branch(connection, &session.branch)?;
+            Ok(context_of(&session, &turns))
+        })
+    }
+
     /// Fotografia do estado persistido; sem efeitos externos.
     pub fn article_snapshot(&self, session_id: &str) -> Result<ArticleSnapshot> {
         self.with_connection(|connection| snapshot(connection, session_id))
@@ -122,8 +142,13 @@ impl Database {
         let now = utc_now();
         self.with_connection(|connection| {
             let tx = begin(connection)?;
-            if receipt(&tx, &request_id)?.is_some() {
-                return build_snapshot(&tx, load_session(&tx, &command.session_id)?);
+            if let Some((session_id, operation)) = receipt(&tx, &request_id)? {
+                if session_id != command.session_id || operation != operation_name(&change) {
+                    return Err(reused_request());
+                }
+                return replay(&tx, &session_id, |tx, id| {
+                    build_snapshot(tx, load_session(tx, id)?)
+                });
             }
             let session = load_session(&tx, &command.session_id)?;
             if session.deleted {
@@ -136,7 +161,8 @@ impl Database {
                     false,
                 ));
             }
-            let operation = apply(&tx, &session, change, &now)?;
+            let operation = operation_name(&change);
+            apply(&tx, &session, change, &now)?;
             insert_receipt(
                 &tx,
                 &request_id,
@@ -216,7 +242,6 @@ impl Database {
                 "article_versions",
                 "article_turns",
                 "article_branches",
-                "article_receipts",
             ] {
                 tx.execute(
                     &format!("DELETE FROM {table} WHERE session_id = ?1"),
@@ -262,15 +287,41 @@ fn write_failed(error: rusqlite::Error) -> AppError {
     )
 }
 
-fn receipt(connection: &Connection, request_id: &str) -> Result<Option<String>> {
+/// Sessão e operação já registadas para um `requestId`.
+fn receipt(connection: &Connection, request_id: &str) -> Result<Option<(String, String)>> {
     connection
         .query_row(
-            "SELECT session_id FROM article_receipts WHERE request_id = ?1",
+            "SELECT session_id, operation FROM article_receipts WHERE request_id = ?1",
             [request_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(read_failed)
+}
+
+fn reused_request() -> AppError {
+    invalid("O identificador do pedido já foi usado noutra operação ou conversa.")
+}
+
+/// Repete um recibo: devolve o resultado atual da sessão, ou `ARTICLE_DELETED`
+/// se a conversa já foi eliminada e limpa (os recibos sobrevivem à limpeza para
+/// que repetir uma criação não gere uma sessão nova).
+fn replay(
+    connection: &Connection,
+    session_id: &str,
+    build: impl FnOnce(&Connection, &str) -> Result<ArticleSnapshot>,
+) -> Result<ArticleSnapshot> {
+    let exists: bool = connection
+        .query_row(
+            "SELECT count(*) > 0 FROM article_sessions WHERE id = ?1",
+            [session_id],
+            |row| row.get(0),
+        )
+        .map_err(read_failed)?;
+    if !exists {
+        return Err(deleted());
+    }
+    build(connection, session_id)
 }
 
 fn insert_receipt(
@@ -312,7 +363,7 @@ fn load_session(connection: &Connection, session_id: &str) -> Result<SessionRow>
         .query_row(
             "SELECT id, title, article_text, state, paused_from, version, generation,
                     active_branch_id, auth_destination, auth_notice_version,
-                    error_json, deleted_at IS NOT NULL
+                    error_json, deleted_at IS NOT NULL, failed_from
              FROM article_sessions WHERE id = ?1",
             [session_id],
             |row| {
@@ -329,13 +380,27 @@ fn load_session(connection: &Connection, session_id: &str) -> Result<SessionRow>
                     row.get::<_, Option<String>>(9)?,
                     row.get::<_, Option<String>>(10)?,
                     row.get::<_, bool>(11)?,
+                    row.get::<_, Option<String>>(12)?,
                 ))
             },
         )
         .optional()
         .map_err(read_failed)?;
-    let Some((id, title, text, state, paused, version, generation, branch, dest, notice, err, del)) =
-        row
+    let Some((
+        id,
+        title,
+        text,
+        state,
+        paused,
+        version,
+        generation,
+        branch,
+        dest,
+        notice,
+        err,
+        del,
+        failed,
+    )) = row
     else {
         return Err(AppError::new(
             error_code::STALE_SOURCE,
@@ -349,6 +414,7 @@ fn load_session(connection: &Connection, session_id: &str) -> Result<SessionRow>
         text,
         state: state_from_str(&state)?,
         paused_from: paused.as_deref().map(state_from_str).transpose()?,
+        failed_from: failed.as_deref().map(state_from_str).transpose()?,
         version: version as u64,
         generation: generation as u64,
         branch,
@@ -364,103 +430,137 @@ fn load_session(connection: &Connection, session_id: &str) -> Result<SessionRow>
     })
 }
 
-/// Cadeia de ramos da folha à raiz, com o limite de ordinal de cada um.
-fn branch_chain(connection: &Connection, branch_id: &str) -> Result<Vec<(String, Option<u32>)>> {
-    let mut chain = Vec::new();
-    let mut current = branch_id.to_owned();
-    let mut limit: Option<u32> = None;
-    loop {
-        chain.push((current.clone(), limit));
-        let parent: Option<(Option<String>, Option<String>)> = connection
-            .query_row(
-                "SELECT parent_branch_id, fork_turn_id FROM article_branches WHERE id = ?1",
-                [&current],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .map_err(read_failed)?;
-        match parent {
-            Some((Some(parent), Some(fork))) => {
-                let ordinal: u32 = connection
-                    .query_row(
-                        "SELECT ordinal FROM article_turns WHERE id = ?1",
-                        [&fork],
-                        |row| row.get(0),
-                    )
-                    .map_err(read_failed)?;
-                limit = Some(limit.map_or(ordinal, |l| l.min(ordinal)));
-                current = parent;
-            }
-            _ => break,
-        }
-    }
-    Ok(chain)
-}
-
 /// Projeção do percurso de um ramo: prefixo ancestral até à bifurcação mais os
 /// turnos do próprio ramo, com a versão efetiva de cada turno.
+///
+/// Faz um número constante de consultas (ramos, turnos, versões e áudios da
+/// sessão) e resolve a cadeia em memória, porque corre dentro de transações
+/// imediatas que bloqueiam a base.
 pub(crate) fn project_branch(
     connection: &Connection,
     branch_id: &str,
 ) -> Result<Vec<ProjectedTurn>> {
-    let chain = branch_chain(connection, branch_id)?;
-    let mut turns: Vec<ProjectedTurn> = Vec::new();
-    for (branch, limit) in &chain {
-        let mut statement = connection
-            .prepare(
-                "SELECT id, ordinal, speaker FROM article_turns
-                 WHERE branch_id = ?1 AND (?2 IS NULL OR ordinal <= ?2)",
-            )
-            .map_err(read_failed)?;
-        let rows = statement
-            .query_map(params![branch, limit], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, u32>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })
-            .map_err(read_failed)?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(read_failed)?;
-        for (id, ordinal, speaker) in rows {
-            let speaker = if speaker == "tutor" {
-                ArticleSpeaker::Tutor
-            } else {
-                ArticleSpeaker::User
-            };
-            let mut version = None;
-            for (candidate, _) in &chain {
-                version = connection
-                    .query_row(
-                        "SELECT id, source, text FROM article_versions
-                         WHERE turn_id = ?1 AND branch_id = ?2 ORDER BY seq DESC LIMIT 1",
-                        params![id, candidate],
-                        |row| {
-                            Ok((
-                                row.get::<_, String>(0)?,
-                                row.get::<_, Option<String>>(1)?,
-                                row.get::<_, String>(2)?,
-                            ))
-                        },
-                    )
-                    .optional()
-                    .map_err(read_failed)?;
-                if version.is_some() {
-                    break;
-                }
+    let session_id: String = connection
+        .query_row(
+            "SELECT session_id FROM article_branches WHERE id = ?1",
+            [branch_id],
+            |row| row.get(0),
+        )
+        .map_err(read_failed)?;
+
+    let mut parents: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+    for row in collect(
+        connection,
+        "SELECT id, parent_branch_id, fork_turn_id FROM article_branches WHERE session_id = ?1",
+        &session_id,
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        },
+    )? {
+        parents.insert(row.0, (row.1, row.2));
+    }
+
+    let rows = collect(
+        connection,
+        "SELECT id, branch_id, ordinal, speaker FROM article_turns WHERE session_id = ?1",
+        &session_id,
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u32>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        },
+    )?;
+    let ordinals: HashMap<&str, u32> = rows.iter().map(|r| (r.0.as_str(), r.2)).collect();
+
+    // Cadeia da folha à raiz, com o limite de ordinal de cada ramo.
+    let mut chain: Vec<(String, Option<u32>)> = Vec::new();
+    let mut current = branch_id.to_owned();
+    let mut limit: Option<u32> = None;
+    loop {
+        chain.push((current.clone(), limit));
+        match parents.get(&current) {
+            Some((Some(parent), Some(fork))) if chain.len() <= parents.len() => {
+                let ordinal = *ordinals
+                    .get(fork.as_str())
+                    .ok_or_else(|| read_failed(rusqlite::Error::QueryReturnedNoRows))?;
+                limit = Some(limit.map_or(ordinal, |l| l.min(ordinal)));
+                current = parent.clone();
             }
-            let audio: bool = connection
-                .query_row(
-                    "SELECT count(*) > 0 FROM article_artifacts
-                     WHERE turn_id = ?1 AND state = 'present'",
-                    [&id],
-                    |row| row.get(0),
-                )
-                .map_err(read_failed)?;
-            let (version_id, source, text) = match version {
-                Some((vid, source, text)) => (
-                    vid,
+            _ => break,
+        }
+    }
+
+    // Versão mais recente de cada (turno, ramo).
+    type Latest = (i64, String, Option<String>, String);
+    let mut latest: HashMap<(String, String), Latest> = HashMap::new();
+    for (id, turn, branch, seq, source, text) in collect(
+        connection,
+        "SELECT id, turn_id, branch_id, seq, source, text FROM article_versions
+         WHERE session_id = ?1",
+        &session_id,
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        },
+    )? {
+        let entry = latest
+            .entry((turn, branch))
+            .or_insert((0, id.clone(), None, String::new()));
+        if seq > entry.0 {
+            *entry = (seq, id, source, text);
+        }
+    }
+
+    let with_audio: HashSet<String> = collect(
+        connection,
+        "SELECT DISTINCT turn_id FROM article_artifacts
+         WHERE session_id = ?1 AND state = 'present' AND turn_id IS NOT NULL",
+        &session_id,
+        |row| row.get::<_, String>(0),
+    )?
+    .into_iter()
+    .collect();
+
+    let mut turns: Vec<ProjectedTurn> = Vec::new();
+    for (id, branch, ordinal, speaker) in rows {
+        let in_path = chain
+            .iter()
+            .any(|(b, limit)| *b == branch && limit.is_none_or(|l| ordinal <= l));
+        if !in_path {
+            continue;
+        }
+        let speaker = if speaker == "tutor" {
+            ArticleSpeaker::Tutor
+        } else {
+            ArticleSpeaker::User
+        };
+        let version = chain
+            .iter()
+            .find_map(|(candidate, _)| latest.get(&(id.clone(), candidate.clone())));
+        let (version_id, source, text, sendable) = match version {
+            Some((_, vid, source, text)) => {
+                let sendable = match source.as_deref() {
+                    // Fala do tutor.
+                    None => true,
+                    Some("manual_review") => true,
+                    // A transcrição automática só segue se couber nos limites.
+                    Some(_) => validate_answer_text(text).is_ok(),
+                };
+                (
+                    vid.clone(),
                     source.as_deref().map(|s| {
                         if s == "manual_review" {
                             ArticleVersionSource::ManualReview
@@ -468,34 +568,53 @@ pub(crate) fn project_branch(
                             ArticleVersionSource::AutomaticSent
                         }
                     }),
-                    text,
-                ),
-                // Turno do utilizador sem texto ainda (gravação em curso).
-                None => (String::new(), None, String::new()),
-            };
-            turns.push(ProjectedTurn {
-                id,
-                branch_id: branch.clone(),
-                ordinal,
-                speaker,
-                version_id,
-                source,
-                text,
-                audio,
-            });
-        }
+                    text.clone(),
+                    sendable,
+                )
+            }
+            // Turno do utilizador sem texto ainda (gravação em curso) ou vazio.
+            None => (String::new(), None, String::new(), false),
+        };
+        turns.push(ProjectedTurn {
+            audio: with_audio.contains(&id),
+            id,
+            branch_id: branch,
+            ordinal,
+            speaker,
+            version_id,
+            source,
+            text,
+            sendable,
+        });
     }
     turns.sort_by_key(|t| t.ordinal);
     Ok(turns)
 }
 
+fn collect<T>(
+    connection: &Connection,
+    sql: &str,
+    session_id: &str,
+    map: impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+) -> Result<Vec<T>> {
+    let mut statement = connection.prepare(sql).map_err(read_failed)?;
+    let rows = statement
+        .query_map([session_id], map)
+        .map_err(read_failed)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(read_failed)?;
+    Ok(rows)
+}
+
+/// Contexto enviado à IA: só falas confirmadas. Texto por rever (transcrição
+/// excessiva ou vazia) fica de fora, tal como do limite de tamanho.
 fn context_of(session: &SessionRow, turns: &[ProjectedTurn]) -> ArticleContext {
+    let sent: Vec<&ProjectedTurn> = turns.iter().filter(|t| t.sendable).collect();
     ArticleContext {
         article: session.text.clone(),
         title: session.title.clone(),
-        turns: turns
+        turns: sent
             .iter()
-            .filter(|t| !t.text.is_empty())
             .map(|t| ContextTurn {
                 role: match t.speaker {
                     ArticleSpeaker::Tutor => ContextRole::Tutor,
@@ -505,29 +624,30 @@ fn context_of(session: &SessionRow, turns: &[ProjectedTurn]) -> ArticleContext {
             })
             .collect(),
         branch_id: session.branch.clone(),
-        source_version_ids: turns
-            .iter()
-            .filter(|t| !t.version_id.is_empty())
-            .map(|t| t.version_id.clone())
-            .collect(),
+        source_version_ids: sent.iter().map(|t| t.version_id.clone()).collect(),
+        turn_ids: sent.iter().map(|t| t.id.clone()).collect(),
     }
 }
 
 /// Número de respostas do utilizador já enviadas ou enviáveis no percurso.
-fn answer_count(session: &SessionRow, turns: &[ProjectedTurn]) -> usize {
-    let last_user = turns
-        .iter()
-        .rev()
-        .find(|t| t.speaker == ArticleSpeaker::User)
-        .map(|t| t.id.clone());
+fn answer_count(turns: &[ProjectedTurn]) -> usize {
     turns
         .iter()
-        .filter(|t| t.speaker == ArticleSpeaker::User && !t.text.is_empty())
-        .filter(|t| {
-            // Texto à espera de revisão ainda não foi enviado.
-            !(session.state == ArticleState::NeedsReview && last_user.as_deref() == Some(&t.id))
-        })
+        .filter(|t| t.speaker == ArticleSpeaker::User && t.sendable)
         .count()
+}
+
+/// Estado a que uma nova autorização regressa, conforme a última fala.
+fn resume_target(turns: &[ProjectedTurn]) -> ArticleState {
+    match turns.last() {
+        None => ArticleState::AwaitingTutor,
+        Some(t) if t.speaker == ArticleSpeaker::Tutor => ArticleState::Ready,
+        Some(t) if t.sendable => ArticleState::AwaitingTutor,
+        // Texto por rever (transcrição excessiva): continua por rever.
+        Some(t) if !t.version_id.is_empty() => ArticleState::NeedsReview,
+        // Gravação abandonada ou transcrição vazia: grava-se de novo.
+        Some(_) => ArticleState::Ready,
+    }
 }
 
 fn snapshot(connection: &Connection, session_id: &str) -> Result<ArticleSnapshot> {
@@ -542,12 +662,22 @@ fn snapshot(connection: &Connection, session_id: &str) -> Result<ArticleSnapshot
 /// eliminação e das suas repetições.
 fn build_snapshot(connection: &Connection, session: SessionRow) -> Result<ArticleSnapshot> {
     let projected = project_branch(connection, &session.branch)?;
-    let answers = answer_count(&session, &projected);
+    let answers = answer_count(&projected);
     let context = context_of(&session, &projected);
+    // Um turno do utilizador sem texto só aparece quando aguarda texto manual.
+    let awaiting_review = session.state == ArticleState::NeedsReview
+        || (session.state == ArticleState::Paused
+            && session.paused_from == Some(ArticleState::NeedsReview));
+    let last = projected.len().saturating_sub(1);
     let turns = projected
         .iter()
-        .filter(|t| t.speaker == ArticleSpeaker::Tutor || !t.id.is_empty())
-        .map(|t| ArticleTurnView {
+        .enumerate()
+        .filter(|(index, t)| {
+            t.speaker == ArticleSpeaker::Tutor
+                || !t.text.is_empty()
+                || (awaiting_review && *index == last)
+        })
+        .map(|(_, t)| ArticleTurnView {
             id: t.id.clone(),
             branch_id: t.branch_id.clone(),
             index: t.ordinal,
@@ -646,48 +776,67 @@ fn insert_version(
     Ok(())
 }
 
-fn require_turn(tx: &Transaction<'_>, session: &SessionRow, turn_id: &str) -> Result<()> {
-    let projected = project_branch(tx, &session.branch)?;
-    if projected
-        .iter()
-        .any(|t| t.id == turn_id && t.speaker == ArticleSpeaker::User)
-    {
-        Ok(())
-    } else {
-        Err(AppError::new(
+/// O turno indicado tem de ser o turno atual do utilizador (o último do
+/// percurso): uma transcrição atrasada ou uma correção antiga não reescreve
+/// respostas anteriores.
+fn require_current_turn(turns: &[ProjectedTurn], turn_id: &str) -> Result<()> {
+    match turns.last() {
+        Some(t) if t.speaker == ArticleSpeaker::User && t.id == turn_id => Ok(()),
+        _ => Err(AppError::new(
             error_code::STALE_SOURCE,
-            "O turno indicado não pertence à conversa ativa.",
+            "O turno indicado já não é o turno atual da conversa.",
             false,
-        ))
+        )),
     }
 }
 
-/// Aplica a mutação e atualiza a sessão; devolve o nome da operação do recibo.
+/// Nome da operação guardado no recibo; liga o `requestId` a uma só operação.
+fn operation_name(change: &ArticleMutation) -> &'static str {
+    match change {
+        ArticleMutation::Authorize { .. } => "authorize",
+        ArticleMutation::Revoke => "revoke",
+        ArticleMutation::Pause => "pause",
+        ArticleMutation::Resume => "resume",
+        ArticleMutation::AddTutorTurn { .. } => "tutor_turn",
+        ArticleMutation::StartRecording { .. } => "start_recording",
+        ArticleMutation::StopRecording => "stop_recording",
+        ArticleMutation::RecordTranscript { .. } => "transcript",
+        ArticleMutation::ManualText { .. } => "manual_text",
+        ArticleMutation::Finish => "finish",
+        ArticleMutation::Fail { .. } => "fail",
+        ArticleMutation::Retry => "retry",
+        ArticleMutation::Delete => "delete",
+    }
+}
+
+/// Aplica a mutação e atualiza a sessão.
 fn apply(
     tx: &Transaction<'_>,
     session: &SessionRow,
     change: ArticleMutation,
     now: &str,
-) -> Result<&'static str> {
+) -> Result<()> {
+    let operation = operation_name(&change);
     let mut state = session.state;
     let mut generation = session.generation;
     let mut paused_from = session.paused_from;
+    let mut failed_from = session.failed_from;
+    let mut error = None;
     let mut auth = session.auth.clone();
-    let operation: &'static str;
+    // Uma só projeção por operação, reutilizada por todas as verificações.
+    let turns = project_branch(tx, &session.branch)?;
     match change {
         ArticleMutation::Authorize {
             destination,
             notice_version,
         } => {
-            operation = "authorize";
             if destination.trim().is_empty() || notice_version != ARTICLE_NOTICE_VERSION {
                 return Err(invalid("A autorização não corresponde ao aviso atual."));
             }
-            let has_turns = !project_branch(tx, &session.branch)?.is_empty();
             state = transition(
                 state,
                 ArticleEvent::Authorize {
-                    resume_ready: has_turns,
+                    resume_to: resume_target(&turns),
                 },
             )?;
             auth = Some(ArticleAuthorization {
@@ -696,32 +845,29 @@ fn apply(
             });
         }
         ArticleMutation::Revoke => {
-            operation = "revoke";
             state = transition(state, ArticleEvent::Revoke)?;
             auth = None;
             generation += 1;
         }
         ArticleMutation::Pause => {
-            operation = "pause";
             paused_from = Some(state);
             state = transition(state, ArticleEvent::Pause)?;
+            error = session.error.clone();
         }
         ArticleMutation::Resume => {
-            operation = "resume";
             let target = session
                 .paused_from
                 .ok_or_else(|| invalid("A conversa não está em pausa."))?;
             state = transition(state, ArticleEvent::Resume(target))?;
             paused_from = None;
+            error = session.error.clone();
         }
         ArticleMutation::AddTutorTurn { text } => {
-            operation = "tutor_turn";
             let text = text.trim();
             if text.is_empty() {
                 return Err(invalid("A fala do tutor está vazia."));
             }
             state = transition(state, ArticleEvent::TutorReplied)?;
-            let turns = project_branch(tx, &session.branch)?;
             let turn_id = insert_turn(tx, session, next_ordinal(&turns), "tutor", now)?;
             insert_version(tx, session, &turn_id, None, text, now)?;
         }
@@ -729,15 +875,11 @@ fn apply(
             turn_id,
             audio_path,
         } => {
-            operation = "start_recording";
             if turn_id.trim().is_empty() || !artifact_path_ok(&session.id, &audio_path) {
                 return Err(invalid("O ficheiro de áudio não pertence a esta conversa."));
             }
-            let turns = project_branch(tx, &session.branch)?;
             let context = context_of(session, &turns);
-            if answer_count(session, &turns) >= MAX_TURNS_PER_BRANCH
-                || !context.has_room_for_next_answer()
-            {
+            if answer_count(&turns) >= MAX_TURNS_PER_BRANCH || !context.has_room_for_next_answer() {
                 return Err(invalid(
                     "A conversa atingiu o limite. Termine para obter o feedback.",
                 ));
@@ -757,20 +899,14 @@ fn apply(
             .map_err(write_failed)?;
         }
         ArticleMutation::StopRecording => {
-            operation = "stop_recording";
             state = transition(state, ArticleEvent::UserStop)?;
         }
         ArticleMutation::RecordTranscript { turn_id, text } => {
-            operation = "transcript";
-            require_turn(tx, session, &turn_id)?;
+            require_current_turn(&turns, &turn_id)?;
             let text = text.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty());
             let sendable = text
                 .as_deref()
                 .is_some_and(|t| validate_answer_text(t).is_ok());
-            if let Some(text) = &text {
-                // A transcrição automática fica sempre guardada, mesmo se excessiva.
-                insert_version(tx, session, &turn_id, Some("automatic_sent"), text, now)?;
-            }
             state = transition(
                 state,
                 if sendable {
@@ -779,11 +915,14 @@ fn apply(
                     ArticleEvent::TranscriptFailed
                 },
             )?;
+            if let Some(text) = &text {
+                // A transcrição automática fica sempre guardada, mesmo se excessiva.
+                insert_version(tx, session, &turn_id, Some("automatic_sent"), text, now)?;
+            }
         }
         ArticleMutation::ManualText { turn_id, text } => {
-            operation = "manual_text";
             validate_answer_text(&text)?;
-            require_turn(tx, session, &turn_id)?;
+            require_current_turn(&turns, &turn_id)?;
             state = transition(state, ArticleEvent::ManualText)?;
             insert_version(
                 tx,
@@ -795,12 +934,32 @@ fn apply(
             )?;
         }
         ArticleMutation::Finish => {
-            operation = "finish";
             state = transition(state, ArticleEvent::Finish)?;
             generation += 1;
         }
+        ArticleMutation::Fail { error: failure } => {
+            // Guarda de onde veio a falha para o `Retry` repetir o passo certo.
+            failed_from = Some(state);
+            let event = if state == ArticleState::Recording {
+                ArticleEvent::CaptureInterrupted
+            } else {
+                ArticleEvent::RequestFailed
+            };
+            state = transition(state, event)?;
+            error = Some(failure);
+        }
+        ArticleMutation::Retry => {
+            let from = session
+                .failed_from
+                .ok_or_else(|| invalid("Não há nenhuma falha para repetir."))?;
+            state = transition(state, ArticleEvent::Retry(from))?;
+            failed_from = None;
+        }
         ArticleMutation::Delete => {
-            operation = "delete";
+            // O ficheiro em escrita não pode ser marcado para remoção.
+            if session.state == ArticleState::Recording {
+                return Err(invalid("Pare a gravação antes de eliminar a conversa."));
+            }
             tx.execute(
                 "UPDATE article_artifacts SET state = 'pending_delete' WHERE session_id = ?1",
                 [&session.id],
@@ -812,27 +971,33 @@ fn apply(
                 params![session.id, now],
             )
             .map_err(write_failed)?;
-            return Ok(operation);
+            return Ok(());
         }
+    }
+    // A origem da falha só se mantém enquanto a falha existe (incl. em pausa).
+    if !matches!(operation, "fail" | "pause" | "resume") {
+        failed_from = None;
     }
     tx.execute(
         "UPDATE article_sessions
-         SET state = ?2, paused_from = ?3, generation = ?4, version = version + 1,
-             auth_destination = ?5, auth_notice_version = ?6, error_json = NULL,
-             updated_at = ?7
+         SET state = ?2, paused_from = ?3, failed_from = ?4, generation = ?5,
+             version = version + 1, auth_destination = ?6, auth_notice_version = ?7,
+             error_json = ?8, updated_at = ?9
          WHERE id = ?1",
         params![
             session.id,
             state_to_str(state),
             paused_from.map(state_to_str),
+            failed_from.map(state_to_str),
             generation as i64,
             auth.as_ref().map(|a| a.destination.clone()),
             auth.as_ref().map(|a| a.notice_version.clone()),
+            error.and_then(|e| serde_json::to_string(&e).ok()),
             now
         ],
     )
     .map_err(write_failed)?;
-    Ok(operation)
+    Ok(())
 }
 
 fn insert_turn(

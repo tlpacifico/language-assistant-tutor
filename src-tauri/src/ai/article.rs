@@ -265,7 +265,7 @@ fn dimension(value: &Value, context: &ArticleContext) -> Result<ArticleDimension
             ));
         }
         evidence.push(ArticleEvidence {
-            turn_id: context.source_version_ids[number - 1].clone(),
+            turn_id: context.turn_ids[number - 1].clone(),
             quote: quote.to_owned(),
             note: bounded(&item["note"], 1000)?.to_owned(),
         });
@@ -294,9 +294,11 @@ pub fn validate_article_report(content: &str, context: &ArticleContext) -> Resul
             "improvements",
         ],
     )?;
-    if context.source_version_ids.len() != context.turns.len() {
+    if context.source_version_ids.len() != context.turns.len()
+        || context.turn_ids.len() != context.turns.len()
+    {
         return Err(invalid_result(
-            "O contexto não identifica as versões das falas.",
+            "O contexto não identifica os turnos e as versões das falas.",
         ));
     }
     let improvements = value["improvements"]
