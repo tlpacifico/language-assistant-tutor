@@ -1431,3 +1431,30 @@ async fn full_conversation_authorize_five_turns_correct_regenerate_complete_and_
     assert!(transport.calls().is_empty());
     assert_eq!(worker.total(), 0);
 }
+
+#[tokio::test]
+async fn a_stale_stop_after_the_audio_closed_does_not_leave_the_microphone_stuck() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let started = h
+        .service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    // Comando com versão obsoleta: o áudio fecha mas o repositório recusa o fim.
+    let mut stale = h.cmd(&started);
+    stale.expected_version -= 1;
+    let error = h.service.article_stop_recording(stale).await.unwrap_err();
+    assert_eq!(error.code, "STALE_SOURCE");
+    // A gravação deixou de estar viva: recuperável, sem bloquear o microfone.
+    let after = h.snapshot(&id).await;
+    assert_eq!(after.session.state, ArticleState::RecoverableError);
+    assert_eq!(h.worker.transcriptions().len(), 0);
+    let retried = h.service.article_retry(h.cmd(&after)).await.unwrap();
+    assert_eq!(retried.session.state, ArticleState::Ready);
+    h.service
+        .article_start_recording(h.cmd(&retried))
+        .await
+        .expect("o microfone voltou a estar livre");
+}

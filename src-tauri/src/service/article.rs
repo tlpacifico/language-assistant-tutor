@@ -396,10 +396,33 @@ impl AppService {
         // O áudio finalizado já está no disco; só agora se regista o fim.
         let db = database.clone();
         let session_id = capture.session_id.clone();
-        let snapshot =
-            database_task(move || db.apply_article(&command, ArticleMutation::StopRecording))
-                .await?;
+        let stopped =
+            database_task(move || db.apply_article(&command, ArticleMutation::StopRecording)).await;
         self.lock_article().capture = None;
+        let snapshot = match stopped {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                // O áudio já fechou: sem esta marca a conversa ficava em `recording`
+                // sem captura viva. Fica recuperável (`Retry` volta a gravar).
+                self.set_article_busy();
+                let db = database.clone();
+                let failure = article_error(&error);
+                let failed = database_task({
+                    let session_id = session_id.clone();
+                    move || {
+                        db.apply_article_system(
+                            &session_id,
+                            ArticleMutation::Fail { error: failure },
+                        )
+                    }
+                })
+                .await;
+                if let Ok(snapshot) = &failed {
+                    self.publish_article(snapshot);
+                }
+                return Err(error);
+            }
+        };
         self.publish_article(&snapshot);
 
         let submitted = self.submit_article_transcription(&capture, &captured).await;
