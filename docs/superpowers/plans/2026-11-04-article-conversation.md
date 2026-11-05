@@ -10,7 +10,7 @@
 
 **Spec:** [desenho aprovado](../specs/2026-11-04-article-conversation-design.md).
 
-**Estado:** execução concluída em 2026-11-05 no ramo `feat/article-conversation`: tarefas 1 a 9 implementadas, com `verify.ps1` 8/8 (353 Rust, 147 Vitest, 56 Python), build `--no-bundle` e ensaio com dados temporários com saída 0. Desvios registados em [validação](../../article-conversation/validation.md) (sem capability no `health`, limite do artigo em 30 000 bytes, ramos antigos só em base de dados, sem regravação como ramo). **Pendente e não feito**: medições reais de desempenho e fidelidade (tarefa 8), roteiro manual com áudio, voz e inferência reais (tarefa 9) e validação visual. Nada disto é aceitação manual.
+**Estado:** execução concluída em 2026-11-05 no ramo `feat/article-conversation`: tarefas 1 a 9 implementadas, com `verify.ps1` 8/8 (354 Rust, 147 Vitest, 56 Python), build `--no-bundle` e ensaio com dados temporários com saída 0. Desvios registados em [validação](../../article-conversation/validation.md) (sem capability no `health`, limite do artigo em 30 000 bytes, ramos antigos só em base de dados, sem regravação como ramo). **Pendente e não feito**: medições reais de desempenho e fidelidade (tarefa 8), roteiro manual com áudio, voz e inferência reais (tarefa 9) e validação visual. Nada disto é aceitação manual.
 
 ## Restrições globais
 

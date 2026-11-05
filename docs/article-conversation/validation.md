@@ -4,7 +4,7 @@ Estado em 2026-11-05: **implementação e verificação automática concluídas;
 
 ## Verificação automática observada
 
-- `.\scripts\verify.ps1`: **8/8 checks, saída 0, 199,4 s** — TypeScript, **147 testes React** (20 ficheiros), build Vite, formatação e Clippy `-D warnings`, **353 testes Rust**, **56 testes Python** sem a marca `models`, `pip check` limpo.
+- `.\scripts\verify.ps1`: **8/8 checks, saída 0, 190,6 s** — TypeScript, **147 testes React** (20 ficheiros), build Vite, formatação e Clippy `-D warnings`, **354 testes Rust**, **56 testes Python** sem a marca `models`, `pip check` limpo.
 - `npm run tauri -- build --no-bundle`: saída 0 (release, 1 min 27 s).
 - Ensaio com dados temporários (`scripts/diagnostics-smoke.ps1` sobre um build isolado): janela viva, diagnóstico exportado, fecho com código 0. Não toca nas sessões pessoais.
 - Os testes Python reais com modelos (`-m models`) **não foram corridos nesta verificação**.
