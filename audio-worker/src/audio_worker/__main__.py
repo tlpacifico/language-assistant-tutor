@@ -12,17 +12,23 @@ import argparse
 import contextlib
 import json
 import os
+import queue
 import sys
+import threading
 import traceback
+from collections import deque
 from typing import Any, Callable, TextIO
 
 from .protocol import (
+    CANCEL,
     HEALTH,
     PRELOAD,
     SHUTDOWN,
     SYNTHESIZE,
+    SYNTHESIZE_STREAM,
     TRANSCRIBE,
     WorkerError,
+    chunk_message,
     encode_message,
     error_message,
     parse_request,
@@ -102,13 +108,76 @@ def _default_registry(manifest_path: str | None):
     return EngineRegistry(manifest_path)
 
 
-def _dispatch(registry: Any, op: str, params: dict, report_progress: Callable[[str], None]) -> dict:
+class _Input:
+    """Leitura de stdin numa thread, para ver um ``cancel`` durante a síntese.
+
+    Os pedidos continuam a ser servidos um de cada vez e pela ordem de chegada:
+    ``poll_cancel`` só consome linhas ``cancel``; todas as outras ficam na fila.
+    """
+
+    def __init__(self, stdin: TextIO):
+        self._queue: "queue.Queue[str | None]" = queue.Queue()
+        self._backlog: deque[str | None] = deque()
+        self._eof = False
+        thread = threading.Thread(target=self._read, args=(stdin,), daemon=True)
+        thread.start()
+
+    def _read(self, stdin: TextIO) -> None:
+        try:
+            for line in iter(stdin.readline, ""):
+                self._queue.put(line)
+        finally:
+            self._queue.put(None)
+
+    def next_line(self) -> str | None:
+        """Próxima linha, ou ``None`` no fim da entrada."""
+        if self._backlog:
+            return self._backlog.popleft()
+        if self._eof:
+            return None
+        line = self._queue.get()
+        if line is None:
+            self._eof = True
+        return line
+
+    def poll_cancel(self) -> bool:
+        """``True`` se chegou um ``cancel``; as outras linhas ficam por servir."""
+        cancelled = False
+        while True:
+            try:
+                line = self._queue.get_nowait()
+            except queue.Empty:
+                break
+            if line is None:
+                self._eof = True
+                break
+            try:
+                is_cancel = parse_request(line).op == CANCEL
+            except WorkerError:
+                is_cancel = False
+            if is_cancel:
+                cancelled = True
+            else:
+                self._backlog.append(line)
+        return cancelled
+
+
+def _dispatch(
+    registry: Any,
+    op: str,
+    params: dict,
+    report_progress: Callable[[str], None],
+    emit_chunk: Callable[[int, str, int, int], None] | None = None,
+    should_cancel: Callable[[], bool] = lambda: False,
+) -> dict:
     if op == HEALTH:
         return registry.health()
     if op == TRANSCRIBE:
         return registry.transcribe(params, report_progress)
     if op == SYNTHESIZE:
         return registry.synthesize(params, report_progress)
+    if op == SYNTHESIZE_STREAM and emit_chunk is not None:
+        return registry.synthesize_stream(params, report_progress, emit_chunk, should_cancel)
     if op == PRELOAD:
         return registry.preload(report_progress)
     # ``parse_request`` so aceita operacoes conhecidas e ``shutdown`` sai antes.
@@ -130,10 +199,11 @@ def serve(
     if registry is None:
         registry = _default_registry(manifest_path)
 
+    inputs = _Input(stdin)
     with library_output_on_stderr(stderr):
         while True:
-            line = stdin.readline()
-            if line == "":
+            line = inputs.next_line()
+            if line is None:
                 return 0
             if not line.strip():
                 continue
@@ -147,12 +217,34 @@ def serve(
             if request.op == SHUTDOWN:
                 _write_message(stdout, result_message(request.id, {"stopped": True}))
                 return 0
+            if request.op == CANCEL:
+                # Fire-and-forget: sem uma síntese ativa não há nada a cancelar.
+                continue
 
             def report_progress(stage: str, request_id: str = request.id) -> None:
                 _write_message(stdout, progress_message(request_id, stage))
 
+            def emit_chunk(
+                index: int,
+                audio_path: str,
+                sample_rate: int,
+                duration_ms: int,
+                request_id: str = request.id,
+            ) -> None:
+                _write_message(
+                    stdout,
+                    chunk_message(request_id, index, audio_path, sample_rate, duration_ms),
+                )
+
             try:
-                result = _dispatch(registry, request.op, dict(request.params), report_progress)
+                result = _dispatch(
+                    registry,
+                    request.op,
+                    dict(request.params),
+                    report_progress,
+                    emit_chunk,
+                    inputs.poll_cancel,
+                )
             except WorkerError as error:
                 _write_message(stdout, error_message(request.id, error))
             except Exception as error:  # falha inesperada: nunca fica em silencio
