@@ -24,7 +24,7 @@ use crate::ai::{
 use crate::article::{
     can_send_automatically, ArticleCommand, ArticleConsent, ArticleCorrection, ArticleCreate,
     ArticleError, ArticleMutation, ArticleOutcome, ArticleRequestKind, ArticleSnapshot,
-    ArticleState, ArticleSummary, ARTICLE_NOTICE_VERSION,
+    ArticleSpeaker, ArticleState, ArticleSummary, ARTICLE_NOTICE_VERSION,
 };
 use crate::audio::RecordingTarget;
 use crate::worker::protocol::TranscribeParams;
@@ -675,6 +675,56 @@ impl AppService {
         let command = correction.command;
         let snapshot = database_task(move || database.apply_article(&command, change)).await?;
         self.publish_article(&snapshot);
+        Ok(snapshot)
+    }
+
+    /// Ouve a gravação guardada de uma resposta. Não toca em estado nem em rede;
+    /// recusa-se durante uma gravação ou transcrição.
+    pub async fn article_play_turn(&self, session_id: &str, turn_id: &str) -> Result<(), AppError> {
+        let _transition = self.transitions.lock().await;
+        self.ensure_audio_free_for_article()?;
+        let snapshot = self.article_snapshot(session_id).await?;
+        let playable = snapshot
+            .turns
+            .iter()
+            .any(|t| t.id == turn_id && t.audio_available && t.speaker == ArticleSpeaker::User);
+        if !playable {
+            return Err(stale_source(
+                "Esta resposta não tem uma gravação para ouvir na conversa ativa.",
+            ));
+        }
+        let path = self
+            .articles_base()
+            .join("articles")
+            .join(session_id)
+            .join(turn_id)
+            .join(crate::audio::ORIGINAL_FILE);
+        let file = path.clone();
+        if !storage_task(move || Ok(file.is_file())).await? {
+            return Err(artifact_missing(
+                "O ficheiro de áudio desta resposta não foi encontrado.",
+            ));
+        }
+        let audio = Arc::clone(&self.audio);
+        audio_task(move || audio.play(path)).await
+    }
+
+    /// Texto escrito pelo utilizador quando a transcrição falhou ou excedeu o
+    /// limite: versão distinta da automática; o envio segue como numa resposta.
+    pub async fn article_submit_text(
+        self: &Arc<Self>,
+        correction: ArticleCorrection,
+    ) -> Result<ArticleSnapshot, AppError> {
+        let _transition = self.transitions.lock().await;
+        let database = self.database()?;
+        let change = ArticleMutation::ManualText {
+            turn_id: correction.turn_id,
+            text: correction.text,
+        };
+        let command = correction.command;
+        let snapshot = database_task(move || database.apply_article(&command, change)).await?;
+        self.publish_article(&snapshot);
+        self.dispatch_request_if_due(&snapshot);
         Ok(snapshot)
     }
 

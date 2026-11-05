@@ -1,0 +1,66 @@
+.article {
+  display: grid;
+  gap: 1rem;
+}
+
+.article__turns {
+  display: grid;
+  gap: 0.75rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.article__turn {
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+  max-width: 46rem;
+}
+
+.article__turn--tutor {
+  background: var(--surface-2, #eef2f7);
+}
+
+.article__turn--user {
+  background: var(--surface-accent, #e6f2ec);
+  justify-self: end;
+}
+
+.article__turn p {
+  margin: 0 0 0.5rem;
+}
+
+.article__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.article__text {
+  white-space: pre-wrap;
+}
+
+.article__consent {
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+}
+
+.article__dimension {
+  border-top: 1px solid rgb(128 128 128 / 0.3);
+  padding-top: 0.75rem;
+}
+
+.article__evidence blockquote {
+  margin: 0.25rem 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid currentColor;
+}
+
+.article__list {
+  display: grid;
+  gap: 0.75rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}

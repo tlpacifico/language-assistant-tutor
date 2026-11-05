@@ -81,6 +81,23 @@ pub async fn article_correct(
 }
 
 #[tauri::command]
+pub async fn article_submit_text(
+    correction: ArticleCorrection,
+    service: State<'_, Arc<AppService>>,
+) -> Result<ArticleSnapshot, AppError> {
+    service.article_submit_text(correction).await
+}
+
+#[tauri::command]
+pub async fn article_play_turn(
+    session_id: String,
+    turn_id: String,
+    service: State<'_, Arc<AppService>>,
+) -> Result<(), AppError> {
+    service.article_play_turn(&session_id, &turn_id).await
+}
+
+#[tauri::command]
 pub async fn article_resume(
     command: ArticleCommand,
     service: State<'_, Arc<AppService>>,

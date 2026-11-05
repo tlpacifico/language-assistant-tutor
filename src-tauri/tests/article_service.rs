@@ -60,11 +60,15 @@ fn write_wav(path: &Path) {
 struct FakeAudio {
     capture: Mutex<Option<RecordingTarget>>,
     starts: Mutex<usize>,
+    plays: Mutex<Vec<PathBuf>>,
 }
 
 impl FakeAudio {
     fn starts(&self) -> usize {
         *self.starts.lock().unwrap()
+    }
+    fn plays(&self) -> Vec<PathBuf> {
+        self.plays.lock().unwrap().clone()
     }
 }
 
@@ -99,7 +103,8 @@ impl AudioPort for FakeAudio {
             },
         })
     }
-    fn play(&self, _path: PathBuf) -> Result<(), AppError> {
+    fn play(&self, path: PathBuf) -> Result<(), AppError> {
+        self.plays.lock().unwrap().push(path);
         Ok(())
     }
     fn stop_playback(&self) -> Result<(), AppError> {
@@ -917,4 +922,74 @@ async fn resuming_recovers_local_state_without_the_network() {
     );
     assert_eq!(h.transport.calls().len(), calls, "sem HTTP");
     assert_eq!(h.worker.total(), 0);
+}
+
+#[tokio::test]
+async fn manual_text_after_an_empty_transcript_is_sent_as_a_distinct_version() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    h.record(&ready).await;
+    h.transcript("   ").await;
+    let review = h.snapshot(&id).await;
+    assert_eq!(review.session.state, ArticleState::NeedsReview);
+    let turn = review.turns.last().unwrap().id.clone();
+    assert_eq!(h.transport.count(ArticleAiTask::Reply), 0);
+
+    let sent = h
+        .service
+        .article_submit_text(language_assistant_tutor::article::ArticleCorrection {
+            command: h.cmd(&review),
+            turn_id: turn,
+            text: "I typed this instead.".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(sent.session.state, ArticleState::AwaitingTutor);
+    h.service.article_settle().await;
+    let after = h.snapshot(&id).await;
+    assert_eq!(h.transport.count(ArticleAiTask::Reply), 1);
+    assert_eq!(after.session.state, ArticleState::Ready);
+    assert_eq!(
+        after.turns[1].version.source,
+        Some(language_assistant_tutor::article::ArticleVersionSource::ManualReview)
+    );
+}
+
+#[tokio::test]
+async fn a_saved_answer_can_be_played_but_not_while_recording() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    h.record(&ready).await;
+    h.transcript("Remote work helps people focus.").await;
+    let replied = h.snapshot(&id).await;
+    let user_turn = replied.turns[1].id.clone();
+    assert!(replied.turns[1].audio_available);
+
+    h.service.article_play_turn(&id, &user_turn).await.unwrap();
+    let plays = h.audio.plays();
+    assert_eq!(plays.len(), 1);
+    assert!(plays[0].ends_with(format!("articles/{id}/{user_turn}/original.wav")));
+
+    // Um turno do tutor, ou inexistente, não tem gravação para ouvir.
+    let tutor_turn = replied.turns[0].id.clone();
+    for turn in [tutor_turn.as_str(), "missing"] {
+        let error = h.service.article_play_turn(&id, turn).await.unwrap_err();
+        assert_eq!(error.code, error_code::STALE_SOURCE);
+    }
+    assert_eq!(h.audio.plays().len(), 1);
+
+    // Durante uma gravação não se reproduz nada.
+    h.service
+        .article_start_recording(h.cmd(&replied))
+        .await
+        .unwrap();
+    let busy = h
+        .service
+        .article_play_turn(&id, &user_turn)
+        .await
+        .unwrap_err();
+    assert_eq!(busy.code, error_code::BUSY);
+    assert_eq!(h.audio.plays().len(), 1);
 }

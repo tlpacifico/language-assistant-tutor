@@ -131,3 +131,25 @@ export interface ArticleSnapshot {
   report: ArticleReport | null;
   audio: ArticleAudioView;
 }
+
+export interface ArticleSummary {
+  id: string;
+  title: string | null;
+  state: ArticleState;
+  updatedAt: string;
+}
+
+export const MAX_ANSWER_CHARS = 8_000;
+
+export const ARTICLE_STATE_LABELS: Record<ArticleState, string> = {
+  draft: "Por autorizar",
+  awaiting_tutor: "A aguardar o tutor",
+  ready: "Pronta para responder",
+  recording: "A gravar",
+  transcribing: "A transcrever",
+  needs_review: "Resposta por rever",
+  recoverable_error: "Precisa de atenção",
+  finishing: "A gerar o feedback",
+  completed: "Concluída",
+  paused: "Em pausa",
+};
