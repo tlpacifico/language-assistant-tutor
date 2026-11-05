@@ -1,6 +1,6 @@
 [package]
 name = "language-assistant-tutor"
-version = "0.2.0"
+version = "0.3.0"
 description = "Tutor desktop de entrevistas comportamentais em inglês"
 edition = "2021"
 rust-version = "1.99"
