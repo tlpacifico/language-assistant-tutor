@@ -12,6 +12,8 @@ import type { InterviewSnapshot } from "./lib/interview-contracts";
 import History from "./features/history/History";
 import Interview from "./features/interview/Interview";
 import { useInterview } from "./features/interview/useInterview";
+import Articles from "./features/articles/Articles";
+import { createArticleClient, type ArticleClient } from "./lib/article-client";
 import NavigationGuard from "./features/navigation/NavigationGuard";
 import type {
   GuardIntention,
@@ -101,15 +103,21 @@ function tauriWindow(): AppWindow | null {
  */
 export default function App({
   client,
+  articleClient,
   windowHandle,
 }: {
   client?: InterviewClient;
+  articleClient?: ArticleClient;
   windowHandle?: AppWindow;
 }) {
   // O cliente por omissão é criado uma única vez: sem prop, cada render
   // recriaria o adaptador e a subscrição seria refeita a cada fotografia.
   const [fallbackClient] = useState(createInterviewClient);
   const activeClient = client ?? fallbackClient;
+  const [fallbackArticleClient] = useState(createArticleClient);
+  const activeArticleClient = articleClient ?? fallbackArticleClient;
+  // Gravação ou transcrição de um artigo: a navegação fica bloqueada.
+  const [articleBusy, setArticleBusy] = useState(false);
   const [fallbackWindow] = useState(() => windowHandle ?? tauriWindow());
   const activeWindow = windowHandle ?? fallbackWindow;
   const [snapshot, setSnapshot] = useState<InterviewSnapshot | null>(null);
@@ -252,6 +260,10 @@ export default function App({
         : snapshot?.practice?.activePractice
           ? "practice"
           : "interview";
+    if (articleBusy && next !== "articles") {
+      setNavigationBlocked(true);
+      return;
+    }
     if (busy && next !== safeHome) {
       // A captura e a finalização não podem ser interrompidas por navegação.
       setNavigationBlocked(true);
@@ -474,6 +486,10 @@ export default function App({
           quando a base de dados abrir.
         </p>
       </section>
+    );
+  } else if (page === "articles") {
+    content = (
+      <Articles client={activeArticleClient} onBusyChange={setArticleBusy} />
     );
   } else if (page === "bank") {
     content = (

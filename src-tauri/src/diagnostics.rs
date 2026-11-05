@@ -466,6 +466,9 @@ fn safe_code(code: &str) -> &str {
         "AI_CONSENT",
         "AI_LIMIT",
         "AI_INVALID_RESULT",
+        "ARTICLE_DELETED",
+        "ARTICLE_REGENERATE",
+        "AI_INTERRUPTED",
     ];
     if CODES.contains(&code) {
         code
@@ -487,6 +490,10 @@ fn safe_operation(operation: &str) -> &str {
         "synthesize",
         "shutdown",
         "snapshot_publish",
+        "article_transcribe",
+        "article_reply",
+        "article_first_audio",
+        "article_feedback",
     ];
     if OPERATIONS.contains(&operation) || COMMANDS.contains(&operation) {
         operation
@@ -497,6 +504,22 @@ fn safe_operation(operation: &str) -> &str {
 
 // Lista fechada; nunca persistir nomes/argumentos livres enviados pelo frontend.
 const COMMANDS: &[&str] = &[
+    "article_authorize",
+    "article_correct",
+    "article_create",
+    "article_delete",
+    "article_finish",
+    "article_list",
+    "article_retry",
+    "article_play_turn",
+    "article_resume",
+    "article_revoke",
+    "article_snapshot",
+    "article_speak_turn",
+    "article_stop_voice",
+    "article_submit_text",
+    "article_start_recording",
+    "article_stop_recording",
     "interview_abandon_practice",
     "interview_advance_session",
     "interview_ai_accept_ai_consent",

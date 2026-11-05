@@ -1,3 +1,4 @@
+mod article;
 mod credentials;
 mod rewrite;
 mod transport;
@@ -5,6 +6,7 @@ mod usage;
 mod validation;
 use crate::domain::AppError;
 use crate::practice::RewriteLevel;
+pub use article::*;
 pub use credentials::*;
 pub use rewrite::*;
 use serde::{Deserialize, Serialize};

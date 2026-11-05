@@ -109,6 +109,11 @@ pub trait AudioPort: Send + Sync {
     fn start_capture(&self, target: RecordingTarget) -> Result<(), AppError>;
     fn stop_capture(&self) -> Result<CapturedAudio, AppError>;
     fn play(&self, path: PathBuf) -> Result<(), AppError>;
+    /// Acrescenta um WAV à fila do mesmo player, sem substituir o que já toca.
+    /// Por omissão equivale a `play` (portas sem fila).
+    fn append(&self, path: PathBuf) -> Result<(), AppError> {
+        self.play(path)
+    }
     fn stop_playback(&self) -> Result<(), AppError>;
     /// Reabre a porta depois de um comando ter excedido o prazo.
     ///
@@ -130,6 +135,10 @@ pub trait AudioBackend {
     fn capture_interruption(&mut self) -> Option<CaptureInterruption>;
     fn stop_capture(&mut self) -> Result<CapturedAudio, AppError>;
     fn play(&mut self, path: PathBuf) -> Result<(), AppError>;
+    /// Acrescenta à fila; por omissão equivale a `play`.
+    fn append(&mut self, path: PathBuf) -> Result<(), AppError> {
+        self.play(path)
+    }
     fn stop_playback(&mut self) -> Result<(), AppError>;
     fn playback_finished(&mut self) -> bool;
 }
@@ -144,6 +153,8 @@ enum Command {
     StopCapture(Sender<Result<CapturedAudio, AppError>>),
     Play {
         path: PathBuf,
+        /// `true` acrescenta à fila em vez de substituir a reprodução.
+        queue: bool,
         reply: Sender<Result<(), AppError>>,
     },
     StopPlayback(Sender<Result<(), AppError>>),
@@ -300,7 +311,19 @@ impl AudioPort for NativeAudio {
     }
 
     fn play(&self, path: PathBuf) -> Result<(), AppError> {
-        self.request(|reply| Command::Play { path, reply })?
+        self.request(|reply| Command::Play {
+            path,
+            queue: false,
+            reply,
+        })?
+    }
+
+    fn append(&self, path: PathBuf) -> Result<(), AppError> {
+        self.request(|reply| Command::Play {
+            path,
+            queue: true,
+            reply,
+        })?
     }
 
     fn stop_playback(&self) -> Result<(), AppError> {
@@ -400,7 +423,7 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                         }
                     }
                 }
-                Command::Play { path, reply } => {
+                Command::Play { path, queue, reply } => {
                     // O microfone e a saída não funcionam ao mesmo tempo: a
                     // captura tem prioridade e a reprodução é recusada até ela
                     // terminar (só esta camada conhece o estado da captura).
@@ -409,7 +432,12 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                             "Não é possível reproduzir áudio enquanto o microfone está a gravar.",
                         )));
                     } else {
-                        match backend.play(path) {
+                        let started = if queue {
+                            backend.append(path)
+                        } else {
+                            backend.play(path)
+                        };
+                        match started {
                             Ok(()) => {
                                 playing = true;
                                 let _ = reply.send(Ok(()));
@@ -529,6 +557,10 @@ impl AudioBackend for NativeDevices {
 
     fn play(&mut self, path: PathBuf) -> Result<(), AppError> {
         self.playback.play(&path)
+    }
+
+    fn append(&mut self, path: PathBuf) -> Result<(), AppError> {
+        self.playback.append(&path)
     }
 
     fn stop_playback(&mut self) -> Result<(), AppError> {

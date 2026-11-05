@@ -57,36 +57,56 @@ fn complete_with_timeout(
 ) -> Pin<Box<dyn Future<Output = Result<RemoteCompletion>> + Send>> {
     Box::pin(async move {
         let body = build_body(&request.settings, &request.task, &request.sources)?;
-        let client = reqwest::Client::builder()
-            .user_agent(concat!(
-                "LanguageAssistantTutor/",
-                env!("CARGO_PKG_VERSION")
-            ))
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .timeout(timeout)
-            .connect_timeout(Duration::from_secs(10))
-            .build()
-            .map_err(|_| failure("HTTP indisponível."))?;
-        let mut response = client
-            .post(format!("{}/chat/completions", request.settings.base_url))
-            .bearer_auth(request.key)
-            .header(
-                "x-opencode-session",
-                format!("language-tutor-{}", request.conversation_id),
-            )
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                failure(if e.is_timeout() {
-                    "Tempo limite da API; repetir pode ter novo custo."
-                } else {
-                    "Falha de rede; o custo pode ser desconhecido."
-                })
-            })?;
-        if !response.status().is_success() {
-            match response.status().as_u16() {
+        send_chat(
+            &request.settings,
+            &request.key,
+            &request.conversation_id,
+            &body,
+            timeout,
+        )
+        .await
+    })
+}
+
+/// Envio HTTP comum a todos os modos: autenticação, identidade da conversa,
+/// limites, timeout e política de redirects/retries num único sítio.
+pub(crate) async fn send_chat(
+    settings: &AiSettingsView,
+    key: &str,
+    conversation_id: &str,
+    body: &Value,
+    timeout: Duration,
+) -> Result<RemoteCompletion> {
+    let client = reqwest::Client::builder()
+        .user_agent(concat!(
+            "LanguageAssistantTutor/",
+            env!("CARGO_PKG_VERSION")
+        ))
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .timeout(timeout)
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|_| failure("HTTP indisponível."))?;
+    let mut response = client
+        .post(format!("{}/chat/completions", settings.base_url))
+        .bearer_auth(key)
+        .header(
+            "x-opencode-session",
+            format!("language-tutor-{conversation_id}"),
+        )
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| {
+            failure(if e.is_timeout() {
+                "Tempo limite da API; repetir pode ter novo custo."
+            } else {
+                "Falha de rede; o custo pode ser desconhecido."
+            })
+        })?;
+    if !response.status().is_success() {
+        match response.status().as_u16() {
                 402 => return Err(AppError::new(
                     "AI_BILLING",
                     "Crédito indisponível no fornecedor (HTTP 402). Verifique o saldo e o estado da faturação.",
@@ -99,45 +119,44 @@ fn complete_with_timeout(
                 )),
                 _ => {}
             }
-            return Err(failure(match response.status().as_u16() {
+        return Err(failure(match response.status().as_u16() {
                 401 => "Credencial inválida (HTTP 401); o fornecedor recusou a chave. Substitua-a na Configuração IA.",
                 429 => "Limite do fornecedor; tente mais tarde.",
                 500..=599 => "Serviço indisponível; repetir pode ter novo custo.",
                 _ => "Resposta HTTP recusada.",
             }));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| failure("Resposta interrompida; custo desconhecido."))?
+    {
+        if bytes.len() + chunk.len() > 1048576 {
+            return Err(failure("Resposta HTTP excede 1 MiB."));
         }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| failure("Resposta interrompida; custo desconhecido."))?
-        {
-            if bytes.len() + chunk.len() > 1048576 {
-                return Err(failure("Resposta HTTP excede 1 MiB."));
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        let envelope: Value =
-            serde_json::from_slice(&bytes).map_err(|_| failure("Envelope JSON inválido."))?;
-        let model = envelope["model"].as_str().unwrap_or("").to_owned();
-        let mut usage_value = envelope["usage"].clone();
-        if usage_value.is_object()
-            && usage_value["opencode"].is_null()
-            && envelope["opencode"].is_object()
-        {
-            usage_value["opencode"] = envelope["opencode"].clone();
-        }
-        let usage = normalize_usage(&usage_value, request.settings.tariff.as_ref(), &model);
-        let content = envelope["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("")
-            .into();
-        Ok(RemoteCompletion {
-            model,
-            content,
-            usage,
-            invalid: envelope["choices"][0]["finish_reason"] != "stop",
-        })
+        bytes.extend_from_slice(&chunk);
+    }
+    let envelope: Value =
+        serde_json::from_slice(&bytes).map_err(|_| failure("Envelope JSON inválido."))?;
+    let model = envelope["model"].as_str().unwrap_or("").to_owned();
+    let mut usage_value = envelope["usage"].clone();
+    if usage_value.is_object()
+        && usage_value["opencode"].is_null()
+        && envelope["opencode"].is_object()
+    {
+        usage_value["opencode"] = envelope["opencode"].clone();
+    }
+    let usage = normalize_usage(&usage_value, settings.tariff.as_ref(), &model);
+    let content = envelope["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .into();
+    Ok(RemoteCompletion {
+        model,
+        content,
+        usage,
+        invalid: envelope["choices"][0]["finish_reason"] != "stop",
     })
 }
 

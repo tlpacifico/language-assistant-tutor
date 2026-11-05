@@ -142,3 +142,7 @@ O [plano técnico da fase 2](superpowers/plans/2026-11-02-phase-2-guided-intervi
 - [OpenCode: API de inferência](https://opencode.ai/v2/docs/console/api/inference/).
 
 Consultar também a [ideia e os objetivos](ideia-e-objetivos.md), o [plano das fases](superpowers/plans/2026-11-01-star-interview-tutor-phases.md) e o [desenho aprovado](superpowers/specs/2026-11-01-star-interview-tutor-design.md).
+
+## Conversa sobre artigos (2026-11-04)
+
+Modo próprio no mesmo núcleo: domínio `article/` (estados, limites, ramos), esquema SQLite v5 (`article_*`), prompts e validação em `ai/article.rs` sobre o envio HTTP comum (OpenCode Go), orquestração em `service/article.rs` com captura, transcrição e voz próprias (sem answer slots STAR) e página React `Artigos`. A voz do tutor usa a operação opt-in `synthesize_stream` do auxiliar (blocos WAV completos, `audio_chunk`, `cancel` cooperativo) e uma fila no mesmo player Rodio. Sem novas dependências. Ver [preparação](article-conversation/setup.md), [validação](article-conversation/validation.md) e [desempenho](article-conversation/performance.md).

@@ -1,0 +1,48 @@
+{
+  "create": {
+    "requestId": "11111111-1111-4111-8111-111111111111",
+    "title": "Remote work",
+    "text": "Remote work changed how teams collaborate."
+  },
+  "consent": {
+    "command": {
+      "requestId": "22222222-2222-4222-8222-222222222222",
+      "sessionId": "33333333-3333-4333-8333-333333333333",
+      "expectedVersion": 1
+    },
+    "destination": "https://opencode.ai/inference/go/openai/v1",
+    "noticeVersion": "article-auto-v1"
+  },
+  "correction": {
+    "command": {
+      "requestId": "44444444-4444-4444-8444-444444444444",
+      "sessionId": "33333333-3333-4333-8333-333333333333",
+      "expectedVersion": 7
+    },
+    "turnId": "55555555-5555-4555-8555-555555555555",
+    "text": "I think remote work helps focus."
+  },
+  "opening": {
+    "question": "What is the main argument of the article, in your own words?"
+  },
+  "turn": {
+    "comment": "You linked the idea to team trust.",
+    "question": "Can you give an example from your own experience?"
+  },
+  "report": {
+    "coherence": {
+      "status": "clear",
+      "summary": "The answers stayed on the central idea.",
+      "evidence": [{ "turn": 1, "quote": "remote work helps focus", "note": "Consistent with later answers." }]
+    },
+    "cohesion": { "status": "partial", "summary": "Few connectors.", "evidence": [] },
+    "development": { "status": "insufficient_evidence", "summary": "Too few answers.", "evidence": [] },
+    "interaction": { "status": "clear", "summary": "Answered the tutor's question.", "evidence": [] },
+    "improvements": ["Use connectors such as however and therefore."]
+  },
+  "error": {
+    "code": "AI_NETWORK",
+    "message": "Falha de rede. O texto ficou guardado.",
+    "retryable": true
+  }
+}

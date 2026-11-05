@@ -9,6 +9,7 @@ export type Page =
   | "interview"
   | "history"
   | "practice"
+  | "articles"
   | "ai";
 
 export const PAGE_COPY: Record<
@@ -51,6 +52,12 @@ export const PAGE_COPY: Record<
     description:
       "Reformule, pratique e compare sem perder a resposta original.",
   },
+  articles: {
+    label: "Artigos",
+    title: "Conversa sobre um artigo",
+    description:
+      "Converse em inglês sobre um artigo e receba feedback sobre as suas respostas.",
+  },
   ai: {
     label: "Configuração IA",
     title: "Como o tutor avalia",
@@ -67,6 +74,7 @@ const ICON_PATHS: Record<Page, string> = {
   interview: MICROPHONE_PATH,
   history: "M20.5 12a8.5 8.5 0 1 1-17 0 8.5 8.5 0 0 1 17 0ZM12 7.5V12l3 2",
   practice: "m4 20 4-1 12-12-3-3L5 16l-1 4ZM14 7l3 3",
+  articles: "M5 4h10l4 4v12H5V4Zm9 0v5h5M8 13h8M8 17h6",
   ai: "M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM12 3v2m0 14v2M3 12h2m14 0h2M6 6l1 1m10 10 1 1M18 6l-1 1M7 17l-1 1",
 };
 
@@ -117,6 +125,7 @@ export default function TutorNavigation({
               "stories",
               "interview",
               "history",
+              "articles",
               ...(page === "practice" ? ["practice"] : []),
               "ai",
             ] as Page[]

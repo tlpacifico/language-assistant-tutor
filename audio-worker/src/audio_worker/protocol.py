@@ -2,7 +2,8 @@
 
 Cada linha de stdin e um pedido JSON com ``protocolVersion``, ``id``, ``op`` e
 ``params``. Cada pedido valido produz exatamente uma mensagem final ``result``;
-mensagens ``progress`` podem antecedela. Os nomes JSON sao camelCase e os
+mensagens ``progress`` (e ``audio_chunk`` em ``synthesize_stream``) podem
+antecedela. ``cancel`` e fire-and-forget: nunca produz mensagem. Os nomes JSON sao camelCase e os
 valores enumerados snake_case, como no resto dos contratos da fase 1.
 """
 
@@ -17,10 +18,12 @@ PROTOCOL_VERSION = 1
 HEALTH = "health"
 TRANSCRIBE = "transcribe"
 SYNTHESIZE = "synthesize"
+SYNTHESIZE_STREAM = "synthesize_stream"
+CANCEL = "cancel"
 PRELOAD = "preload"
 SHUTDOWN = "shutdown"
 
-OPERATIONS = (HEALTH, TRANSCRIBE, SYNTHESIZE, PRELOAD, SHUTDOWN)
+OPERATIONS = (HEALTH, TRANSCRIBE, SYNTHESIZE, SYNTHESIZE_STREAM, PRELOAD, CANCEL, SHUTDOWN)
 
 #: Etapas aceites nas mensagens de progresso.
 PROGRESS_STAGES = ("loading", "processing")
@@ -183,6 +186,21 @@ def error_message(request_id: str, error: WorkerError) -> dict:
         "event": "result",
         "ok": False,
         "error": error.to_error(),
+    }
+
+
+def chunk_message(
+    request_id: str, index: int, audio_path: str, sample_rate: int, duration_ms: int
+) -> dict:
+    """Bloco de voz completo (WAV já fechado) de um ``synthesize_stream``."""
+    return {
+        "protocolVersion": PROTOCOL_VERSION,
+        "id": request_id,
+        "event": "audio_chunk",
+        "index": int(index),
+        "audioPath": str(audio_path),
+        "sampleRate": int(sample_rate),
+        "durationMs": int(duration_ms),
     }
 
 

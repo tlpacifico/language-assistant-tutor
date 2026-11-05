@@ -23,6 +23,8 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub const HEALTH: &str = "health";
 pub const TRANSCRIBE: &str = "transcribe";
 pub const SYNTHESIZE: &str = "synthesize";
+pub const SYNTHESIZE_STREAM: &str = "synthesize_stream";
+pub const CANCEL: &str = "cancel";
 pub const PRELOAD: &str = "preload";
 pub const SHUTDOWN: &str = "shutdown";
 
@@ -35,6 +37,10 @@ pub enum WorkerOp {
     Health,
     Transcribe,
     Synthesize,
+    /// Síntese incremental: blocos `audio_chunk` antes do resultado final.
+    SynthesizeStream,
+    /// Cancelamento cooperativo; sem resposta própria.
+    Cancel,
     Preload,
     Shutdown,
 }
@@ -45,6 +51,8 @@ impl WorkerOp {
             Self::Health => HEALTH,
             Self::Transcribe => TRANSCRIBE,
             Self::Synthesize => SYNTHESIZE,
+            Self::SynthesizeStream => SYNTHESIZE_STREAM,
+            Self::Cancel => CANCEL,
             Self::Preload => PRELOAD,
             Self::Shutdown => SHUTDOWN,
         }
@@ -133,6 +141,41 @@ pub struct SynthesisResult {
     pub processing_ms: u64,
 }
 
+/// Parâmetros de uma síntese incremental: uma pasta própria do pedido.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SynthesizeStreamParams {
+    pub text: String,
+    pub output_dir: PathBuf,
+    pub voice: String,
+    pub speed: f32,
+}
+
+impl SynthesizeStreamParams {
+    pub fn new(text: impl Into<String>, output_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            text: text.into(),
+            output_dir: output_dir.into(),
+            voice: "af_heart".to_owned(),
+            speed: 1.0,
+        }
+    }
+}
+
+/// Resultado final de uma síntese incremental.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SynthesisStreamResult {
+    pub chunks: u32,
+    pub sample_rate: u32,
+    #[serde(default)]
+    pub cancelled: bool,
+    #[serde(default)]
+    pub load_ms: u64,
+    #[serde(default)]
+    pub processing_ms: u64,
+}
+
 /// Confirmação de encerramento do auxiliar.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ShutdownResult {
@@ -154,6 +197,7 @@ pub enum WorkerResult {
     Health(HealthResult),
     Transcription(TranscriptionResult),
     Synthesis(SynthesisResult),
+    SynthesisStream(SynthesisStreamResult),
     Preload(PreloadResult),
     Shutdown(ShutdownResult),
 }
@@ -164,6 +208,14 @@ pub enum WorkerResponse {
     Progress {
         id: String,
         stage: JobStage,
+    },
+    /// Bloco de voz completo (WAV já fechado) de um `synthesize_stream`.
+    AudioChunk {
+        id: String,
+        index: u32,
+        audio_path: PathBuf,
+        sample_rate: u32,
+        duration_ms: u64,
     },
     Result {
         id: String,
@@ -176,7 +228,7 @@ pub enum WorkerResponse {
 impl WorkerResponse {
     pub fn id(&self) -> &str {
         match self {
-            Self::Progress { id, .. } | Self::Result { id, .. } => id,
+            Self::Progress { id, .. } | Self::AudioChunk { id, .. } | Self::Result { id, .. } => id,
         }
     }
 }
@@ -252,6 +304,14 @@ struct RawResponse {
     error: Option<AppError>,
     #[serde(default)]
     stage: Option<String>,
+    #[serde(default)]
+    index: Option<u32>,
+    #[serde(default)]
+    audio_path: Option<PathBuf>,
+    #[serde(default)]
+    sample_rate: Option<u32>,
+    #[serde(default)]
+    duration_ms: Option<u64>,
 }
 
 /// Valida uma linha de stdout e devolve a mensagem do protocolo v1.
@@ -288,6 +348,22 @@ pub fn decode_response(line: &str) -> Result<WorkerResponse, AppError> {
                 }
             };
             Ok(WorkerResponse::Progress { id: raw.id, stage })
+        }
+        "audio_chunk" => {
+            let (Some(index), Some(audio_path), Some(sample_rate), Some(duration_ms)) =
+                (raw.index, raw.audio_path, raw.sample_rate, raw.duration_ms)
+            else {
+                return Err(protocol_error(
+                    "O auxiliar enviou um bloco de voz incompleto.",
+                ));
+            };
+            Ok(WorkerResponse::AudioChunk {
+                id: raw.id,
+                index,
+                audio_path,
+                sample_rate,
+                duration_ms,
+            })
         }
         "result" => {
             let ok = raw.ok.ok_or_else(|| {
@@ -327,6 +403,11 @@ pub fn parse_result(op: WorkerOp, value: Value) -> Result<WorkerResult, AppError
         WorkerOp::Health => typed(value).map(WorkerResult::Health),
         WorkerOp::Transcribe => typed(value).map(WorkerResult::Transcription),
         WorkerOp::Synthesize => typed(value).map(WorkerResult::Synthesis),
+        WorkerOp::SynthesizeStream => typed(value).map(WorkerResult::SynthesisStream),
+        // O cancelamento não tem resposta; qualquer resultado seria um erro de protocolo.
+        WorkerOp::Cancel => Err(protocol_error(
+            "O auxiliar respondeu a um cancelamento, que não tem resposta.",
+        )),
         WorkerOp::Preload => typed(value).map(WorkerResult::Preload),
         WorkerOp::Shutdown => typed(value).map(WorkerResult::Shutdown),
     }

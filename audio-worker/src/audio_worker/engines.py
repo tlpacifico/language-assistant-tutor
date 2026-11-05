@@ -493,6 +493,15 @@ class EngineRegistry:
                 code=WORKER_PROTOCOL,
             )
 
+        # Opcional (medições): o default do motor só muda depois de comparada a fidelidade.
+        beam_size = params.get("beamSize")
+        if beam_size is not None and (
+            isinstance(beam_size, bool) or not isinstance(beam_size, int) or beam_size not in (1, 5)
+        ):
+            raise WorkerError(
+                "O parâmetro «beamSize» só aceita 1 ou 5.", code=WORKER_PROTOCOL
+            )
+
         model_path = params.get("modelPath")
         if model_path is None:
             model_path = str(self.paths().whisper_dir)
@@ -534,11 +543,13 @@ class EngineRegistry:
         progress("processing")
         started = time.perf_counter()
         try:
+            options = {} if beam_size is None else {"beam_size": beam_size}
             segments_iterator, _info = model.transcribe(
                 str(audio),
                 language=WHISPER_LANGUAGE,
                 task="transcribe",
                 vad_filter=True,
+                **options,
             )
             segments = [
                 {
@@ -586,21 +597,7 @@ class EngineRegistry:
                 "O caminho de saída da síntese tem de ser absoluto.", code=WORKER_PROTOCOL
             )
 
-        voice = params.get("voice", DEFAULT_VOICE)
-        if voice != DEFAULT_VOICE:
-            raise WorkerError(
-                f"A voz suportada nesta fase é «{DEFAULT_VOICE}» (recebida «{voice}»).",
-                code=WORKER_PROTOCOL,
-            )
-
-        speed = params.get("speed", DEFAULT_SPEED)
-        if isinstance(speed, bool) or not isinstance(speed, (int, float)):
-            raise WorkerError("A velocidade da síntese tem de ser um número.", code=WORKER_PROTOCOL)
-        speed = float(speed)
-        if not 0 < speed <= MAX_SPEED:
-            raise WorkerError(
-                f"A velocidade da síntese tem de estar entre 0 e {MAX_SPEED:g}.", code=WORKER_PROTOCOL
-            )
+        speed = _voice_speed(params)
 
         paths = self.paths()
         problems = missing_synthesis_assets(paths)
@@ -658,6 +655,102 @@ class EngineRegistry:
             "processingMs": processing_ms,
         }
 
+    def synthesize_stream(
+        self,
+        params: Mapping[str, Any],
+        progress: ProgressCallback,
+        emit: Callable[[int, str, int, int], None],
+        should_cancel: Callable[[], bool] = lambda: False,
+    ) -> dict:
+        """Sintetiza por blocos, entregando cada WAV completo assim que existe.
+
+        Cada bloco é escrito num ficheiro temporário e promovido por rename: um
+        ficheiro ``chunk-NNNN.wav`` nunca está em escrita. O cancelamento é
+        cooperativo e só é verificado entre blocos.
+        """
+        text = params.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise WorkerError("O texto para síntese está vazio.", code=WORKER_PROTOCOL)
+        directory = Path(_required_text(params, "outputDir"))
+        if not directory.is_absolute():
+            raise WorkerError(
+                "A pasta de saída da síntese tem de ser absoluta.", code=WORKER_PROTOCOL
+            )
+        speed = _voice_speed(params)
+
+        paths = self.paths()
+        problems = missing_synthesis_assets(paths)
+        if problems:
+            raise WorkerError(_describe(problems), code=MODEL_MISSING)
+
+        progress("loading")
+        started = time.perf_counter()
+        try:
+            pipeline = self._kokoro(paths)
+        except WorkerError:
+            raise
+        except Exception as error:
+            raise WorkerError(
+                f"Não foi possível carregar o modelo Kokoro a partir de «{paths.kokoro_weights}». "
+                "Execute de novo a preparação offline dos modelos.",
+                code=MODEL_MISSING,
+            ) from error
+        load_ms = _elapsed_ms(started)
+
+        progress("processing")
+        started = time.perf_counter()
+        import numpy
+
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise WorkerError(
+                "Não foi possível preparar a pasta da síntese.",
+                code=STORAGE_WRITE_FAILED,
+                retryable=True,
+            ) from error
+
+        count = 0
+        cancelled = False
+        try:
+            for chunk in pipeline(text, voice=str(paths.kokoro_voice), speed=speed):
+                audio = getattr(chunk, "audio", None)
+                if audio is None:
+                    continue
+                samples = numpy.asarray(audio, dtype=numpy.float32).reshape(-1)
+                if samples.size == 0:
+                    continue
+                final = directory / f"chunk-{count:04d}.wav"
+                partial = directory / f"chunk-{count:04d}.wav.part"
+                _write_wav(partial, samples)
+                os.replace(partial, final)
+                emit(
+                    count,
+                    str(final),
+                    SAMPLE_RATE,
+                    int(round(samples.size / SAMPLE_RATE * 1000)),
+                )
+                count += 1
+                if should_cancel():
+                    cancelled = True
+                    break
+        except WorkerError:
+            raise
+        except Exception as error:
+            raise WorkerError(
+                "Não foi possível sintetizar o texto. Tente novamente.", retryable=True
+            ) from error
+        if count == 0 and not cancelled:
+            raise WorkerError("A síntese não produziu áudio para este texto.", retryable=True)
+
+        return {
+            "chunks": count,
+            "sampleRate": SAMPLE_RATE,
+            "cancelled": cancelled,
+            "loadMs": load_ms,
+            "processingMs": _elapsed_ms(started),
+        }
+
     # -- cache de modelos --------------------------------------------------
 
     def _whisper(self, model_path: str):
@@ -674,6 +767,25 @@ class EngineRegistry:
             self._kokoro_pipeline = load_kokoro_pipeline(paths)
             self._kokoro_key = key
         return self._kokoro_pipeline
+
+
+def _voice_speed(params: Mapping[str, Any]) -> float:
+    """Valida a voz fixa e a velocidade de um pedido de síntese."""
+    voice = params.get("voice", DEFAULT_VOICE)
+    if voice != DEFAULT_VOICE:
+        raise WorkerError(
+            f"A voz suportada nesta fase é «{DEFAULT_VOICE}» (recebida «{voice}»).",
+            code=WORKER_PROTOCOL,
+        )
+    speed = params.get("speed", DEFAULT_SPEED)
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+        raise WorkerError("A velocidade da síntese tem de ser um número.", code=WORKER_PROTOCOL)
+    speed = float(speed)
+    if not 0 < speed <= MAX_SPEED:
+        raise WorkerError(
+            f"A velocidade da síntese tem de estar entre 0 e {MAX_SPEED:g}.", code=WORKER_PROTOCOL
+        )
+    return speed
 
 
 def _required_text(params: Mapping[str, Any], name: str) -> str:

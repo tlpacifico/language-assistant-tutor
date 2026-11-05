@@ -75,3 +75,7 @@ Foi feita inspeção de capturas desktop e mobile e comparação com o HTML expo
 ## Limites da validação
 
 Esta verificação estabelece a apresentação no browser e a ausência de regressões detetadas pelos testes React. Não substitui a utilização na janela Tauri com áudio real, credencial protegida e API paga. Não foi gerado um instalador nem repetida a bateria Rust/Python, cujos ficheiros não mudaram. As aceitações manuais das fases 1 a 4 continuam pendentes; a fase 5 não foi iniciada.
+
+## Página Artigos (2026-11-05)
+
+Foi acrescentada a página **Artigos** ao menu e à navegação (bloqueada durante a gravação ou transcrição de um artigo). Os testes React cobrem a presença no menu e o bloqueio da navegação. **Não foi feita validação visual** (capturas desktop/mobile, contraste, foco) desta página: a matriz de sete páginas não foi repetida e fica pendente.

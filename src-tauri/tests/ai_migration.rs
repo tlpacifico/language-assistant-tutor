@@ -20,7 +20,7 @@ fn populated_v1_migrates_without_loss() {
     std::fs::write(dir.path().join("original.wav"), b"unchanged audio").unwrap();
     drop(c);
     let db = Database::open(path).unwrap();
-    assert_eq!(DATABASE_VERSION, 3);
+    assert_eq!(DATABASE_VERSION, 5);
     db.with_connection(|c| {
         let n: i64 = c
             .query_row(

@@ -197,7 +197,7 @@ impl AppService {
         }
         {
             let state = self.lock_state();
-            if state.recording_id.is_some() || state.finalizing {
+            if state.recording_id.is_some() || state.finalizing || state.article_busy {
                 let error = AppError::busy("Já está uma gravação em curso.");
                 drop(state);
                 self.record_error(&error);
