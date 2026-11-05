@@ -541,13 +541,24 @@ impl AppService {
                 artifacts.annotate(detail);
             }
             let pending_practice = database.pending_practice()?;
-            Ok((database, report, active, pending_practice, uncertain))
+            // Recuperação local dos artigos: sem rede nem envios.
+            let deleted_articles = database.recover_articles().unwrap_or_default();
+            Ok((
+                database,
+                report,
+                active,
+                pending_practice,
+                uncertain,
+                deleted_articles,
+            ))
         })
         .await;
 
         match opened {
-            Ok((database, report, active, pending_practice, uncertain)) => {
-                *self.lock_database() = Some(database);
+            Ok((database, report, active, pending_practice, uncertain, deleted_articles)) => {
+                *self.lock_database() = Some(database.clone());
+                self.resume_article_cleanup(&database, deleted_articles)
+                    .await;
                 Ok(self.commit(|state| {
                     state.database = DatabaseState::Ready;
                     state.database_error = None;

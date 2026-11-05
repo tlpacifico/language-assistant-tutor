@@ -22,9 +22,9 @@ use crate::ai::{
     ArticleReply, ArticleTransportRequest,
 };
 use crate::article::{
-    can_send_automatically, ArticleCommand, ArticleConsent, ArticleCreate, ArticleError,
-    ArticleMutation, ArticleOutcome, ArticleRequestKind, ArticleSnapshot, ArticleState,
-    ArticleSummary, ARTICLE_NOTICE_VERSION,
+    can_send_automatically, ArticleCommand, ArticleConsent, ArticleCorrection, ArticleCreate,
+    ArticleError, ArticleMutation, ArticleOutcome, ArticleRequestKind, ArticleSnapshot,
+    ArticleState, ArticleSummary, ARTICLE_NOTICE_VERSION,
 };
 use crate::audio::RecordingTarget;
 use crate::worker::protocol::TranscribeParams;
@@ -658,6 +658,61 @@ impl AppService {
         self.publish_article(&snapshot);
         self.dispatch_request_if_due(&snapshot);
         Ok(snapshot)
+    }
+
+    /// Corrige uma resposta de uma conversa concluída num ramo novo. Não envia
+    /// nada: o relatório novo só é pedido por `article_retry`.
+    pub async fn article_correct(
+        &self,
+        correction: ArticleCorrection,
+    ) -> Result<ArticleSnapshot, AppError> {
+        let _transition = self.transitions.lock().await;
+        let database = self.database()?;
+        let change = ArticleMutation::Correct {
+            turn_id: correction.turn_id,
+            text: correction.text,
+        };
+        let command = correction.command;
+        let snapshot = database_task(move || database.apply_article(&command, change)).await?;
+        self.publish_article(&snapshot);
+        Ok(snapshot)
+    }
+
+    /// Recupera o estado local depois de um reinício, sem HTTP nem envios.
+    pub async fn article_resume(
+        &self,
+        command: ArticleCommand,
+    ) -> Result<ArticleSnapshot, AppError> {
+        let _transition = self.transitions.lock().await;
+        let database = self.database()?;
+        let live = {
+            let mut runtime = self.lock_article();
+            runtime.tasks.retain(|t| !t.is_finished());
+            runtime
+                .capture
+                .as_ref()
+                .is_some_and(|c| c.session_id == command.session_id)
+                || runtime
+                    .transcription
+                    .as_ref()
+                    .is_some_and(|t| t.session_id == command.session_id)
+                || !runtime.tasks.is_empty()
+        };
+        let id = command.session_id;
+        let snapshot = if live {
+            database_task(move || database.article_snapshot(&id)).await?
+        } else {
+            database_task(move || database.recover_article(&id)).await?
+        };
+        self.publish_article(&snapshot);
+        Ok(snapshot)
+    }
+
+    /// Limpeza das conversas eliminadas cujo apagamento de ficheiros ficou a meio.
+    pub(super) async fn resume_article_cleanup(&self, database: &Database, sessions: Vec<String>) {
+        for session_id in sessions {
+            self.clean_deleted_article(database, &session_id).await;
+        }
     }
 
     pub async fn article_finish(

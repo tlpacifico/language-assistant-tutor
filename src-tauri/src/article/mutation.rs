@@ -39,6 +39,12 @@ pub enum ArticleMutation {
         text: String,
     },
     Finish,
+    /// Correção de uma resposta depois de concluída: ramo novo com uma versão
+    /// manual do turno; o relatório novo fica pendente de ação (`Retry`).
+    Correct {
+        turn_id: String,
+        text: String,
+    },
     /// O relatório (ou a ausência dele, sem respostas) foi aplicado.
     Complete,
     /// Falha recuperável de um pedido ou da gravação; guarda de onde veio.

@@ -29,6 +29,8 @@ pub enum ArticleEvent {
     Retry(ArticleState),
     Finish,
     ReportReady,
+    /// Correção de uma resposta de uma conversa concluída: abre um ramo novo.
+    Correct,
     Pause,
     Resume(ArticleState),
 }
@@ -68,6 +70,7 @@ pub fn transition(state: ArticleState, event: ArticleEvent) -> Result<ArticleSta
             S::Finishing
         }
         (S::Finishing, E::ReportReady) => S::Completed,
+        (S::Completed, E::Correct) => S::RecoverableError,
         (S::Finishing, E::RequestFailed) => S::RecoverableError,
         (S::Draft | S::Ready | S::NeedsReview | S::RecoverableError, E::Pause) => S::Paused,
         (

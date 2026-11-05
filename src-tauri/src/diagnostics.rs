@@ -467,6 +467,8 @@ fn safe_code(code: &str) -> &str {
         "AI_LIMIT",
         "AI_INVALID_RESULT",
         "ARTICLE_DELETED",
+        "ARTICLE_REGENERATE",
+        "AI_INTERRUPTED",
     ];
     if CODES.contains(&code) {
         code
@@ -499,11 +501,13 @@ fn safe_operation(operation: &str) -> &str {
 // Lista fechada; nunca persistir nomes/argumentos livres enviados pelo frontend.
 const COMMANDS: &[&str] = &[
     "article_authorize",
+    "article_correct",
     "article_create",
     "article_delete",
     "article_finish",
     "article_list",
     "article_retry",
+    "article_resume",
     "article_revoke",
     "article_snapshot",
     "article_start_recording",

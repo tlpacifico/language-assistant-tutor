@@ -10,7 +10,8 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::article::{
-    ArticleCommand, ArticleConsent, ArticleCreate, ArticleSnapshot, ArticleSummary,
+    ArticleCommand, ArticleConsent, ArticleCorrection, ArticleCreate, ArticleSnapshot,
+    ArticleSummary,
 };
 use crate::domain::AppError;
 use crate::service::AppService;
@@ -69,6 +70,22 @@ pub async fn article_finish(
     service: State<'_, Arc<AppService>>,
 ) -> Result<ArticleSnapshot, AppError> {
     service.article_finish(command).await
+}
+
+#[tauri::command]
+pub async fn article_correct(
+    correction: ArticleCorrection,
+    service: State<'_, Arc<AppService>>,
+) -> Result<ArticleSnapshot, AppError> {
+    service.article_correct(correction).await
+}
+
+#[tauri::command]
+pub async fn article_resume(
+    command: ArticleCommand,
+    service: State<'_, Arc<AppService>>,
+) -> Result<ArticleSnapshot, AppError> {
+    service.article_resume(command).await
 }
 
 /// Fotografia persistida; não inicia nenhum trabalho externo.

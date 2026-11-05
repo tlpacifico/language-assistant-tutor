@@ -787,7 +787,7 @@ async fn nothing_is_sent_after_a_restart() {
         .unwrap()
         .session
         .state;
-    assert_eq!(state, ArticleState::AwaitingTutor);
+    assert_eq!(state, ArticleState::RecoverableError);
 }
 
 #[tokio::test]
@@ -847,4 +847,74 @@ async fn a_failed_request_can_be_retried_without_hidden_retries() {
         h.snapshot(&created.session.id).await.session.state,
         ArticleState::Ready
     );
+}
+
+#[tokio::test]
+async fn a_correction_forks_a_branch_and_the_retry_regenerates_the_report_there() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    h.record(&ready).await;
+    h.transcript("Remote work helps people focus.").await;
+    let replied = h.snapshot(&id).await;
+    h.service.article_finish(h.cmd(&replied)).await.unwrap();
+    h.service.article_settle().await;
+    let done = h.snapshot(&id).await;
+    assert_eq!(done.session.state, ArticleState::Completed);
+    let old_report = done.report.clone().unwrap();
+    let user_turn = done.turns[1].id.clone();
+
+    let calls = h.transport.calls().len();
+    let corrected = h
+        .service
+        .article_correct(language_assistant_tutor::article::ArticleCorrection {
+            command: h.cmd(&done),
+            turn_id: user_turn,
+            text: "Remote work helps people concentrate.".into(),
+        })
+        .await
+        .unwrap();
+    // A correção não envia nada; a regeneração espera pela ação do utilizador.
+    assert_eq!(h.transport.calls().len(), calls);
+    assert_eq!(corrected.session.state, ArticleState::RecoverableError);
+    assert_ne!(
+        corrected.session.active_branch_id,
+        done.session.active_branch_id
+    );
+
+    h.service.article_retry(h.cmd(&corrected)).await.unwrap();
+    h.service.article_settle().await;
+    let regenerated = h.snapshot(&id).await;
+    assert_eq!(regenerated.session.state, ArticleState::Completed);
+    let new_report = regenerated.report.unwrap();
+    assert_ne!(new_report.id, old_report.id);
+    assert_eq!(new_report.branch_id, regenerated.session.active_branch_id);
+    assert_eq!(h.transport.count(ArticleAiTask::Feedback), 2);
+}
+
+#[tokio::test]
+async fn resuming_recovers_local_state_without_the_network() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    // Fecho abrupto a meio de uma gravação: estado persistido sem captura viva.
+    h.database
+        .apply_article(
+            &h.cmd(&ready),
+            language_assistant_tutor::article::ArticleMutation::StartRecording {
+                turn_id: "orphan".into(),
+                audio_path: format!("articles/{id}/orphan/original.wav"),
+            },
+        )
+        .unwrap();
+    let calls = h.transport.calls().len();
+    let snapshot = h.snapshot(&id).await;
+    let resumed = h.service.article_resume(h.cmd(&snapshot)).await.unwrap();
+    assert_eq!(resumed.session.state, ArticleState::RecoverableError);
+    assert_eq!(
+        resumed.session.error.as_ref().unwrap().code,
+        "CAPTURE_INTERRUPTED"
+    );
+    assert_eq!(h.transport.calls().len(), calls, "sem HTTP");
+    assert_eq!(h.worker.total(), 0);
 }

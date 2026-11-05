@@ -824,6 +824,7 @@ fn operation_name(change: &ArticleMutation) -> &'static str {
         ArticleMutation::ManualText { .. } => "manual_text",
         ArticleMutation::Finish => "finish",
         ArticleMutation::Complete => "complete",
+        ArticleMutation::Correct { .. } => "correct",
         ArticleMutation::Fail { .. } => "fail",
         ArticleMutation::Retry => "retry",
         ArticleMutation::Delete => "delete",
@@ -966,6 +967,74 @@ fn apply(
         ArticleMutation::Complete => {
             state = transition(state, ArticleEvent::ReportReady)?;
         }
+        ArticleMutation::Correct { turn_id, text } => {
+            validate_answer_text(&text)?;
+            let text = text.trim().to_owned();
+            let current = turns
+                .iter()
+                .find(|t| t.id == turn_id && t.speaker == ArticleSpeaker::User && t.sendable)
+                .ok_or_else(|| {
+                    AppError::new(
+                        error_code::STALE_SOURCE,
+                        "O turno indicado não é uma resposta da conversa ativa.",
+                        false,
+                    )
+                })?;
+            if current.text == text {
+                return Err(invalid("O texto não mudou; não há nada a corrigir."));
+            }
+            let other_active: bool = tx
+                .query_row(
+                    "SELECT count(*) > 0 FROM article_sessions
+                     WHERE id <> ?1 AND state <> 'completed' AND deleted_at IS NULL",
+                    [&session.id],
+                    |row| row.get(0),
+                )
+                .map_err(read_failed)?;
+            state = transition(state, ArticleEvent::Correct)?;
+            if other_active {
+                return Err(AppError::new(
+                    error_code::ACTIVE_SESSION_EXISTS,
+                    "Existe outra conversa em curso. Conclua-a ou elimine-a antes de corrigir esta.",
+                    false,
+                ));
+            }
+            // Ramo novo: o antigo, as suas versões e o seu relatório ficam intactos.
+            let branch_id = Uuid::new_v4().to_string();
+            tx.execute(
+                "INSERT INTO article_branches (id, session_id, parent_branch_id, fork_turn_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![branch_id, session.id, session.branch, turn_id, now],
+            )
+            .map_err(write_failed)?;
+            tx.execute(
+                "INSERT INTO article_versions
+                   (id, session_id, turn_id, branch_id, seq, source, text, created_at)
+                 VALUES (?1, ?2, ?3, ?4, 1, 'manual_review', ?5, ?6)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    session.id,
+                    turn_id,
+                    branch_id,
+                    text,
+                    now
+                ],
+            )
+            .map_err(write_failed)?;
+            tx.execute(
+                "UPDATE article_sessions SET active_branch_id = ?2 WHERE id = ?1",
+                params![session.id, branch_id],
+            )
+            .map_err(write_failed)?;
+            generation += 1;
+            failed_from = Some(ArticleState::Finishing);
+            error = Some(ArticleError {
+                code: "ARTICLE_REGENERATE".into(),
+                message: "Correção guardada num ramo novo. Gere o novo relatório para a avaliar."
+                    .into(),
+                retryable: true,
+            });
+        }
         ArticleMutation::Fail { error: failure } => {
             // Guarda de onde veio a falha para o `Retry` repetir o passo certo.
             failed_from = Some(state);
@@ -1004,7 +1073,10 @@ fn apply(
         }
     }
     // A origem da falha só se mantém enquanto a falha existe (incl. em pausa).
-    if !matches!(operation, "fail" | "pause" | "resume" | "revoke") {
+    if !matches!(
+        operation,
+        "fail" | "pause" | "resume" | "revoke" | "correct"
+    ) {
         failed_from = None;
     }
     tx.execute(
@@ -1327,4 +1399,141 @@ fn usage_view(connection: &Connection, session_id: &str) -> Result<Option<Articl
         output_tokens: output,
         estimated_cost: cost,
     }))
+}
+
+// -- ramos e recuperação local -------------------------------------------------
+
+impl Database {
+    /// Reconstrói o contexto de um ramo (ativo ou antigo) a partir das fontes
+    /// guardadas: prefixo ancestral até à bifurcação mais os turnos do ramo.
+    pub fn project_article_branch(
+        &self,
+        session_id: &str,
+        branch_id: &str,
+    ) -> Result<ArticleContext> {
+        self.with_connection(|connection| {
+            let mut session = load_session(connection, session_id)?;
+            if session.deleted {
+                return Err(deleted());
+            }
+            let belongs: bool = connection
+                .query_row(
+                    "SELECT count(*) > 0 FROM article_branches WHERE id = ?1 AND session_id = ?2",
+                    params![branch_id, session_id],
+                    |row| row.get(0),
+                )
+                .map_err(read_failed)?;
+            if !belongs {
+                return Err(AppError::new(
+                    error_code::STALE_SOURCE,
+                    "O ramo indicado não pertence a esta conversa.",
+                    false,
+                ));
+            }
+            session.branch = branch_id.to_owned();
+            let turns = project_branch(connection, branch_id)?;
+            Ok(context_of(&session, &turns))
+        })
+    }
+
+    /// Recuperação local depois de um reinício, sem rede nem envios.
+    ///
+    /// Pedidos pendentes passam a `interrupted` (consumo desconhecido), uma
+    /// gravação ou transcrição a meio fica assinalada e um pedido de resposta ou
+    /// de relatório passa a recuperação explícita (`Retry`). Devolve as sessões
+    /// eliminadas cuja limpeza de ficheiros ainda não terminou.
+    pub fn recover_articles(&self) -> Result<Vec<String>> {
+        let now = utc_now();
+        self.with_connection(|connection| {
+            let tx = begin(connection)?;
+            tx.execute(
+                "UPDATE article_requests SET state = 'interrupted', finished_at = ?1
+                 WHERE state = 'pending'",
+                [&now],
+            )
+            .map_err(write_failed)?;
+            let ids = collect_all(
+                &tx,
+                "SELECT id FROM article_sessions
+                 WHERE deleted_at IS NULL
+                   AND state IN ('recording', 'transcribing', 'awaiting_tutor', 'finishing')
+                 ORDER BY created_at",
+            )?;
+            for id in ids {
+                recover_session(&tx, &id, &now)?;
+            }
+            let pending = collect_all(
+                &tx,
+                "SELECT id FROM article_sessions WHERE deleted_at IS NOT NULL ORDER BY created_at",
+            )?;
+            tx.commit().map_err(write_failed)?;
+            Ok(pending)
+        })
+    }
+
+    /// Recuperação de uma só sessão (`article_resume`); sem efeitos externos.
+    pub fn recover_article(&self, session_id: &str) -> Result<ArticleSnapshot> {
+        let now = utc_now();
+        self.with_connection(|connection| {
+            let tx = begin(connection)?;
+            if load_session(&tx, session_id)?.deleted {
+                return Err(deleted());
+            }
+            tx.execute(
+                "UPDATE article_requests SET state = 'interrupted', finished_at = ?2
+                 WHERE session_id = ?1 AND state = 'pending'",
+                params![session_id, now],
+            )
+            .map_err(write_failed)?;
+            recover_session(&tx, session_id, &now)?;
+            let result = build_snapshot(&tx, load_session(&tx, session_id)?)?;
+            tx.commit().map_err(write_failed)?;
+            Ok(result)
+        })
+    }
+}
+
+fn collect_all(connection: &Connection, sql: &str) -> Result<Vec<String>> {
+    let mut statement = connection.prepare(sql).map_err(read_failed)?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(read_failed)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(read_failed)?;
+    Ok(rows)
+}
+
+fn recover_session(tx: &Transaction<'_>, session_id: &str, now: &str) -> Result<()> {
+    let session = load_session(tx, session_id)?;
+    let interruption = |code: &str, message: &str| ArticleError {
+        code: code.into(),
+        message: message.into(),
+        retryable: true,
+    };
+    let change = match session.state {
+        ArticleState::Recording => ArticleMutation::Fail {
+            error: interruption(
+                "CAPTURE_INTERRUPTED",
+                "A gravação foi interrompida; grave a resposta outra vez.",
+            ),
+        },
+        ArticleState::Transcribing => {
+            let turns = project_branch(tx, &session.branch)?;
+            let Some(turn) = turns.last().filter(|t| t.speaker == ArticleSpeaker::User) else {
+                return Ok(());
+            };
+            ArticleMutation::RecordTranscript {
+                turn_id: turn.id.clone(),
+                text: None,
+            }
+        }
+        ArticleState::AwaitingTutor | ArticleState::Finishing => ArticleMutation::Fail {
+            error: interruption(
+                "AI_INTERRUPTED",
+                "O pedido foi interrompido antes de terminar; o consumo pode ser desconhecido. Repita quando quiser.",
+            ),
+        },
+        _ => return Ok(()),
+    };
+    apply(tx, &session, change, now)
 }
