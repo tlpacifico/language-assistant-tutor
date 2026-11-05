@@ -498,6 +498,16 @@ fn safe_operation(operation: &str) -> &str {
 
 // Lista fechada; nunca persistir nomes/argumentos livres enviados pelo frontend.
 const COMMANDS: &[&str] = &[
+    "article_authorize",
+    "article_create",
+    "article_delete",
+    "article_finish",
+    "article_list",
+    "article_retry",
+    "article_revoke",
+    "article_snapshot",
+    "article_start_recording",
+    "article_stop_recording",
     "interview_abandon_practice",
     "interview_advance_session",
     "interview_ai_accept_ai_consent",

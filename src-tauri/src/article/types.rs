@@ -301,3 +301,52 @@ pub fn validate_answer_text(text: &str) -> Result<()> {
     }
     Ok(())
 }
+
+/// Resumo de uma conversa para a lista.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticleSummary {
+    pub id: String,
+    pub title: Option<String>,
+    pub state: ArticleState,
+    pub updated_at: String,
+}
+
+/// Operação de um pedido ao fornecedor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArticleRequestKind {
+    Opening,
+    Reply,
+    Feedback,
+}
+
+impl ArticleRequestKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ArticleRequestKind::Opening => "opening",
+            ArticleRequestKind::Reply => "reply",
+            ArticleRequestKind::Feedback => "feedback",
+        }
+    }
+}
+
+/// Pedido registado antes de sair: o contexto é exatamente o que será enviado.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArticleTicket {
+    pub request_id: String,
+    pub kind: ArticleRequestKind,
+    pub context: ArticleContext,
+    pub attempt: u32,
+}
+
+/// Resultado de um pedido, a aplicar só se ainda for atual.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArticleOutcome {
+    /// Fala do tutor já validada (comentário opcional e pergunta).
+    Reply {
+        comment: Option<String>,
+        question: String,
+    },
+    Report(Box<ArticleReport>),
+    Failed(ArticleError),
+}

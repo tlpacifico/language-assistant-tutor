@@ -18,6 +18,7 @@
 
 pub mod ai;
 pub mod article;
+mod article_commands;
 pub mod artifacts;
 pub mod audio;
 pub mod commands;
@@ -45,6 +46,9 @@ use crate::worker::{WorkerClient, WorkerConfig};
 
 /// Evento com a fotografia da entrevista, publicado depois de cada alteração.
 pub const INTERVIEW_SNAPSHOT_EVENT: &str = "interview://snapshot";
+
+/// Evento com a fotografia persistida da conversa sobre um artigo.
+pub const ARTICLE_SNAPSHOT_EVENT: &str = "article://snapshot";
 
 /// Arranque real do auxiliar a partir da configuração pessoal.
 ///
@@ -132,6 +136,20 @@ pub fn run() {
                 }
             }));
 
+            let article_handle = app.handle().clone();
+            service.subscribe_articles(Arc::new(move |snapshot: &article::ArticleSnapshot| {
+                if article_handle
+                    .emit(ARTICLE_SNAPSHOT_EVENT, snapshot.clone())
+                    .is_err()
+                {
+                    diagnostics::record(diagnostics::Event::new(
+                        "rust",
+                        "snapshot_publish",
+                        "UNEXPECTED",
+                    ));
+                }
+            }));
+
             let audio_service = Arc::clone(&service);
             tauri::async_runtime::spawn(async move {
                 while let Some(event) = audio_receiver.recv().await {
@@ -164,6 +182,16 @@ pub fn run() {
             commands::interview_ai_evaluate_question,
             commands::interview_ai_load_feedback,
             commands::interview_ai_retry_ai_publication,
+            article_commands::article_authorize,
+            article_commands::article_create,
+            article_commands::article_delete,
+            article_commands::article_finish,
+            article_commands::article_list,
+            article_commands::article_retry,
+            article_commands::article_revoke,
+            article_commands::article_snapshot,
+            article_commands::article_start_recording,
+            article_commands::article_stop_recording,
             commands::interview_snapshot,
             commands::interview_list_questions,
             commands::interview_create_question,

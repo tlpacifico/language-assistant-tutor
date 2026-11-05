@@ -15,9 +15,10 @@ use super::Database;
 use crate::article::{
     transition, validate_answer_text, validate_article, ArticleAudioView, ArticleAuthorization,
     ArticleCommand, ArticleContext, ArticleCreate, ArticleError, ArticleEvent, ArticleMutation,
-    ArticlePlayback, ArticleReport, ArticleSessionView, ArticleSnapshot, ArticleSpeaker,
-    ArticleState, ArticleTurnView, ArticleVersionSource, ArticleVersionView, ContextRole,
-    ContextTurn, ARTICLE_NOTICE_VERSION, MAX_TURNS_PER_BRANCH, SUGGEST_FINISH_AFTER,
+    ArticleOutcome, ArticlePlayback, ArticleReport, ArticleRequestKind, ArticleSessionView,
+    ArticleSnapshot, ArticleSpeaker, ArticleState, ArticleSummary, ArticleTicket, ArticleTurnView,
+    ArticleUsageView, ArticleVersionSource, ArticleVersionView, ContextRole, ContextTurn,
+    ARTICLE_NOTICE_VERSION, MAX_TURNS_PER_BRANCH, SUGGEST_FINISH_AFTER,
 };
 use crate::domain::{error_code, AppError};
 use crate::interview::Result;
@@ -175,6 +176,11 @@ impl Database {
             tx.commit().map_err(write_failed)?;
             Ok(result)
         })
+    }
+
+    /// Já existe um recibo para este identificador (comando repetido).
+    pub fn article_replayed(&self, request_id: &str) -> Result<bool> {
+        self.with_connection(|connection| Ok(receipt(connection, request_id.trim())?.is_some()))
     }
 
     /// Caminhos relativos dos ficheiros ainda por remover de uma sessão eliminada.
@@ -728,7 +734,7 @@ fn build_snapshot(connection: &Connection, session: SessionRow) -> Result<Articl
             suggest_finish: answers >= SUGGEST_FINISH_AFTER,
             limit_reached: answers >= MAX_TURNS_PER_BRANCH || !context.has_room_for_next_answer(),
             error: session.error.clone(),
-            usage: None,
+            usage: usage_view(connection, &session.id)?,
         },
         turns,
         report,
@@ -817,6 +823,7 @@ fn operation_name(change: &ArticleMutation) -> &'static str {
         ArticleMutation::RecordTranscript { .. } => "transcript",
         ArticleMutation::ManualText { .. } => "manual_text",
         ArticleMutation::Finish => "finish",
+        ArticleMutation::Complete => "complete",
         ArticleMutation::Fail { .. } => "fail",
         ArticleMutation::Retry => "retry",
         ArticleMutation::Delete => "delete",
@@ -956,6 +963,9 @@ fn apply(
             state = transition(state, ArticleEvent::Finish)?;
             generation += 1;
         }
+        ArticleMutation::Complete => {
+            state = transition(state, ArticleEvent::ReportReady)?;
+        }
         ArticleMutation::Fail { error: failure } => {
             // Guarda de onde veio a falha para o `Retry` repetir o passo certo.
             failed_from = Some(state);
@@ -1034,4 +1044,287 @@ fn insert_turn(
     )
     .map_err(write_failed)?;
     Ok(id)
+}
+
+// -- pedidos ao fornecedor, listagem e consumo ------------------------------
+
+impl Database {
+    /// Conversas não eliminadas, da mais recente para a mais antiga.
+    pub fn list_articles(&self) -> Result<Vec<ArticleSummary>> {
+        self.with_connection(|connection| {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id, title, state, updated_at FROM article_sessions
+                     WHERE deleted_at IS NULL ORDER BY updated_at DESC, rowid DESC",
+                )
+                .map_err(read_failed)?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })
+                .map_err(read_failed)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(read_failed)?;
+            rows.into_iter()
+                .map(|(id, title, state, updated_at)| {
+                    Ok(ArticleSummary {
+                        id,
+                        title,
+                        state: state_from_str(&state)?,
+                        updated_at,
+                    })
+                })
+                .collect()
+        })
+    }
+
+    /// Aplica uma mutação iniciada pelo núcleo (resultado de pedido, falha),
+    /// sem versão esperada nem recibo: a validade vem do estado e da geração.
+    pub fn apply_article_system(
+        &self,
+        session_id: &str,
+        change: ArticleMutation,
+    ) -> Result<ArticleSnapshot> {
+        let now = utc_now();
+        self.with_connection(|connection| {
+            let tx = begin(connection)?;
+            let session = load_session(&tx, session_id)?;
+            if session.deleted {
+                return Err(deleted());
+            }
+            apply(&tx, &session, change, &now)?;
+            let result = build_snapshot(&tx, load_session(&tx, &session.id)?)?;
+            tx.commit().map_err(write_failed)?;
+            Ok(result)
+        })
+    }
+
+    /// Regista um pedido pendente com o contexto exato que vai ser enviado.
+    ///
+    /// Devolve `None` quando não há nada a pedir: estado sem pedido, sessão
+    /// eliminada ou já existe um pedido pendente nesta geração (clique duplo).
+    pub fn begin_article_request(
+        &self,
+        session_id: &str,
+        config_json: &str,
+    ) -> Result<Option<ArticleTicket>> {
+        let now = utc_now();
+        self.with_connection(|connection| {
+            let tx = begin(connection)?;
+            let session = load_session(&tx, session_id)?;
+            if session.deleted {
+                return Ok(None);
+            }
+            let turns = project_branch(&tx, &session.branch)?;
+            let kind = match session.state {
+                ArticleState::AwaitingTutor if turns.iter().all(|t| !t.sendable) => {
+                    ArticleRequestKind::Opening
+                }
+                ArticleState::AwaitingTutor => ArticleRequestKind::Reply,
+                ArticleState::Finishing => ArticleRequestKind::Feedback,
+                _ => return Ok(None),
+            };
+            let pending: bool = tx
+                .query_row(
+                    "SELECT count(*) > 0 FROM article_requests
+                     WHERE session_id = ?1 AND state = 'pending' AND generation = ?2",
+                    params![session.id, session.generation as i64],
+                    |row| row.get(0),
+                )
+                .map_err(read_failed)?;
+            if pending {
+                return Ok(None);
+            }
+            let attempt: i64 = tx
+                .query_row(
+                    "SELECT count(*) + 1 FROM article_requests
+                     WHERE session_id = ?1 AND operation = ?2",
+                    params![session.id, kind.as_str()],
+                    |row| row.get(0),
+                )
+                .map_err(read_failed)?;
+            let context = context_of(&session, &turns);
+            let turn_id = turns
+                .iter()
+                .rev()
+                .find(|t| t.speaker == ArticleSpeaker::User && t.sendable)
+                .map(|t| t.id.clone())
+                .filter(|_| kind == ArticleRequestKind::Reply);
+            let request_id = Uuid::new_v4().to_string();
+            tx.execute(
+                "INSERT INTO article_requests
+                   (id, session_id, operation, generation, branch_id, turn_id, attempt,
+                    source_version_ids_json, config_json, context_json, state, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'pending', ?11)",
+                params![
+                    request_id,
+                    session.id,
+                    kind.as_str(),
+                    session.generation as i64,
+                    session.branch,
+                    turn_id,
+                    attempt,
+                    serde_json::to_string(&context.source_version_ids).unwrap_or_default(),
+                    config_json,
+                    serde_json::to_string(&context).map_err(|_| invalid("Contexto inválido."))?,
+                    now
+                ],
+            )
+            .map_err(write_failed)?;
+            tx.commit().map_err(write_failed)?;
+            Ok(Some(ArticleTicket {
+                request_id,
+                kind,
+                context,
+                attempt: attempt as u32,
+            }))
+        })
+    }
+
+    /// Fecha um pedido: aplica o resultado só se a sessão ainda o aceita.
+    ///
+    /// Revogação, término, eliminação ou mudança de estado tornam o pedido
+    /// `stale`; o consumo conhecido fica guardado em qualquer caso. Devolve o
+    /// estado atual da sessão, ou `None` se a conversa já foi limpa ou eliminada.
+    pub fn finish_article_request(
+        &self,
+        request_id: &str,
+        outcome: ArticleOutcome,
+        usage_json: Option<&str>,
+    ) -> Result<Option<ArticleSnapshot>> {
+        let now = utc_now();
+        self.with_connection(|connection| {
+            let tx = begin(connection)?;
+            let row: Option<(String, String, i64, String, String)> = tx
+                .query_row(
+                    "SELECT session_id, operation, generation, branch_id, state
+                     FROM article_requests WHERE id = ?1",
+                    [request_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(read_failed)?;
+            let Some((session_id, operation, generation, branch, state)) = row else {
+                return Ok(None);
+            };
+            let session = load_session(&tx, &session_id)?;
+            let expected_state = if operation == "feedback" {
+                ArticleState::Finishing
+            } else {
+                ArticleState::AwaitingTutor
+            };
+            let current = state == "pending"
+                && !session.deleted
+                && session.generation as i64 == generation
+                && session.branch == branch
+                && session.state == expected_state;
+            let (request_state, error_json) = if !current {
+                ("stale", None)
+            } else {
+                match &outcome {
+                    ArticleOutcome::Reply { comment, question } => {
+                        let text = match comment {
+                            Some(comment) => format!("{comment}\n\n{question}"),
+                            None => question.clone(),
+                        };
+                        apply(&tx, &session, ArticleMutation::AddTutorTurn { text }, &now)?;
+                        ("completed", None)
+                    }
+                    ArticleOutcome::Report(report) => {
+                        tx.execute(
+                            "INSERT INTO article_reports
+                               (id, session_id, branch_id, request_id, version_ids_json,
+                                report_json, created_at)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                            params![
+                                report.id,
+                                session.id,
+                                session.branch,
+                                request_id,
+                                serde_json::to_string(&report.version_ids).unwrap_or_default(),
+                                serde_json::to_string(&**report)
+                                    .map_err(|_| invalid("Relatório inválido."))?,
+                                now
+                            ],
+                        )
+                        .map_err(write_failed)?;
+                        apply(&tx, &session, ArticleMutation::Complete, &now)?;
+                        ("completed", None)
+                    }
+                    ArticleOutcome::Failed(error) => {
+                        apply(
+                            &tx,
+                            &session,
+                            ArticleMutation::Fail {
+                                error: error.clone(),
+                            },
+                            &now,
+                        )?;
+                        ("failed", serde_json::to_string(error).ok())
+                    }
+                }
+            };
+            if state == "pending" {
+                tx.execute(
+                    "UPDATE article_requests
+                     SET state = ?2, usage_json = ?3, error_json = ?4, finished_at = ?5
+                     WHERE id = ?1",
+                    params![request_id, request_state, usage_json, error_json, now],
+                )
+                .map_err(write_failed)?;
+            }
+            let result = if session.deleted {
+                None
+            } else {
+                Some(build_snapshot(&tx, load_session(&tx, &session_id)?)?)
+            };
+            tx.commit().map_err(write_failed)?;
+            Ok(result)
+        })
+    }
+}
+
+/// Consumo agregado dos pedidos já terminados; qualquer valor desconhecido
+/// deixa o campo em `None` em vez de contar como zero.
+fn usage_view(connection: &Connection, session_id: &str) -> Result<Option<ArticleUsageView>> {
+    let rows = collect(
+        connection,
+        "SELECT usage_json FROM article_requests
+         WHERE session_id = ?1 AND state IN ('completed', 'failed', 'stale', 'interrupted')",
+        session_id,
+        |row| row.get::<_, Option<String>>(0),
+    )?;
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let (mut input, mut output, mut cost) = (Some(0u64), Some(0u64), Some(0f64));
+    for raw in rows {
+        let usage: Option<serde_json::Value> =
+            raw.and_then(|json| serde_json::from_str(&json).ok());
+        let field = |name: &str| usage.as_ref().and_then(|u| u[name].as_u64());
+        input = input.zip(field("input")).map(|(a, b)| a + b);
+        output = output.zip(field("output")).map(|(a, b)| a + b);
+        let money = usage
+            .as_ref()
+            .and_then(|u| u["reported"].as_f64().or_else(|| u["estimated"].as_f64()));
+        cost = cost.zip(money).map(|(a, b)| a + b);
+    }
+    Ok(Some(ArticleUsageView {
+        input_tokens: input,
+        output_tokens: output,
+        estimated_cost: cost,
+    }))
 }

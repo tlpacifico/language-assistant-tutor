@@ -39,6 +39,8 @@ pub enum ArticleMutation {
         text: String,
     },
     Finish,
+    /// O relatório (ou a ausência dele, sem respostas) foi aplicado.
+    Complete,
     /// Falha recuperável de um pedido ou da gravação; guarda de onde veio.
     Fail {
         error: ArticleError,

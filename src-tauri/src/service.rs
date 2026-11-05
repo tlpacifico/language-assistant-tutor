@@ -73,8 +73,11 @@ use crate::worker::{
 };
 
 mod ai;
+mod article;
 mod interview;
 mod practice;
+
+pub use article::ArticleListener;
 
 /// Falha de SQLite simulada nos testes, injetada em pontos concretos do arranque
 /// da captura de preparação. Nunca é usada pelo caminho real.
@@ -240,6 +243,8 @@ struct InterviewState {
     active_owner: Option<CaptureOwner>,
     /// Preparação de captura pendente (histórias, tarefa 3; neutra nesta tarefa).
     pending_preparation: Option<Id>,
+    /// Uma captura ou transcrição de um artigo detém o microfone e o auxiliar.
+    article_busy: bool,
 }
 
 impl InterviewState {
@@ -266,6 +271,7 @@ impl InterviewState {
             active_practice: None,
             active_owner: None,
             pending_preparation: None,
+            article_busy: false,
         }
     }
 
@@ -281,6 +287,11 @@ impl InterviewState {
         if self.recording_id.is_some() || self.finalizing {
             return Err(AppError::busy(
                 "Termine a gravação antes de pedir uma transcrição ou síntese.",
+            ));
+        }
+        if self.article_busy {
+            return Err(AppError::busy(
+                "Há uma gravação ou transcrição de um artigo em curso. Aguarde que termine.",
             ));
         }
         if self.model_job.is_some() {
@@ -411,6 +422,10 @@ pub struct AppService {
     listener: Mutex<Option<SnapshotListener>>,
     /// Falha de SQLite simulada nos testes; ausente no caminho real.
     fault: Mutex<Option<PreparationFault>>,
+    /// Estado em memória da conversa sobre artigos.
+    article: Mutex<article::ArticleRuntime>,
+    article_transport: Arc<dyn crate::ai::ArticleTransport>,
+    article_listener: Mutex<Option<ArticleListener>>,
 }
 
 impl AppService {
@@ -450,6 +465,9 @@ impl AppService {
             transitions: tokio::sync::Mutex::new(()),
             listener: Mutex::new(None),
             fault: Mutex::new(None),
+            article: Mutex::new(article::ArticleRuntime::default()),
+            article_transport: Arc::new(crate::ai::ArticleHttpTransport::default()),
+            article_listener: Mutex::new(None),
         }
     }
 
@@ -475,6 +493,7 @@ impl AppService {
     /// do auxiliar ou da base não impede a janela de aparecer: fica indicada na
     /// fotografia e pode ser repetida.
     pub async fn start(self: &Arc<Self>) -> InterviewSnapshot {
+        self.remember_self();
         let _transition = self.transitions.lock().await;
         self.refresh_audio_availability().await;
         if let Err(error) = self.launch_worker().await {
@@ -961,6 +980,8 @@ impl AppService {
             }
         }
 
+        self.close_article_audio().await;
+
         if let Ok(db) = self.database() {
             database_task(move || db.recover_ai()).await?;
         }
@@ -1026,6 +1047,12 @@ impl AppService {
             generation,
             message,
         } = event;
+        if self
+            .route_article_worker_message(generation, &message)
+            .await
+        {
+            return;
+        }
         match message {
             WorkerMessage::Progress { request_id, stage } => {
                 self.apply_progress(&request_id, generation, stage);
