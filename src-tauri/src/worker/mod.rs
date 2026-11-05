@@ -40,8 +40,8 @@ use protocol::{
 };
 
 pub use protocol::{
-    HealthResult, PreloadResult, ShutdownResult, SynthesisResult, SynthesizeParams,
-    TranscribeParams, TranscriptionResult, WorkerResult,
+    HealthResult, PreloadResult, ShutdownResult, SynthesisResult, SynthesisStreamResult,
+    SynthesizeParams, SynthesizeStreamParams, TranscribeParams, TranscriptionResult, WorkerResult,
 };
 
 /// Nome fixo do módulo do auxiliar instalado no ambiente virtual.
@@ -284,6 +284,18 @@ impl WorkerRequest {
         Ok(request)
     }
 
+    /// Pedido `synthesize_stream`: blocos de voz completos pela ordem de geração.
+    pub fn synthesize_stream(
+        id: impl Into<String>,
+        params: SynthesizeStreamParams,
+    ) -> Result<Self, AppError> {
+        Ok(Self::new(
+            id,
+            WorkerOp::SynthesizeStream,
+            params_value(&params)?,
+        ))
+    }
+
     /// Pedido `preload`: carrega os modelos disponíveis antes do primeiro uso.
     pub fn preload(id: impl Into<String>) -> Self {
         Self::new(id, WorkerOp::Preload, json!({}))
@@ -300,6 +312,14 @@ pub enum WorkerMessage {
         request_id: String,
         result: WorkerResult,
     },
+    /// Bloco de voz completo de um `synthesize_stream`, antes do resultado final.
+    AudioChunk {
+        request_id: String,
+        index: u32,
+        audio_path: PathBuf,
+        sample_rate: u32,
+        duration_ms: u64,
+    },
     /// O pedido falhou; `error` explica porquê.
     Failed { request_id: String, error: AppError },
 }
@@ -315,6 +335,10 @@ pub struct WorkerEvent {
 pub trait WorkerPort: Send + Sync {
     fn submit(&self, request: WorkerRequest) -> Result<(), AppError>;
     fn restart(&self) -> Result<(), AppError>;
+    /// Pede o cancelamento cooperativo da síntese em curso; sem efeito se não houver.
+    fn cancel(&self) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 /// Comandos enviados ao supervisor.
@@ -326,6 +350,8 @@ enum Control {
     Restart {
         reply: SyncSender<Result<u64, AppError>>,
     },
+    /// Pede ao auxiliar que pare a síntese incremental ativa.
+    Cancel,
     Shutdown {
         reply: SyncSender<Result<(), AppError>>,
     },
@@ -466,6 +492,12 @@ impl WorkerPort for WorkerClient {
             self.deadlines.handshake + EXIT_GRACE + COMMAND_TIMEOUT,
         )
         .map(|_generation| ())
+    }
+
+    fn cancel(&self) -> Result<(), AppError> {
+        self.inputs
+            .send(Input::Command(Control::Cancel))
+            .map_err(|_| unavailable("O auxiliar não está em execução."))
     }
 }
 
@@ -698,7 +730,26 @@ impl Supervisor {
                 self.handle_shutdown(reply).await;
                 false
             }
+            Control::Cancel => {
+                self.handle_cancel().await;
+                false
+            }
             Control::Detach => true,
+        }
+    }
+
+    /// Escreve um `cancel` fire-and-forget; só tem efeito durante um `synthesize_stream`.
+    async fn handle_cancel(&mut self) {
+        let Some(pending) = self.pending.as_ref() else {
+            return;
+        };
+        if pending.op != WorkerOp::SynthesizeStream {
+            return;
+        }
+        let id = format!("cancel-{}", pending.id);
+        let params = json!({ "target": pending.id });
+        if let Ok(line) = encode_request(&id, WorkerOp::Cancel, &params) {
+            let _ = self.write_line(&line).await;
         }
     }
 
@@ -753,9 +804,12 @@ impl Supervisor {
         let window = match request.op {
             WorkerOp::Health => self.config.deadlines.handshake,
             WorkerOp::Shutdown => self.config.deadlines.shutdown,
-            WorkerOp::Transcribe | WorkerOp::Synthesize | WorkerOp::Preload => {
-                self.config.deadlines.model_load
-            }
+            WorkerOp::Transcribe
+            | WorkerOp::Synthesize
+            | WorkerOp::SynthesizeStream
+            | WorkerOp::Preload => self.config.deadlines.model_load,
+            // O cancelamento só se escreve a partir de `handle_cancel`.
+            WorkerOp::Cancel => self.config.deadlines.model_load,
         };
         self.used.insert(request.id.clone());
         self.busy.store(true, Ordering::SeqCst);
@@ -887,6 +941,16 @@ impl Supervisor {
             WorkerResponse::Progress { stage, .. } => {
                 self.handle_progress(generation, stage).await;
             }
+            WorkerResponse::AudioChunk {
+                id,
+                index,
+                audio_path,
+                sample_rate,
+                duration_ms,
+            } => {
+                self.handle_chunk(generation, id, index, audio_path, sample_rate, duration_ms)
+                    .await;
+            }
             WorkerResponse::Result {
                 ok, result, error, ..
             } => {
@@ -917,7 +981,7 @@ impl Supervisor {
         match response {
             // O handshake não produz progresso; uma etapa inesperada não altera
             // o prazo.
-            WorkerResponse::Progress { .. } => {}
+            WorkerResponse::Progress { .. } | WorkerResponse::AudioChunk { .. } => {}
             WorkerResponse::Result {
                 ok, result, error, ..
             } => {
@@ -1002,10 +1066,11 @@ impl Supervisor {
                         WorkerOp::Transcribe => {
                             deadlines.transcription(pending.audio_duration.unwrap_or_default())
                         }
-                        WorkerOp::Synthesize => deadlines.synthesis,
-                        WorkerOp::Health | WorkerOp::Preload | WorkerOp::Shutdown => {
-                            deadlines.model_load
-                        }
+                        WorkerOp::Synthesize | WorkerOp::SynthesizeStream => deadlines.synthesis,
+                        WorkerOp::Health
+                        | WorkerOp::Preload
+                        | WorkerOp::Shutdown
+                        | WorkerOp::Cancel => deadlines.model_load,
                     };
                     pending.deadline = Instant::now() + window;
                 }
@@ -1022,6 +1087,40 @@ impl Supervisor {
             return;
         }
         self.emit(generation, WorkerMessage::Progress { request_id, stage });
+    }
+
+    /// Um bloco de voz renova o prazo da síntese e segue para o serviço.
+    async fn handle_chunk(
+        &mut self,
+        generation: u64,
+        request_id: String,
+        index: u32,
+        audio_path: PathBuf,
+        sample_rate: u32,
+        duration_ms: u64,
+    ) {
+        let window = self.config.deadlines.synthesis;
+        let Some(pending) = self.pending.as_mut() else {
+            return;
+        };
+        if pending.op != WorkerOp::SynthesizeStream {
+            self.fail_pending(protocol::protocol_error(
+                "O auxiliar enviou um bloco de voz sem um pedido incremental.",
+            ))
+            .await;
+            return;
+        }
+        pending.deadline = Instant::now() + window;
+        self.emit(
+            generation,
+            WorkerMessage::AudioChunk {
+                request_id,
+                index,
+                audio_path,
+                sample_rate,
+                duration_ms,
+            },
+        );
     }
 
     async fn handle_result(&mut self, ok: bool, result: Option<Value>, error: Option<AppError>) {

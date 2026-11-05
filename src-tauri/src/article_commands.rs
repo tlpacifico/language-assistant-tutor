@@ -97,6 +97,22 @@ pub async fn article_play_turn(
     service.article_play_turn(&session_id, &turn_id).await
 }
 
+/// Para a voz do tutor sem perder texto nem estado.
+#[tauri::command]
+pub async fn article_stop_voice(service: State<'_, Arc<AppService>>) -> Result<(), AppError> {
+    service.article_stop_voice().await
+}
+
+/// Repete a voz de uma fala do tutor, sem nova chamada ao fornecedor de texto.
+#[tauri::command]
+pub async fn article_speak_turn(
+    session_id: String,
+    turn_id: String,
+    service: State<'_, Arc<AppService>>,
+) -> Result<(), AppError> {
+    service.article_speak_turn(&session_id, &turn_id).await
+}
+
 #[tauri::command]
 pub async fn article_resume(
     command: ArticleCommand,

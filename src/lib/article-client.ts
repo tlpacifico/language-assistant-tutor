@@ -40,6 +40,8 @@ export interface ArticleClient {
   playTurn(sessionId: string, turnId: string): Promise<void>;
   /** Interrompe a voz do tutor sem apagar texto nem estado. */
   stopVoice(): Promise<void>;
+  /** Repete a voz de uma fala do tutor, sem nova chamada ao fornecedor de texto. */
+  speakTurn(sessionId: string, turnId: string): Promise<void>;
   /** Recebe cada fotografia publicada; devolve a remoção do listener. */
   subscribe(handler: (snapshot: ArticleSnapshot) => void): Promise<() => void>;
 }
@@ -77,7 +79,10 @@ export function createArticleClient(): ArticleClient {
       await invoke<void>("article_play_turn", { sessionId, turnId });
     },
     async stopVoice() {
-      await invoke("interview_stop_audio");
+      await invoke<void>("article_stop_voice");
+    },
+    async speakTurn(sessionId, turnId) {
+      await invoke<void>("article_speak_turn", { sessionId, turnId });
     },
     async subscribe(handler) {
       return listen<ArticleSnapshot>(ARTICLE_SNAPSHOT_EVENT, (event) =>

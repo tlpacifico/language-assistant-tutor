@@ -96,6 +96,7 @@ export function fakeArticleClient(initial: ArticleSnapshot = makeSnapshot()) {
     delete: vi.fn(() => Promise.resolve()),
     playTurn: vi.fn(() => Promise.resolve()),
     stopVoice: vi.fn(() => Promise.resolve()),
+    speakTurn: vi.fn(() => Promise.resolve()),
     subscribe: vi.fn((handler: (snapshot: ArticleSnapshot) => void) => {
       handlers.add(handler);
       return Promise.resolve(() => {

@@ -193,6 +193,8 @@ pub fn run() {
             article_commands::article_resume,
             article_commands::article_revoke,
             article_commands::article_snapshot,
+            article_commands::article_speak_turn,
+            article_commands::article_stop_voice,
             article_commands::article_submit_text,
             article_commands::article_start_recording,
             article_commands::article_stop_recording,

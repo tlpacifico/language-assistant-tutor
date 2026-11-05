@@ -195,6 +195,23 @@ export default function ArticleConversation({
         </div>
       ) : null}
 
+      {audio.playback === "failed" && audio.turnId ? (
+        <div className="practice__notice" role="status">
+          <p>
+            A voz do tutor falhou; o texto está acima. Pode repetir só a voz,
+            sem nova chamada ao fornecedor.
+          </p>
+          <button
+            type="button"
+            onClick={() =>
+              void client.speakTurn(session.id, audio.turnId ?? "").catch(() => undefined)
+            }
+          >
+            Repetir voz
+          </button>
+        </div>
+      ) : null}
+
       {audio.playback === "playing" ? (
         <button type="button" onClick={() => void client.stopVoice()}>
           Parar voz

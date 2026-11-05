@@ -1,0 +1,47 @@
+{
+  "protocolVersion": 1,
+  "description": "Exemplos da síntese incremental (synthesize_stream), aditivos ao protocolo v1: blocos audio_chunk com WAV completo antes do resultado final; cancel é fire-and-forget e nunca produz mensagem.",
+  "requests": {
+    "synthesizeStream": {
+      "protocolVersion": 1,
+      "id": "voice-1",
+      "op": "synthesize_stream",
+      "params": {
+        "text": "Good point. Why does that matter?",
+        "outputDir": "C:\\Users\\Thacio Silva\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\articles\\8a1f4c78\\voice-1",
+        "voice": "af_heart",
+        "speed": 1.0
+      }
+    },
+    "cancel": {
+      "protocolVersion": 1,
+      "id": "cancel-voice-1",
+      "op": "cancel",
+      "params": { "target": "voice-1" }
+    }
+  },
+  "responses": {
+    "audioChunk": {
+      "protocolVersion": 1,
+      "id": "voice-1",
+      "event": "audio_chunk",
+      "index": 0,
+      "audioPath": "C:\\Users\\Thacio Silva\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\articles\\8a1f4c78\\voice-1\\chunk-0000.wav",
+      "sampleRate": 24000,
+      "durationMs": 1200
+    },
+    "streamResult": {
+      "protocolVersion": 1,
+      "id": "voice-1",
+      "event": "result",
+      "ok": true,
+      "result": {
+        "chunks": 2,
+        "sampleRate": 24000,
+        "cancelled": false,
+        "loadMs": 5,
+        "processingMs": 900
+      }
+    }
+  }
+}

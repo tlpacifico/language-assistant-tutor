@@ -159,6 +159,22 @@ describe("ArticleConversation", () => {
     expect(screen.getByText("Why does that matter?")).toBeInTheDocument();
   });
 
+  it("oferece repetir só a voz quando falhou, mantendo o texto", async () => {
+    const user = userEvent.setup();
+    const { fake } = setup(
+      makeSnapshot({
+        turns: dialogue,
+        audio: { playback: "failed", turnId: "turn-3" },
+      }),
+    );
+    expect(screen.getByText("Why does that matter?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Repetir voz" }));
+    expect(fake.client.speakTurn).toHaveBeenCalledWith("session-1", "turn-3");
+    // Nenhum comando que chame o fornecedor de texto.
+    expect(fake.client.retry).not.toHaveBeenCalled();
+    expect(fake.client.finish).not.toHaveBeenCalled();
+  });
+
   it("ignora eventos duplicados e atrasados", async () => {
     const { fake } = setup(makeSnapshot());
     act(() => {

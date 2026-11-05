@@ -511,6 +511,8 @@ const COMMANDS: &[&str] = &[
     "article_resume",
     "article_revoke",
     "article_snapshot",
+    "article_speak_turn",
+    "article_stop_voice",
     "article_submit_text",
     "article_start_recording",
     "article_stop_recording",

@@ -221,3 +221,15 @@ def test_serve_cancel_is_silent_and_stops_the_active_stream():
 def test_serve_ignores_a_cancel_when_nothing_is_streaming():
     messages = _serve([_request("cancel", "c1", {"target": "nada"})])
     assert messages == []
+
+
+def test_shared_stream_examples_are_valid_protocol_messages():
+    path = Path(__file__).resolve().parents[2] / "contracts" / "worker-v1.stream.examples.json"
+    examples = json.loads(path.read_text(encoding="utf-8"))
+    for message in examples["requests"].values():
+        request = parse_request(json.dumps(message, ensure_ascii=False))
+        assert request.op == message["op"]
+    chunk = examples["responses"]["audioChunk"]
+    assert chunk == chunk_message(
+        chunk["id"], chunk["index"], chunk["audioPath"], chunk["sampleRate"], chunk["durationMs"]
+    )

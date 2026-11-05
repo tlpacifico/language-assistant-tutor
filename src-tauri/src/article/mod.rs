@@ -7,7 +7,9 @@
 mod mutation;
 mod state;
 mod types;
+mod voice;
 
 pub use mutation::*;
 pub use state::*;
 pub use types::*;
+pub use voice::*;

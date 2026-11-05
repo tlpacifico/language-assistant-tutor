@@ -46,8 +46,8 @@ impl Playback {
         }
     }
 
-    /// Descodifica e reproduz um WAV já pertencente à aplicação.
-    pub fn play(&mut self, path: &Path) -> Result<(), AppError> {
+    /// Abre e descodifica um WAV, sem tocar no dispositivo.
+    fn decode(path: &Path) -> Result<Decoder<File>, AppError> {
         if !path.is_file() {
             return Err(AppError::new(
                 error_code::ARTIFACT_MISSING,
@@ -68,14 +68,32 @@ impl Playback {
                 false,
             )
         })?;
-        let decoder = Decoder::new(file).map_err(|error| {
+        Decoder::new(file).map_err(|error| {
             AppError::new(
                 error_code::INVALID_AUDIO,
                 format!("O ficheiro de áudio está ilegível e não pode ser reproduzido: {error}."),
                 false,
             )
-        })?;
+        })
+    }
 
+    /// Acrescenta um WAV à fila do mesmo player (cria-o se não houver); um bloco
+    /// novo nunca interrompe o que já toca.
+    pub fn append(&mut self, path: &Path) -> Result<(), AppError> {
+        let decoder = Self::decode(path)?;
+        if self.player.is_none() {
+            let output = self.output()?;
+            self.player = Some(Player::connect_new(output.mixer()));
+        }
+        if let Some(player) = &self.player {
+            player.append(decoder);
+        }
+        Ok(())
+    }
+
+    /// Descodifica e reproduz um WAV já pertencente à aplicação.
+    pub fn play(&mut self, path: &Path) -> Result<(), AppError> {
+        let decoder = Self::decode(path)?;
         // Uma reprodução nova substitui a anterior em vez de as misturar.
         self.stop()?;
         let output = self.output()?;

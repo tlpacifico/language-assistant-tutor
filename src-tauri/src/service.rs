@@ -120,6 +120,10 @@ pub trait WorkerControl: Send + Sync {
     fn shutdown(&self) -> Result<(), AppError>;
     fn generation(&self) -> u64;
     fn is_running(&self) -> bool;
+    /// Cancelamento cooperativo da síntese incremental em curso.
+    fn cancel(&self) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 impl WorkerControl for WorkerClient {
@@ -141,6 +145,10 @@ impl WorkerControl for WorkerClient {
 
     fn is_running(&self) -> bool {
         WorkerClient::is_running(self)
+    }
+
+    fn cancel(&self) -> Result<(), AppError> {
+        WorkerPort::cancel(self)
     }
 }
 
@@ -1042,6 +1050,7 @@ impl AppService {
                     .await;
             }
             AudioEvent::PlaybackFinished => {
+                self.article_playback_finished().await;
                 let playing = self.lock_state().playback.is_some();
                 if !playing {
                     return; // fim de uma reprodução já substituída
@@ -1075,6 +1084,8 @@ impl AppService {
                 self.apply_worker_failure(&request_id, generation, error)
                     .await;
             }
+            // Blocos de voz só pertencem ao modo artigo (tratados antes).
+            WorkerMessage::AudioChunk { .. } => {}
         }
     }
 
@@ -1121,7 +1132,7 @@ impl AppService {
                     });
                 }
             }
-            WorkerResult::Shutdown(_) => {}
+            WorkerResult::SynthesisStream(_) | WorkerResult::Shutdown(_) => {}
         }
     }
 
