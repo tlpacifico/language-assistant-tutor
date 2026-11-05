@@ -1322,3 +1322,112 @@ async fn turn_metrics_use_closed_operations_with_durations_and_no_content() {
         assert!(!text.contains(secret), "{secret}");
     }
 }
+
+#[tokio::test]
+async fn full_conversation_authorize_five_turns_correct_regenerate_complete_and_reopen() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+
+    // Cinco turnos: gravar, parar, transcrever, resposta do tutor.
+    let mut snapshot = ready;
+    for n in 1..=5 {
+        h.record(&snapshot).await;
+        h.transcript(&format!("Answer number {n} about remote work."))
+            .await;
+        snapshot = h.snapshot(&id).await;
+        assert_eq!(snapshot.session.state, ArticleState::Ready, "turno {n}");
+        assert_eq!(snapshot.session.answers, n);
+    }
+    assert!(snapshot.session.suggest_finish, "sugere terminar à quinta");
+    assert_eq!(h.transport.count(ArticleAiTask::Reply), 5);
+
+    // Terminar e gerar o relatório.
+    h.service.article_finish(h.cmd(&snapshot)).await.unwrap();
+    h.service.article_settle().await;
+    let done = h.snapshot(&id).await;
+    assert_eq!(done.session.state, ArticleState::Completed);
+    let first_report = done.report.clone().expect("relatório");
+
+    // Corrigir uma resposta antiga: ramo novo, sem chamadas até ao pedido explícito.
+    let calls = h.transport.calls().len();
+    let second_user = done
+        .turns
+        .iter()
+        .filter(|t| t.speaker == ArticleSpeaker::User)
+        .nth(1)
+        .unwrap()
+        .clone();
+    let corrected = h
+        .service
+        .article_correct(language_assistant_tutor::article::ArticleCorrection {
+            command: h.cmd(&done),
+            turn_id: second_user.id.clone(),
+            text: "A corrected second answer about remote work.".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(h.transport.calls().len(), calls);
+    assert_eq!(corrected.turns.len(), 4, "prefixo até à resposta corrigida");
+
+    // Regenerar no ramo novo e concluir outra vez.
+    h.service.article_retry(h.cmd(&corrected)).await.unwrap();
+    h.service.article_settle().await;
+    let regenerated = h.snapshot(&id).await;
+    assert_eq!(regenerated.session.state, ArticleState::Completed);
+    let second_report = regenerated.report.clone().unwrap();
+    assert_ne!(second_report.id, first_report.id);
+    assert_ne!(second_report.branch_id, first_report.branch_id);
+
+    // Fontes e artefactos: nada foi apagado ou reescrito.
+    let (turns, versions, reports, audio_rows): (i64, i64, i64, i64) = h
+        .database
+        .with_connection(|c| {
+            let count = |sql: &str| c.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+            Ok((
+                count("SELECT count(*) FROM article_turns"),
+                count("SELECT count(*) FROM article_versions"),
+                count("SELECT count(*) FROM article_reports"),
+                count("SELECT count(*) FROM article_artifacts WHERE state = 'present'"),
+            ))
+        })
+        .unwrap();
+    assert_eq!(turns, 11, "1 abertura + 5 respostas + 5 réplicas");
+    assert_eq!(versions, 12, "uma por turno e a correção manual");
+    assert_eq!(reports, 2);
+    assert_eq!(audio_rows, 5);
+    let article_dir = h.directory.path().join("articles").join(&id);
+    let originals = std::fs::read_dir(&article_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().join("original.wav").is_file())
+        .count();
+    assert_eq!(originals, 5, "um áudio original por resposta, intacto");
+
+    // Consumo conhecido: abertura + 5 réplicas + 2 relatórios, 10 tokens de entrada cada.
+    let usage = regenerated.session.usage.clone().unwrap();
+    assert_eq!(usage.input_tokens, Some(80));
+    assert_eq!(usage.output_tokens, Some(40));
+    assert_eq!(h.transport.count(ArticleAiTask::Feedback), 2);
+
+    // Reabrir (novo serviço sobre a mesma base) não faz nenhuma chamada.
+    let transport = Arc::new(FakeTransport::default());
+    let worker = Arc::new(FakeWorker::default());
+    let reopened = build_service(
+        h.directory.path(),
+        &h.database_path,
+        &h.manifest,
+        Arc::new(FakeAudio::default()),
+        worker.clone(),
+        transport.clone(),
+    );
+    reopened.start().await;
+    let again = reopened.article_snapshot(&id).await.unwrap();
+    reopened.article_list().await.unwrap();
+    reopened.article_resume(h.cmd(&again)).await.unwrap();
+    reopened.article_settle().await;
+    assert_eq!(again.session.state, ArticleState::Completed);
+    assert_eq!(again.report.unwrap().id, second_report.id);
+    assert!(transport.calls().is_empty());
+    assert_eq!(worker.total(), 0);
+}

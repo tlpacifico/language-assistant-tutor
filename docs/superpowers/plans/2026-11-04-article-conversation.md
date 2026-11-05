@@ -10,7 +10,7 @@
 
 **Spec:** [desenho aprovado](../specs/2026-11-04-article-conversation-design.md).
 
-**Estado:** execução iniciada em 2026-11-04 no ramo `feat/article-conversation`. Tarefas 1 a 3 implementadas com testes automáticos verdes (`cargo test` completo e `cargo clippy -D warnings` limpos; `npm run typecheck` limpo): contratos e estados (`article_domain`), migração v4 e repositório (`article_migration`, `article_repository`), prompts, validação e transporte (`article_ai`). Tarefas 4 a 9 por executar; a tarefa 4 é a integração mais invasiva (nova propriedade `Article` na captura, na normalização e na aplicação de transcrições do `AppService`). Rulings: `ArticleTransportRequest` transporta a chave (como `TransportRequest`); `evidence.turnId` do relatório é o ID da versão da fala citada; o código `ARTICLE_DELETED` entrou na lista fechada do diagnóstico. Nada disto é aceitação manual nem validação com áudio ou inferência reais.
+**Estado:** execução concluída em 2026-11-05 no ramo `feat/article-conversation`: tarefas 1 a 9 implementadas, com `verify.ps1` 8/8 (353 Rust, 147 Vitest, 56 Python), build `--no-bundle` e ensaio com dados temporários com saída 0. Desvios registados em [validação](../../article-conversation/validation.md) (sem capability no `health`, limite do artigo em 30 000 bytes, ramos antigos só em base de dados, sem regravação como ramo). **Pendente e não feito**: medições reais de desempenho e fidelidade (tarefa 8), roteiro manual com áudio, voz e inferência reais (tarefa 9) e validação visual. Nada disto é aceitação manual.
 
 ## Restrições globais
 

@@ -92,3 +92,7 @@ A validação inclui cerca de dez respostas reais, com diferentes níveis de com
 5. Consolidar instalação, recuperação de falhas e validação do conjunto.
 
 As entregas e os critérios de conclusão estão no [plano das fases](superpowers/plans/2026-11-01-star-interview-tutor-phases.md). A arquitetura está na [stack técnica](tech-stack.md) e as regras completas no [desenho aprovado](superpowers/specs/2026-11-01-star-interview-tutor-design.md).
+
+## Extensão: conversa sobre um artigo
+
+Em 2026-11-04 foi aprovado um segundo modo, fora das cinco fases: conversar em inglês, por voz, sobre um artigo colado, com o tutor a comentar e a aprofundar cada resposta e um feedback final sobre coerência, coesão, desenvolvimento e interação. Não aplica STAR, não avalia pronúncia e não substitui a entrevista. Ver [preparação](article-conversation/setup.md) e [validação](article-conversation/validation.md).
