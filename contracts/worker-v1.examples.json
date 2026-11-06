@@ -13,7 +13,7 @@
       "id": "req-transcribe-1",
       "op": "transcribe",
       "params": {
-        "audioPath": "C:\\Users\\exemplo\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\phase1\\attempts\\8a1f4c78-2a4b-4f0e-9b6b-1e6b0f2e4d11\\normalized.wav",
+        "audioPath": "C:\\Users\\Utilizador Exemplo\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\phase1\\attempts\\8a1f4c78-2a4b-4f0e-9b6b-1e6b0f2e4d11\\normalized.wav",
         "modelPath": "D:\\Modelos de Voz\\faster-whisper-small",
         "device": "cpu",
         "computeType": "int8",
@@ -26,7 +26,7 @@
       "op": "synthesize",
       "params": {
         "text": "Tell me about a time you solved a difficult problem at work.",
-        "outputPath": "C:\\Users\\exemplo\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\phase1\\question-cache\\3c1f6cd1b9a2e4d7f08c5b6a4e7d9f10a2b3c4d5e6f708192a3b4c5d6e7f809.wav",
+        "outputPath": "C:\\Users\\Utilizador Exemplo\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\phase1\\question-cache\\3c1f6cd1b9a2e4d7f08c5b6a4e7d9f10a2b3c4d5e6f708192a3b4c5d6e7f809.wav",
         "voice": "af_heart",
         "speed": 1.0
       }
@@ -136,7 +136,7 @@
       "event": "result",
       "ok": true,
       "result": {
-        "audioPath": "C:\\Users\\exemplo\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\phase1\\question-cache\\3c1f6cd1b9a2e4d7f08c5b6a4e7d9f10a2b3c4d5e6f708192a3b4c5d6e7f809.wav",
+        "audioPath": "C:\\Users\\Utilizador Exemplo\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\phase1\\question-cache\\3c1f6cd1b9a2e4d7f08c5b6a4e7d9f10a2b3c4d5e6f708192a3b4c5d6e7f809.wav",
         "sampleRate": 24000,
         "durationMs": 3120,
         "loadMs": 2400,

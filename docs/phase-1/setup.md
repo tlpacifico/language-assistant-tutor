@@ -105,7 +105,7 @@ ingleses de `misaki[en]` e as dependências transitivas reais: `soundfile`,
 ```
 
 - A pasta indicada é **absoluta e fica fora do repositório**. Nesta máquina foi
-  usada `C:\Users\exemplo\AppData\Local\language-assistant-tutor\Modelos de Voz`
+  usada `C:\Users\Utilizador Exemplo\AppData\Local\language-assistant-tutor\Modelos de Voz`
   (contém espaços, como o exemplo de configuração). `models/` dentro do
   repositório também é ignorado pelo Git, mas não foi usado.
 - O comando descarrega `Systran/faster-whisper-small` (revisão
@@ -153,7 +153,7 @@ A aplicação lê a configuração uma vez no arranque, de
 `LANGUAGE_TUTOR_CONFIG`. Nesta máquina o ficheiro ficou em:
 
 ```text
-C:\Users\exemplo\AppData\Roaming\dev.thacio.languageassistanttutor\audio.json
+C:\Users\Utilizador Exemplo\AppData\Roaming\dev.thacio.languageassistanttutor\audio.json
 ```
 
 Conteúdo usado (caminhos absolutos; a pasta de modelos contém espaços):
@@ -162,7 +162,7 @@ Conteúdo usado (caminhos absolutos; a pasta de modelos contém espaços):
 {
   "schemaVersion": 1,
   "pythonExecutable": "C:\\Repos\\Thacio\\language-assistant-tutor\\.venv\\Scripts\\python.exe",
-  "modelsManifest": "C:\\Users\\exemplo\\AppData\\Local\\language-assistant-tutor\\Modelos de Voz\\models.json"
+  "modelsManifest": "C:\\Users\\Utilizador Exemplo\\AppData\\Local\\language-assistant-tutor\\Modelos de Voz\\models.json"
 }
 ```
 
