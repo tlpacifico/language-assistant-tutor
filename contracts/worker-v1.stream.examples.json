@@ -8,7 +8,7 @@
       "op": "synthesize_stream",
       "params": {
         "text": "Good point. Why does that matter?",
-        "outputDir": "C:\\Users\\Thacio Silva\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\articles\\8a1f4c78\\voice-1",
+        "outputDir": "C:\\Users\\exemplo\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\articles\\8a1f4c78\\voice-1",
         "voice": "af_heart",
         "speed": 1.0
       }
@@ -26,7 +26,7 @@
       "id": "voice-1",
       "event": "audio_chunk",
       "index": 0,
-      "audioPath": "C:\\Users\\Thacio Silva\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\articles\\8a1f4c78\\voice-1\\chunk-0000.wav",
+      "audioPath": "C:\\Users\\exemplo\\AppData\\Roaming\\dev.thacio.languageassistanttutor\\articles\\8a1f4c78\\voice-1\\chunk-0000.wav",
       "sampleRate": 24000,
       "durationMs": 1200
     },

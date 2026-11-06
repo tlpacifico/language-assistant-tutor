@@ -208,3 +208,15 @@ Ainda em 2026-11-04 foi publicada a [v0.2.0](docs/releases/v0.2.0.md): modelos d
 Em 2026-11-05 ficou implementada a **conversa sobre um artigo** (modo novo, fora das cinco fases): página Artigos, envio automático autorizado por sessão, feedback final, correções em ramos, recuperação local e voz do tutor por blocos. Verificação automática: `.\scripts\verify.ps1` com 8/8 checks (354 Rust, 147 Vitest, 56 Python sem a marca `models`), build release `--no-bundle` e ensaio com dados temporários com saída 0. **Não está aceite**: faltam a conversa real com áudio, voz e inferência paga, as medições de desempenho e a validação visual. Ver [preparação](docs/article-conversation/setup.md), [validação](docs/article-conversation/validation.md) e [desempenho](docs/article-conversation/performance.md).
 
 Em 2026-11-05 foi publicada a release [v0.3.0](docs/releases/v0.3.0.md), com a conversa sobre um artigo (instaladores NSIS/MSI e portátil com hashes no documento; smoke do portátil com código 0). A conversa sobre artigos não tem aceitação manual, a instalação dos pacotes continua por validar e a fase 5 não foi iniciada.
+
+Em 2026-11-06 o repositório passou de privado a público, sob licença MIT.
+
+## Licença
+
+Código distribuído sob a licença [MIT](LICENSE) (copyright 2026 Thacio Pacifico).
+
+Não fazem parte deste repositório nem desta licença: os pesos dos modelos
+(Whisper `small` e Kokoro-82M, descarregados por `audio_worker.prepare`), a
+`.venv`, as gravações e a base de dados local. Cada modelo mantém a licença do
+respetivo fornecedor. As fontes em [`public/fonts`](public/fonts/) mantêm as
+licenças SIL Open Font License que as acompanham.

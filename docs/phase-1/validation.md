@@ -23,7 +23,7 @@ motores e continua pendente na janela.
 | Kokoro / Misaki | `0.9.4` / `0.9.4`, revisão Kokoro-82M `f3ff3571791e39611d31c381e3a41a3af07b4987`, voz `af_heart`, `lang_code="a"`, velocidade `1.0` |
 | spaCy | `3.8.18`, recurso `en_core_web_sm 3.8.0` |
 | transformers | `5.22.1` (risco registado na tarefa 4: **os pesos do Kokoro carregaram e sintetizaram sem erro**) |
-| Diretório dos modelos | `C:\Users\MarloGamer\AppData\Local\language-assistant-tutor\Modelos de Voz` (fora do repositório) |
+| Diretório dos modelos | `C:\Users\exemplo\AppData\Local\language-assistant-tutor\Modelos de Voz` (fora do repositório) |
 | Manifesto | `...\Modelos de Voz\models.json`, `preparedAt` `2026-11-02T01:16:48Z` |
 
 Preparação real (`python -m audio_worker.prepare --models-dir ...`): **34,3 s**
