@@ -1,60 +1,60 @@
-# Preparação e execução da fase 3
+# Phase 3 setup and execution
 
-**Modalidade atual, 2026-11-04:** por pedido explícito do utilizador, a integração passa a OpenCode Go, com endpoint `/inference/go/openai/v1`, identidade própria e sessão HTTP estável. A configuração antiga de referência é adaptada uma vez, sem apagar chave ou histórico; abrir Configuração IA e autorizar o destino Go antes de repetir um pedido. Os exemplos por consumo abaixo são históricos. Ver [preparação/validação Go](../opencode-go/validation.md).
+**Current modality, 2026-11-04:** at the user's explicit request, the integration moves to OpenCode Go, with the endpoint `/inference/go/openai/v1`, its own identity and a stable HTTP session. The old reference configuration is adapted once, without deleting the key or the history; open Configuração IA and authorize the Go destination before repeating a request. The per-usage examples below are historical. See [Go setup/validation](../opencode-go/validation.md).
 
-Data: 2026-11-02. A fase 3 foi antecipada por autorização explícita do utilizador. As aceitações manuais das fases 1 e 2 continuam pendentes.
+Date: 2026-11-02. Phase 3 was brought forward by explicit authorization of the user. The manual acceptances of phases 1 and 2 remain pending.
 
-## Executar
+## Run
 
-Mantêm-se os pré-requisitos e modelos descritos na [fase 2](../phase-2/setup.md). A aplicação chama a API diretamente; não exige instalar o CLI OpenCode.
+The prerequisites and models described in [phase 2](../phase-2/setup.md) are kept. The application calls the API directly; it does not require installing the OpenCode CLI.
 
 ```powershell
 npm.cmd install
 npm.cmd run tauri -- dev
 ```
 
-Se Cargo não estiver no PATH, antes do comando Tauri:
+If Cargo is not in the PATH, before the Tauri command:
 
 ```powershell
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 ```
 
-Na preparação, o modo predefinido continua **Local, sem IA**. Escolher **Tutor com IA** cria uma sessão nova `ai_v3`. Sessões anteriores continuam locais; não são convertidas para avaliações retroativas.
+In the setup, the default mode remains **Local, sem IA**. Choosing **Tutor com IA** creates a new `ai_v3` session. Previous sessions remain local; they are not converted into retrospective evaluations.
 
-## Configurar IA
+## Configure AI
 
-1. Abrir **Configuração IA**. A base atual é `https://opencode.ai/inference/go/openai/v1` (OpenCode Go) e o modelo `deepseek-v4.1-flash`. Se a configuração guardada ainda tiver a base por consumo, a aplicação adapta-a uma vez ao abrir a configuração.
-2. Guardar configuração e confirmar o modelo. No default Go não há tarifário fixo: um tarifário manual em USD por milhão continua possível e deve registar data e fonte; o consumo e o custo devolvidos pelo fornecedor prevalecem. Os exemplos de preços abaixo são históricos.
-3. Introduzir a chave no campo protegido e escolher **Guardar chave protegida**. O núcleo usa o Windows Credential Manager através de `keyring` 3.6.3, service `language-assistant-tutor`, user `opencode-api`. A chave não é devolvida nem guardada no SQLite.
-4. Ler o aviso e autorizar o envio para o destino guardado. Alterar a base remove a credencial anterior e invalida o consentimento. Não há envio ao guardar configuração.
+1. Open **Configuração IA**. The current base is `https://opencode.ai/inference/go/openai/v1` (OpenCode Go) and the model `deepseek-v4.1-flash`. If the stored configuration still has the per-usage base, the application adapts it once when opening the configuration.
+2. Save the configuration and confirm the model. In the Go default there is no fixed pricing: a manual rate in USD per million remains possible and must record date and source; the usage and cost returned by the provider prevail. The price examples below are historical.
+3. Enter the key in the protected field and choose **Guardar chave protegida**. The core uses the Windows Credential Manager through `keyring` 3.6.3, service `language-assistant-tutor`, user `opencode-api`. The key is neither returned nor stored in SQLite.
+4. Read the warning and authorize sending to the stored destination. Changing the base removes the previous credential and invalidates the consent. There is no sending when saving the configuration.
 
-Uma falha do armazenamento protegido é explícita; não existe alternativa em texto simples. Fora de Windows, o adaptador de credenciais declara indisponibilidade.
+A protected storage failure is explicit; there is no plain-text alternative. Outside Windows, the credentials adapter declares unavailability.
 
-## Percurso
+## Journey
 
-Confirmar uma resposta guarda-a localmente. **Pedir seguimento** é uma ação distinta de envio. A IA recomenda um único seguimento ou avançar; um seguimento tem a sua gravação, transcrição, revisão e confirmação. O contador continua a contar só as perguntas principais.
+Confirming an answer stores it locally. **Pedir seguimento** is a distinct action of sending. The AI recommends a single follow-up or advancing; a follow-up has its own recording, transcription, review and confirmation. The counter keeps counting only the main questions.
 
-Se a API falhar, repetir ou dispensar explicitamente o seguimento antes de avançar. Dispensa não significa que a IA considerou a resposta suficiente. O serviço não repete automaticamente pedidos pagos. Um resultado atrasado de etapa dispensada só pode acrescentar consumo conhecido.
+If the API fails, repeat or explicitly dismiss the follow-up before advancing. Dismissal does not mean the AI considered the answer sufficient. The service does not automatically repeat paid requests. A late result of a dismissed step can only add known usage.
 
-Desde a alteração aprovada de 2026-11-04, depois de confirmar a resposta e resolver o seguimento, **Avaliar e sugerir melhorias** permite obter avaliação, correções explicadas e reformulação antes de avançar. A revisão de transcrição é opcional quando existe texto utilizável: serve para corrigir reconhecimento, preservando o inglês dito para avaliação. Confirmar continua a ser apenas uma escrita local. O botão de avaliação é uma ação explícita de envio, sujeita ao consentimento configurado e a custo.
+Since the approved change of 2026-11-04, after confirming the answer and resolving the follow-up, **Avaliar e sugerir melhorias** allows obtaining an evaluation, explained corrections and a rewrite before advancing. The review of the transcript is optional when there is usable text: it serves to correct recognition, preserving the English said for evaluation. Confirming remains only a local write. The evaluation button is an explicit send action, subject to the configured consent and to cost.
 
-Ao terminar, **Gerar ou repetir feedback em falta** avalia apenas as perguntas sem relatório válido, reutilizando também os relatórios pedidos durante a entrevista. O histórico apresenta feedback parcial/pronto, fontes confirmadas e consumo por tentativa. **Guardar resultado recebido sem novo pedido** repete apenas a publicação local quando a resposta remota já chegou e a escrita falhou. Após crash nesse intervalo, o resultado pode ser desconhecido; não se promete recuperação de memória perdida. Ver [desenho](../superpowers/specs/2026-11-04-per-question-ai-coaching-design.md) e [validação](../ai-coaching/validation.md).
+At the end, **Gerar ou repetir feedback em falta** evaluates only the questions without a valid report, also reusing the reports requested during the interview. The history presents partial/ready feedback, confirmed sources and usage per attempt. **Guardar resultado recebido sem novo pedido** repeats only the local publication when the remote answer has already arrived and the write failed. After a crash in that interval, the result may be unknown; recovery of lost memory is not promised. See [design](../superpowers/specs/2026-11-04-per-question-ai-coaching-design.md) and [validation](../ai-coaching/validation.md).
 
-Os áudios ficam locais; só pergunta/critérios e texto confirmado necessário seguem para a API. Não se envia o banco inteiro, rascunhos, ficheiros ou transcrição automática diferente da versão confirmada.
+The audios remain local; only the question/criteria and the confirmed text needed go to the API. The entire bank, drafts, files or an automatic transcript different from the confirmed version are not sent.
 
-## Persistência e limites
+## Persistence and limits
 
-`tutor.sqlite3` passa ao esquema v2 numa migração transacional. `answer_slots` separa resposta inicial e seguimento; os IDs iniciais são os antigos IDs da principal, preservando caminhos. Nos módulos de áudio existentes, a coluna interna legada `session_question_id` passa a referenciar um slot; os DTOs novos expõem `answerId` e o contexto principal. As perguntas principais permanecem exclusivamente em `session_questions`.
+`tutor.sqlite3` moves to schema v2 in a transactional migration. `answer_slots` separates the initial answer and the follow-up; the initial IDs are the old IDs of the main question, preserving paths. In the existing audio modules, the legacy internal column `session_question_id` now references a slot; the new DTOs expose `answerId` and the main context. The main questions remain exclusively in `session_questions`.
 
-Pedidos guardam fontes imutáveis, configuração/tarifário, modelo pedido/devolvido e versões de prompt/rubrica/esquema. Relatórios válidos são imutáveis. No arranque, pedidos em curso tornam-se interrompidos, sem reenvio automático.
+Requests store immutable sources, configuration/rate, requested/returned model and prompt/rubric/schema versions. Valid reports are immutable. At startup, requests in progress become interrupted, without automatic resending.
 
-Limites: 64.000 bytes UTF-8 por resposta, 16.000 para pergunta/critérios, 160.000 para o corpo de envio, 1 MiB de resposta HTTP e 2.000 para pergunta de seguimento. Timeout total 90 s; ligação 10 s. Não há truncagem silenciosa, redirects, retries automáticos, ferramentas ou streaming.
+Limits: 64,000 bytes UTF-8 per answer, 16,000 for question/criteria, 160,000 for the send body, 1 MiB of HTTP response and 2,000 for the follow-up question. Total timeout 90 s; connection 10 s. There is no silent truncation, redirects, automatic retries, tools or streaming.
 
-## Verificações
+## Verifications
 
 ```powershell
 .\scripts\verify.ps1
 npm.cmd run tauri -- build --no-bundle
 ```
 
-Os resultados reais e pendências estão na [validação](validation.md). Não foi efetuada inferência paga nem acedido a credenciais pessoais durante os testes automáticos.
+The real results and pending items are in the [validation](validation.md). No paid inference was performed nor personal credentials accessed during the automated tests.

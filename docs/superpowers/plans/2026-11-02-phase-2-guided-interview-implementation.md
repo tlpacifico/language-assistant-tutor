@@ -1,478 +1,478 @@
-# Fase 2 — Entrevista guiada Implementation Plan
+# Phase 2 — Guided Interview Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans para execução direta, tarefa a tarefa. Usar superpowers:subagent-driven-development apenas se o utilizador escolher explicitamente delegação. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans for direct, task-by-task execution. Use superpowers:subagent-driven-development only if the user explicitly chooses delegation. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Permitir completar e recuperar entrevistas locais configuráveis, preservando perguntas, áudios, textos e confirmações num histórico persistente.
+**Goal:** Allow completing and resuming configurable local interviews, preserving questions, audio, texts and confirmations in a persistent history.
 
-**Architecture:** React/TypeScript apresenta preparação, banco, entrevista e histórico; Rust mantém a autoridade sobre transições e persistência. SQLite guarda os dados das sessões novas, com transações curtas; os originais e derivados continuam em ficheiros. Adaptar o serviço existente e reutilizar a porta de áudio e o protocolo Python, sem criar outro coordenador de dispositivos.
+**Architecture:** React/TypeScript presents the setup, the bank, the interview and the history; Rust keeps authority over transitions and persistence. SQLite stores the data of the new sessions, with short transactions; the originals and derivatives remain in files. Adapt the existing service and reuse the audio port and the Python protocol, without creating another device coordinator.
 
-**Tech Stack:** Tauri 2, React, TypeScript, Vite, Rust, rusqlite com SQLite incorporado, CPAL, Rodio, Hound, Rubato, atomicwrites e auxiliar Python faster-whisper/Kokoro já existentes.
+**Tech Stack:** Tauri 2, React, TypeScript, Vite, Rust, rusqlite with bundled SQLite, CPAL, Rodio, Hound, Rubato, atomicwrites and the existing faster-whisper/Kokoro Python helper.
 
-**Spec:** [Fase 2 — Entrevista guiada](../specs/2026-11-02-phase-2-guided-interview-design.md). Ler também [AGENTS.md](../../../AGENTS.md), [stack](../../tech-stack.md), [fases](2026-11-01-star-interview-tutor-phases.md) e [validação da fase 1](../../phase-1/validation.md).
+**Spec:** [Phase 2 — Guided Interview](../specs/2026-11-02-phase-2-guided-interview-design.md). Read also [AGENTS.md](../../../AGENTS.md), [stack](../../tech-stack.md), [phases](2026-11-01-star-interview-tutor-phases.md) and [phase 1 validation](../../phase-1/validation.md).
 
-**Estado:** tarefas 1 a 9 executadas nesta máquina (2026-11-02), com um commit por tarefa; a tarefa 10 está parcialmente executada — matriz, documentação e verificações automáticas feitas, validação manual do utilizador pendente. As caixas das tarefas 1 a 9 registam a execução efetiva e os commits correspondentes; a evidência final é a suíte atual (151 testes Rust, 50 Vitest, 36 pytest sem `models`), reexecutada após a correção dos três achados importantes da revisão do ramo. As observações intermédias de «confirmar a falha» não foram repetidas na tarefa 10. A fase 2 **não** está concluída: os resultados reais desta execução estão em [docs/phase-2/validation.md](../../phase-2/validation.md).
+**Status:** tasks 1 to 9 executed on this machine (2026-11-02), with one commit per task; task 10 is partially executed — matrix, documentation and automated verification done, the user's manual validation pending. The checkboxes of tasks 1 to 9 record the actual execution and the corresponding commits; the final evidence is the current suite (151 Rust tests, 50 Vitest, 36 pytest without `models`), rerun after fixing the three important findings of the branch review. The intermediate "confirm the failure" observations were not repeated in task 10. Phase 2 is **not** complete: the real results of this execution are in [docs/phase-2/validation.md](../../phase-2/validation.md).
 
 ## Global Constraints
 
-- «Uma sessão em curso de cada vez, com progresso e retoma após reinício.»
-- «Confirmação explícita de uma versão imutável do texto.»
-- «SQLite para os dados das novas sessões; áudio em ficheiros locais.»
-- «Escolher inicialmente “Todas as categorias”»; quantidade inicial três, opção de uma e limite no total elegível.
-- «Sortear perguntas elegíveis sem repetição.» Guardar seleção, ordem e cópias antes de apresentar a sessão.
-- «Separar “Guardar revisão”, “Confirmar resposta” e “Próxima pergunta”.» Na última, usar «Terminar sessão».
-- «Não reduzir o total nem repetir perguntas silenciosamente.»
-- «Depois de confirmar, a resposta fica apenas de leitura.»
-- «Não manter JSON e SQLite como duas autoridades das mesmas sessões novas.»
-- «Não mudar de sessão ou de página durante captura/finalização.» Consulta durante inferência não muda a identidade do trabalho.
-- «Só navegar ou fechar se a versão mais recente estiver guardada ou tiver sido explicitamente descartada.»
-- «Não truncar áudio ou texto silenciosamente.»
-- Interface, mensagens e documentação em português de Portugal; perguntas e treino em inglês.
-- Preservar fase 1, configuração, modelos, originais, resultados automáticos e revisões. Não confirmar dados antigos retroativamente.
-- Sem API, seguimentos, feedback, histórias, comparação de tentativas, eliminação de sessões ou instalador autónomo.
-- Não alterar motores, voz, formatos ou prazos de áudio como efeito lateral desta fase.
+- «One session in progress at a time, with progress and resuming after a restart.»
+- «Explicit confirmation of an immutable version of the text.»
+- «SQLite for the data of the new sessions; audio in local files.»
+- «Choose “Todas as categorias” initially»; initial quantity three, option of one and a limit on the eligible total.
+- «Draw eligible questions without repetition.» Store the selection, the order and the copies before presenting the session.
+- «Separate “Guardar revisão”, “Confirmar resposta” and “Próxima pergunta”.» On the last one, use «Terminar sessão».
+- «Do not reduce the total or repeat questions silently.»
+- «After confirming, the answer is read-only.»
+- «Do not keep JSON and SQLite as two authorities for the same new sessions.»
+- «Do not change session or page during capture/finalization.» Reading during inference does not change the identity of the work.
+- «Only navigate or close if the most recent version is saved or has been explicitly discarded.»
+- «Do not truncate audio or text silently.»
+- Interface and messages in European Portuguese; questions and practice in English.
+- Preserve phase 1, configuration, models, originals, automatic results and revisions. Do not confirm old data retroactively.
+- No API, follow-ups, feedback, stories, attempt comparison, session deletion or standalone installer.
+- Do not change engines, voice, formats or audio deadlines as a side effect of this phase.
 
 ## Review Focus
 
-1. Disco cheio ou base bloqueada depois de finalizar WAV: preservar o ficheiro e repetir a publicação após reinício, sem nova captura nem duplicação — tarefa 4.
-2. Edição durante «Guardar e sair» e confirmação concorrente com nova transcrição: não fechar com texto pendente nem confirmar outra versão — tarefas 5 e 8.
-3. Duplo clique, comando repetido após reinício e pedido antigo depois de outra sessão: não criar sessões, confirmações ou avanços extra — tarefas 3 e 5.
-4. Interrupção antiga com `capture: None`, timeout e nova captura: conservar a identidade e o botão de terminar da nova captura — tarefa 6.
-5. Migração abortada, versão futura ou treino antigo corrompido: não recriar dados, escrever formato desconhecido ou esconder os restantes itens válidos — tarefas 1 e 9.
+1. Disk full or database locked after finalizing the WAV: preserve the file and repeat the publication after a restart, without a new capture and without duplication — task 4.
+2. Editing during «Guardar e sair» and a confirmation concurrent with a new transcript: do not close with pending text and do not confirm another version — tasks 5 and 8.
+3. Double click, command repeated after a restart and an old request after another session: do not create extra sessions, confirmations or advances — tasks 3 and 5.
+4. Old interruption with `capture: None`, timeout and a new capture: keep the identity and the stop button of the new capture — task 6.
+5. Aborted migration, future version or corrupt old practice session: do not recreate data, write an unknown format or hide the remaining valid items — tasks 1 and 9.
 
 ---
 
-## 1. Base observada e escolhas técnicas
+## 1. Observed baseline and technical choices
 
-### O que já existe
+### What already exists
 
-- `src-tauri/src/service.rs`: `AppService`, coordenador `transitions`, `spawn_blocking`, supervisão de áudio/auxiliar, cache e publicação recuperável em memória.
-- `src-tauri/src/domain.rs`: `AppState`, `AppSnapshot`, `Attempt`, `Transcript`, `Review`, `Action` e erros; a pergunta ainda é fixa.
-- `src-tauri/src/storage.rs`: `AttemptStore` com JSON atómico em `phase1/`; `load` e leitura de manifestos são privados.
-- `src-tauri/src/audio/mod.rs`: uma thread proprietária dos dispositivos; `CaptureInterrupted` já transporta `recording_id`. Preservar essa correção.
-- `src-tauri/src/worker/`: protocolo v1 para saúde, síntese, transcrição e encerramento; não precisa de receber conceitos de sessão.
-- `src/features/practice/`: página e hook centrados numa resposta. `saveReview()` já distingue `saved`, `pending` e `failed`; preservar a proteção contra fecho com edições recentes.
-- `src/App.tsx`: monta apenas `Practice`; `src/lib/tauri.ts` concentra os comandos.
-- Testes Rust em `src-tauri/tests/`, Vitest e Testing Library no frontend. `scripts/verify.ps1` executa oito checks e inclui todas as suítes Rust/React descobertas.
+- `src-tauri/src/service.rs`: `AppService`, the `transitions` coordinator, `spawn_blocking`, audio/helper supervision, cache and recoverable publication in memory.
+- `src-tauri/src/domain.rs`: `AppState`, `AppSnapshot`, `Attempt`, `Transcript`, `Review`, `Action` and errors; the question is still fixed.
+- `src-tauri/src/storage.rs`: `AttemptStore` with atomic JSON in `phase1/`; `load` and the reading of manifests are private.
+- `src-tauri/src/audio/mod.rs`: one thread owns the devices; `CaptureInterrupted` already carries `recording_id`. Preserve that fix.
+- `src-tauri/src/worker/`: protocol v1 for health, synthesis, transcription and shutdown; it does not need to receive session concepts.
+- `src/features/practice/`: page and hook centered on a single answer. `saveReview()` already distinguishes `saved`, `pending` and `failed`; preserve the protection against closing with recent edits.
+- `src/App.tsx`: mounts only `Practice`; `src/lib/tauri.ts` gathers the commands.
+- Rust tests in `src-tauri/tests/`, Vitest and Testing Library in the frontend. `scripts/verify.ps1` runs eight checks and includes every discovered Rust/React suite.
 
-### Dependência e acesso aos dados
+### Dependency and data access
 
-Adicionar apenas `rusqlite = { version = "0.41.1", features = ["bundled"] }`
-ao Cargo e guardar o lockfile durante a tarefa 1. É uma referência consultada
-para este plano, ainda sem compilação neste projeto. Se a resolução falhar,
-registar o motivo e usar uma versão compatível da mesma biblioteca; não mudar
-a stack. Não instalar dependências ao preparar o plano.
+Add only `rusqlite = { version = "0.41.1", features = ["bundled"] }`
+to Cargo and keep the lockfile during task 1. It is a reference consulted
+for this plan, not yet compiled in this project. If the resolution fails,
+record the reason and use a compatible version of the same library; do not
+change the stack. Do not install dependencies while preparing the plan.
 
-Usar uma ligação `rusqlite::Connection` protegida por mutex dentro de `Database`;
-todas as chamadas síncronas correm em `spawn_blocking`. A ligação nunca atravessa
-um `await` com um guard adquirido. Não acrescentar ORM, pool, plugin SQL no
-frontend ou servidor. Seleção por `ORDER BY random() LIMIT ?` dentro da
-transação de criação evita outra dependência para sortear 20 perguntas.
+Use a `rusqlite::Connection` protected by a mutex inside `Database`;
+all synchronous calls run in `spawn_blocking`. The connection never crosses
+an `await` with a guard acquired. Do not add an ORM, a pool or an SQL plugin in
+the frontend or the server. Selection by `ORDER BY random() LIMIT ?` inside the
+creation transaction avoids another dependency to draw 20 questions.
 
-Na abertura: verificar `user_version` antes de qualquer alteração persistente;
-recusar versão superior a 1. Ativar `foreign_keys=ON`, `busy_timeout=3000` ms e
-`synchronous=FULL`; manter journal `DELETE` nesta fase. Migrar versão 0→1 e
-inserir o banco inicial numa transação; atualizar `user_version` apenas no fim.
-Uma exceção implica rollback. Não recuperar erros por apagar/recriar a base.
+On opening: check `user_version` before any persistent change;
+refuse a version above 1. Enable `foreign_keys=ON`, `busy_timeout=3000` ms and
+`synchronous=FULL`; keep the `DELETE` journal in this phase. Migrate version 0→1 and
+insert the initial bank in one transaction; update `user_version` only at the end.
+An exception implies a rollback. Do not recover from errors by deleting and recreating the database.
 
-**Derrogação registada (R1).** A implementação separa a migração 001 — na sua
-própria transação, que só grava `user_version = 1` no fim — do banco inicial,
-que corre depois numa segunda transação idempotente em `ensure_question_seed`
-(marca `questions-v1` em `content_seeds`). A separação evita repetir a migração
-quando o seed falha e mantém cada falha reversível na sua transação; o banco
-inicial nunca é reposto sobre edições porque a marca existe. `docs/phase-2/setup.md`
-regista este comportamento e não o descreve como uma única transação.
+**Recorded deviation (R1).** The implementation separates migration 001 — in its
+own transaction, which only writes `user_version = 1` at the end — from the initial
+bank, which runs afterwards in a second idempotent transaction in `ensure_question_seed`
+(marks `questions-v1` in `content_seeds`). The separation avoids repeating the migration
+when the seed fails and keeps each failure reversible in its own transaction; the initial
+bank is never reapplied over edits because the mark exists. `docs/phase-2/setup.md`
+records this behavior and does not describe it as a single transaction.
 
-### Ficheiros locais
+### Local files
 
 ```text
 app_data_dir()/
   tutor.sqlite3
   sessions/<session-id>/<session-question-id>/<recording-id>/
-    original.partial.wav # captura ainda não publicada; nome já usado por Capture
-    original.wav          # WAV finalizado; nunca sobrescrito
-    normalized.wav        # derivado, quando necessário
-  phase1/                # conservar; apenas leitura na aplicação nova
+    original.partial.wav # capture not yet published; name already used by Capture
+    original.wav          # finalized WAV; never overwritten
+    normalized.wav        # derivative, when needed
+  phase1/                # preserved; read-only in the new application
     attempts/...
     question-cache/...
 ```
 
-Conservar a configuração em `app_config_dir()`/`LANGUAGE_TUTOR_CONFIG` e os
-modelos na localização existente. A cache de síntese pode continuar em
-`phase1/question-cache/`, porque é partilhada e a chave já inclui texto/voz/
-velocidade. Não converter nem mover treinos anteriores.
+Keep the configuration in `app_config_dir()`/`LANGUAGE_TUTOR_CONFIG` and the
+models in the existing location. The synthesis cache can stay in
+`phase1/question-cache/`, because it is shared and the key already includes text/voice/
+speed. Do not convert or move earlier practice sessions.
 
-## 2. Ficheiros e responsabilidades
+## 2. Files and responsibilities
 
-| Ação | Caminho | Responsabilidade |
+| Action | Path | Responsibility |
 | --- | --- | --- |
-| Criar | `src-tauri/src/interview/mod.rs`, `types.rs` | Tipos da fase 2, validação e regras puras de transição. |
-| Criar | `src-tauri/src/db/mod.rs`, `migrations/001_guided_interview.sql` | Ligação, migrações e execução síncrona protegida. |
-| Criar | `src-tauri/src/db/questions.rs`, `sessions.rs`, `answers.rs` | Banco, criação/consulta de sessões, gravações/revisões/confirmações. |
-| Criar | `src-tauri/src/db/seed-v1.json` | As 20 perguntas e os critérios da spec, com UUIDs estáveis. |
-| Criar | `src-tauri/src/artifacts.rs` | Caminhos controlados, reserva, validação WAV e reconciliação. |
-| Criar | `src-tauri/src/service/interview.rs` | Métodos de sessão do mesmo `AppService`, com o coordenador existente. |
-| Criar | `src-tauri/src/legacy.rs` | Fachada de consulta, sem escrita, sobre `AttemptStore`. |
-| Modificar | `src-tauri/src/domain.rs`, `service.rs`, `commands.rs`, `lib.rs` | Reutilizar tipos de áudio; integrar o novo estado, SQLite, comandos e arranque recuperável. |
-| Modificar | `src-tauri/src/storage.rs` | Expor leitura por ID e enumeração, sem mudar o formato antigo. |
-| Modificar | `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` | Única dependência nova e resolução real. |
-| Criar | `contracts/interview-v2.example.json` | Exemplo comum Rust/TypeScript, com confirmação e operação pendente. |
-| Criar | `src/lib/interview-contracts.ts`, `interview-client.ts` | DTOs e cliente IPC injetável da fase 2. |
-| Criar | `src/features/sessions/SessionSetup.tsx`, `SessionSetup.test.tsx` | Preparar, iniciar e retomar. |
-| Criar | `src/features/questions/QuestionBank.tsx`, `QuestionBank.test.tsx` | Listar, adicionar e editar perguntas. |
-| Criar | `src/features/interview/Interview.tsx`, `useInterview.ts`, `Interview.test.tsx` | Captura, revisão, confirmação e avanço. |
-| Criar | `src/features/history/History.tsx`, `History.test.tsx` | Sessões, detalhes e treinos antigos. |
-| Criar | `src/features/navigation/NavigationGuard.tsx`, `NavigationGuard.test.tsx` | Decisão partilhada guardar/descartar/cancelar, incluindo fecho. |
-| Modificar | `src/App.tsx`, `src/features/practice/practice.css` | Navegação sem router novo e reutilização dos estilos existentes. |
-| Criar | `src/App.test.tsx` | Percurso integrado com cliente controlado. |
-| Criar | `src-tauri/tests/interview_contracts.rs`, `database.rs`, `questions.rs`, `sessions.rs`, `answers.rs`, `artifacts.rs`, `legacy.rs` | Contratos, transações e falhas com diretórios temporários. |
-| Modificar | `src-tauri/tests/service.rs`, `src-tauri/tests/domain.rs` | Adaptar o harness ao novo armazenamento sem retirar regressões. |
-| Modificar | `README.md`, `AGENTS.md`, `docs/tech-stack.md`, plano das fases | Estado real, execução e decisões de persistência. |
-| Criar na execução | `docs/phase-2/setup.md`, `docs/phase-2/validation.md` | Comandos e evidências reais, matriz F2-01 a F2-16. |
+| Create | `src-tauri/src/interview/mod.rs`, `types.rs` | Phase 2 types, validation and pure transition rules. |
+| Create | `src-tauri/src/db/mod.rs`, `migrations/001_guided_interview.sql` | Connection, migrations and protected synchronous execution. |
+| Create | `src-tauri/src/db/questions.rs`, `sessions.rs`, `answers.rs` | Bank, creation/reading of sessions, recordings/revisions/confirmations. |
+| Create | `src-tauri/src/db/seed-v1.json` | The 20 questions and the criteria of the spec, with stable UUIDs. |
+| Create | `src-tauri/src/artifacts.rs` | Controlled paths, reservation, WAV validation and reconciliation. |
+| Create | `src-tauri/src/service/interview.rs` | Session methods of the same `AppService`, with the existing coordinator. |
+| Create | `src-tauri/src/legacy.rs` | Read-only facade over `AttemptStore`. |
+| Modify | `src-tauri/src/domain.rs`, `service.rs`, `commands.rs`, `lib.rs` | Reuse audio types; integrate the new state, SQLite, commands and recoverable startup. |
+| Modify | `src-tauri/src/storage.rs` | Expose reading by ID and enumeration, without changing the old format. |
+| Modify | `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` | Single new dependency and real resolution. |
+| Create | `contracts/interview-v2.example.json` | Rust/TypeScript shared example, with confirmation and a pending operation. |
+| Create | `src/lib/interview-contracts.ts`, `interview-client.ts` | Phase 2 DTOs and injectable IPC client. |
+| Create | `src/features/sessions/SessionSetup.tsx`, `SessionSetup.test.tsx` | Prepare, start and resume. |
+| Create | `src/features/questions/QuestionBank.tsx`, `QuestionBank.test.tsx` | List, add and edit questions. |
+| Create | `src/features/interview/Interview.tsx`, `useInterview.ts`, `Interview.test.tsx` | Capture, review, confirmation and advance. |
+| Create | `src/features/history/History.tsx`, `History.test.tsx` | Sessions, details and old practice sessions. |
+| Create | `src/features/navigation/NavigationGuard.tsx`, `NavigationGuard.test.tsx` | Shared save/discard/cancel decision, including closing. |
+| Modify | `src/App.tsx`, `src/features/practice/practice.css` | Navigation without a new router and reuse of the existing styles. |
+| Create | `src/App.test.tsx` | Integrated journey with a controlled client. |
+| Create | `src-tauri/tests/interview_contracts.rs`, `database.rs`, `questions.rs`, `sessions.rs`, `answers.rs`, `artifacts.rs`, `legacy.rs` | Contracts, transactions and failures with temporary directories. |
+| Modify | `src-tauri/tests/service.rs`, `src-tauri/tests/domain.rs` | Adapt the harness to the new storage without removing regressions. |
+| Modify | `README.md`, `AGENTS.md`, `docs/tech-stack.md`, phase plan | Real state, execution and persistence decisions. |
+| Create during execution | `docs/phase-2/setup.md`, `docs/phase-2/validation.md` | Real commands and evidence, matrix F2-01 to F2-16. |
 
-Não copiar o serviço inteiro. `service/interview.rs` é um módulo filho de
-`service.rs` com `impl AppService`, partilhando `transitions`; métodos públicos
-adquirem o coordenador uma vez e chamam auxiliares privados sem o readquirir.
-Não manter dois serviços com acesso independente ao mesmo microfone.
+Do not copy the whole service. `service/interview.rs` is a child module of
+`service.rs` with `impl AppService`, sharing `transitions`; public methods
+acquire the coordinator once and call private helpers without reacquiring it.
+Do not keep two services with independent access to the same microphone.
 
-## 3. Contratos e modelo físico
+## 3. Contracts and physical model
 
-### Convenções e tipos
+### Conventions and types
 
-Manter JSON camelCase, enums snake_case, UUIDs em texto, datas UTC RFC3339 e
-durações em milissegundos. `type Id = String`, `type Version = u64` e
-`type Result<T> = std::result::Result<T, AppError>` nas assinaturas deste plano.
-Os DTOs têm equivalentes TypeScript com os mesmos nomes.
+Keep camelCase JSON, snake_case enums, UUIDs as text, RFC3339 UTC dates and
+durations in milliseconds. `type Id = String`, `type Version = u64` and
+`type Result<T> = std::result::Result<T, AppError>` in the signatures of this plan.
+The DTOs have TypeScript equivalents with the same names.
 
-| Tipo | Campos e valores |
+| Type | Fields and values |
 | --- | --- |
-| `Category` | `conflict_collaboration`, `leadership_initiative`, `failure_learning`, `problem_solving`, `priorities_deadlines`, `change_adaptation`; etiquetas portuguesas da spec. |
-| `QuestionInput` | `text`, `category`, `competencies: Vec<String>`, `criteria: Vec<String>`; critérios específicos editáveis. |
-| `Question` | `id`, campos de `QuestionInput`, `version`, `createdAt`, `updatedAt`. |
-| `StartSession` | `requestId`, `category: Option<Category>` (`null` = todas), `count: u32`. |
+| `Category` | `conflict_collaboration`, `leadership_initiative`, `failure_learning`, `problem_solving`, `priorities_deadlines`, `change_adaptation`; Portuguese labels from the spec. |
+| `QuestionInput` | `text`, `category`, `competencies: Vec<String>`, `criteria: Vec<String>`; editable question-specific criteria. |
+| `Question` | `id`, fields of `QuestionInput`, `version`, `createdAt`, `updatedAt`. |
+| `StartSession` | `requestId`, `category: Option<Category>` (`null` = all), `count: u32`. |
 | `SessionSummary` | `id`, `category`, `count`, `confirmedCount`, `position` (1-based), `status: in_progress/completed`, `mode: local_v2`, `version`, `createdAt`, `completedAt?`. |
-| `SessionQuestion` | `id`, `sessionId`, `sourceQuestionId`, `sourceVersion`, `position`, `text`, `category`, `competencies`, `criteria` efetivos, `selectedRecordingId?`, `selectionVersion`. |
-| `AnswerTarget` | `sessionId`, `sessionQuestionId`, `recordingId`, `selectionVersion`; não aceitar caminhos do frontend. |
-| `ReviewOrigin` | `automatic` ou `manual_explicit`. |
-| `ReviewDraft` | `recordingId`, `sourceTranscriptId?`, `origin`, `text`, `version`, `savedAt`; versão zero representa revisão ainda não guardada. |
+| `SessionQuestion` | `id`, `sessionId`, `sourceQuestionId`, `sourceVersion`, `position`, `text`, `category`, effective `competencies`, `criteria`, `selectedRecordingId?`, `selectionVersion`. |
+| `AnswerTarget` | `sessionId`, `sessionQuestionId`, `recordingId`, `selectionVersion`; do not accept paths from the frontend. |
+| `ReviewOrigin` | `automatic` or `manual_explicit`. |
+| `ReviewDraft` | `recordingId`, `sourceTranscriptId?`, `origin`, `text`, `version`, `savedAt`; a zero version represents a review not yet saved. |
 | `SaveReview` | `requestId`, `target: AnswerTarget`, `expectedReviewVersion`, `sourceTranscriptId?`, `origin`, `text`. |
-| `ConfirmAnswer` | campos de `SaveReview`, mais `expectedSessionVersion`; confirma e guarda o texto num único commit. |
+| `ConfirmAnswer` | fields of `SaveReview`, plus `expectedSessionVersion`; confirms and saves the text in a single commit. |
 | `Confirmation` | `id`, `sessionQuestionId`, `recordingId`, `reviewVersion`, `sourceTranscriptId?`, `origin`, `text`, `confirmedAt`. |
 | `AdvanceSession` | `requestId`, `sessionId`, `sessionQuestionId`, `expectedSessionVersion`. |
 | `RecordingView` | `id`, `sessionQuestionId`, `ordinal`, `state`, `capture: CaptureMeta?`, `originalFile?`, `normalizedFile?`, `transcripts: Vec<Transcript>`, `review: Option<ReviewDraft>`, `warnings: Vec<AppError>`. |
 | `QuestionDetail` | `question: SessionQuestion`, `recordings: Vec<RecordingView>`, `confirmation: Option<Confirmation>`. |
 | `SessionDetail` | `summary: SessionSummary`, `questions: Vec<QuestionDetail>`. |
-| `OperationTarget` | `sessionId`, `sessionQuestionId`, `recordingId?`, `selectionVersion`, `operationId`, `workerGeneration`; captura mantém também `recording_id` do evento nativo. |
-| `InterviewSnapshot` | `revision` monotónica em memória, `database: ready/error/opening`, `activeSession: Option<SessionSummary>`, `current: Option<QuestionDetail>`, `availability`, `recordingId?`, `finalizing: bool`, `modelJob?` com alvo, `playback?`, `warnings`, `lastError?`. |
+| `OperationTarget` | `sessionId`, `sessionQuestionId`, `recordingId?`, `selectionVersion`, `operationId`, `workerGeneration`; capture also keeps the `recording_id` of the native event. |
+| `InterviewSnapshot` | monotonic `revision` in memory, `database: ready/error/opening`, `activeSession: Option<SessionSummary>`, `current: Option<QuestionDetail>`, `availability`, `recordingId?`, `finalizing: bool`, `modelJob?` with target, `playback?`, `warnings`, `lastError?`. |
 | `RecoveryReport` | `published: Vec<Id>`, `warnings: Vec<AppError>`, `interruptedOperations: Vec<Id>`. |
 
-`Transcript`, `CaptureMeta`, `Availability` e `AppError` vêm de `domain.rs`.
-Adicionar aos resultados guardados a configuração efetiva do reconhecimento,
-sem alterar o protocolo Python: Rust já conhece os parâmetros enviados.
-Manter os DTOs antigos para ler `phase1/`; a interface de sessão usa os novos.
+`Transcript`, `CaptureMeta`, `Availability` and `AppError` come from `domain.rs`.
+Add the effective recognition configuration to the stored results,
+without changing the Python protocol: Rust already knows the parameters sent.
+Keep the old DTOs to read `phase1/`; the session interface uses the new ones.
 
-Novos erros estáveis: `INVALID_INPUT`, `INSUFFICIENT_QUESTIONS`,
+New stable errors: `INVALID_INPUT`, `INSUFFICIENT_QUESTIONS`,
 `ACTIVE_SESSION_EXISTS`, `ANSWER_CONFIRMED`, `ANSWER_REQUIRED`,
-`DATABASE_UNAVAILABLE`, `DATABASE_VERSION_UNSUPPORTED`. Reutilizar `BUSY`,
-`STALE_SOURCE`, `STORAGE_WRITE_FAILED` e os erros de áudio existentes.
+`DATABASE_UNAVAILABLE`, `DATABASE_VERSION_UNSUPPORTED`. Reuse `BUSY`,
+`STALE_SOURCE`, `STORAGE_WRITE_FAILED` and the existing audio errors.
 
-### Esquema inicial
+### Initial schema
 
-Arrays pequenos de competências, critérios e segmentos usam JSON TEXT validado
-por serde na aplicação; relações e invariantes usam colunas e FKs. Não guardar
-os áudios como BLOBs.
+Small arrays of competencies, criteria and segments use JSON TEXT validated
+by serde in the application; relations and invariants use columns and FKs. Do not store
+the audio as BLOBs.
 
-| Tabela | Colunas principais e regras |
+| Table | Main columns and rules |
 | --- | --- |
-| `content_seeds` | `version PRIMARY KEY`, `applied_at`; marca `questions-v1` na mesma transação do seed. |
-| `questions` | `id PK`, `text`, `category`, `competencies_json`, `criteria_json`, `version`, datas; campos obrigatórios. |
-| `sessions` | `id PK`, `category NULL`, `question_count CHECK > 0`, `position`, `status`, `mode CHECK = 'local_v2'`, `version`, datas; `position BETWEEN 1 AND question_count`. |
-| `session_questions` | `id PK`, `session_id FK`, `source_question_id FK`, `source_version`, `position`, cópia de texto/categoria/arrays, `selected_recording_id NULL`, `selection_version`; `UNIQUE(session_id, position)`, `UNIQUE(session_id, source_question_id)`. |
-| `recordings` | `id PK`, `session_question_id FK`, `ordinal`, `state: reserved/capturing/publish_pending/ready/interrupted`, caminhos relativos, metadados JSON, datas; `UNIQUE(session_question_id, ordinal)`. |
-| `transcripts` | `id PK`, `recording_id FK`, texto/status/segmentos/modelo/língua/configuração/tempos/data, imutáveis. |
-| `reviews` | `(recording_id, version) PK`, `source_transcript_id NULL`, `origin`, `text`, `saved_at`; acrescentar versões em vez de reescrever anteriores. |
-| `confirmations` | `id PK`, `session_question_id UNIQUE FK`, `recording_id`, `review_version`, `source_transcript_id NULL`, `origin`, `text`, data; FK para a versão da revisão e coerência com a gravação da pergunta. |
-| `operations` | `id PK`, tipo/estado, sessão/pergunta/gravação/generação, configuração de origem, erro e tempos; um resultado só encerra o seu pedido. |
-| `command_receipts` | `request_id PK`, `kind`, `payload_hash`, `session_id`, `entity_id`, `result_version`; escrita na transação da mutação, sem duplicar textos completos. |
+| `content_seeds` | `version PRIMARY KEY`, `applied_at`; marks `questions-v1` in the same transaction as the seed. |
+| `questions` | `id PK`, `text`, `category`, `competencies_json`, `criteria_json`, `version`, dates; required fields. |
+| `sessions` | `id PK`, `category NULL`, `question_count CHECK > 0`, `position`, `status`, `mode CHECK = 'local_v2'`, `version`, dates; `position BETWEEN 1 AND question_count`. |
+| `session_questions` | `id PK`, `session_id FK`, `source_question_id FK`, `source_version`, `position`, copy of text/category/arrays, `selected_recording_id NULL`, `selection_version`; `UNIQUE(session_id, position)`, `UNIQUE(session_id, source_question_id)`. |
+| `recordings` | `id PK`, `session_question_id FK`, `ordinal`, `state: reserved/capturing/publish_pending/ready/interrupted`, relative paths, JSON metadata, dates; `UNIQUE(session_question_id, ordinal)`. |
+| `transcripts` | `id PK`, `recording_id FK`, text/status/segments/model/language/configuration/times/date, immutable. |
+| `reviews` | `(recording_id, version) PK`, `source_transcript_id NULL`, `origin`, `text`, `saved_at`; add versions instead of rewriting previous ones. |
+| `confirmations` | `id PK`, `session_question_id UNIQUE FK`, `recording_id`, `review_version`, `source_transcript_id NULL`, `origin`, `text`, date; FK to the revision version and consistency with the question's recording. |
+| `operations` | `id PK`, type/state, session/question/recording/generation, source configuration, error and times; a result only closes its own request. |
+| `command_receipts` | `request_id PK`, `kind`, `payload_hash`, `session_id`, `entity_id`, `result_version`; written in the mutation transaction, without duplicating full texts. |
 
-Criar `CREATE UNIQUE INDEX one_active_session ON sessions((1)) WHERE
-status = 'in_progress'`. Adicionar FKs compostas para garantir que seleção,
-confirmação e transcrição de origem pertencem à mesma pergunta/gravação; usar
-índices únicos auxiliares `(session_question_id,id)` e `(recording_id,id)` onde
-necessário. As FKs de seleção podem ser `DEFERRABLE INITIALLY DEFERRED` para
-permitir inserir a gravação e alterar a seleção na mesma transação.
+Create `CREATE UNIQUE INDEX one_active_session ON sessions((1)) WHERE
+status = 'in_progress'`. Add composite FKs to guarantee that the selection,
+the confirmation and the source transcript belong to the same question/recording; use
+auxiliary unique indexes `(session_question_id,id)` and `(recording_id,id)` where
+necessary. The selection FKs can be `DEFERRABLE INITIALLY DEFERRED` to
+allow inserting the recording and changing the selection in the same transaction.
 
-Triggers `BEFORE UPDATE/DELETE` impedem alterações de transcrições,
-confirmações, versões de revisão e conteúdos copiados das perguntas. O campo
-de seleção de `session_questions` pode mudar antes de confirmar. Não incluir
-tabelas das fases futuras nem comandos de eliminação.
+`BEFORE UPDATE/DELETE` triggers prevent changes to transcripts,
+confirmations, review versions and the copied contents of the questions. The selection
+field of `session_questions` may change before confirming. Do not include
+tables from future phases or deletion commands.
 
-### Concorrência e repetição
+### Concurrency and repetition
 
-Mutações recebem UUID `requestId` gerado no cliente e conservado numa repetição
-do mesmo pedido. Verificar recibo antes de validar versões: mesmo ID e payload
-devolvem o resultado existente sem executar outra mutação; payload diferente
-devolve `STALE_SOURCE`. Guardar hash SHA-256 de serialização canónica de campos
-do pedido, sem incluir `requestId` e sem depender da ordem de mapas.
+Mutations receive a UUID `requestId` generated in the client and kept on a repetition
+of the same request. Check the receipt before validating versions: the same ID and payload
+return the existing result without executing another mutation; a different payload
+returns `STALE_SOURCE`. Store a SHA-256 hash of the canonical serialization of the request
+fields, without including `requestId` and without depending on map order.
 
-`sessions.version` controla início/avanço/fecho e confirmação;
-`selectionVersion` protege a seleção da gravação; a versão da revisão controla
-edições. Atualizações usam condições de versão e verificam linhas afetadas.
-Resultados de modelos não dependem da versão global da sessão, pois guardar
-uma revisão durante inferência é permitido: validar o alvo, geração, operação,
-seleção e ausência de confirmação. Um resultado tardio nunca troca seleção.
+`sessions.version` controls start/advance/close and confirmation;
+`selectionVersion` protects the selection of the recording; the revision version controls
+edits. Updates use version conditions and check the affected rows.
+Model results do not depend on the global version of the session, because saving
+a review during inference is allowed: validate the target, generation, operation,
+selection and absence of confirmation. A late result never swaps the selection.
 
-O replay de um início antigo devolve a sessão original, mesmo se concluída;
-não cria uma entrevista nova. O replay de avanço não aplica outro avanço.
-Não manter transações ou mutexes de estado durante I/O de áudio ou inferência.
+The replay of an old start returns the original session, even if completed;
+it does not create a new interview. The replay of an advance does not apply another advance.
+Do not hold transactions or state mutexes during audio I/O or inference.
 
-## 4. Sequência de execução
+## 4. Execution sequence
 
-Antes de implementar: consultar o estado Git e preservar as alterações já
-existentes; usar o isolamento habitual da execução. Reconciliar os critérios
-manuais pendentes da fase 1 com a evidência do utilizador. Este plano não os
-marca como cumpridos nem exige repetir evidência já registada.
+Before implementing: check the Git state and preserve the changes that already
+exist; use the usual isolation of the execution. Reconcile the pending manual criteria
+of phase 1 with the user's evidence. This plan does not mark them as
+met and does not require repeating evidence already recorded.
 
-Os comandos seguintes partem da raiz. Em PowerShell, quando necessário:
-`$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"`. Cada tarefa segue o ciclo
-teste que falha → confirmação da falha pertinente → implementação mínima →
-teste verde. Falhas por ambiente em falta não contam como teste de regressão.
-Os commits indicados são pontos sugeridos para a execução; incluir apenas os
-ficheiros da tarefa, sem adicionar alterações preexistentes indiscriminadamente.
+The following commands start from the root. In PowerShell, when necessary:
+`$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"`. Each task follows the cycle
+failing test → confirmation of the pertinent failure → minimal implementation →
+green test. Failures due to a missing environment do not count as a regression test.
+The commits indicated are suggested points for the execution; include only the
+files of the task, without adding preexisting changes indiscriminately.
 
-### Tarefa 1 — Contratos, esquema e abertura recuperável de SQLite
+### Task 1 — Contracts, schema and recoverable SQLite opening
 
-**Ficheiros:** criar `interview/{mod.rs,types.rs}`, `db/mod.rs`, a migração,
-`contracts/interview-v2.example.json`, `src/lib/interview-contracts.ts` e testes
-`interview_contracts.rs`/`database.rs`; modificar `lib.rs`, Cargo e lock.
-Os caminhos Rust desta secção são relativos a `src-tauri/src/`.
+**Files:** create `interview/{mod.rs,types.rs}`, `db/mod.rs`, the migration,
+`contracts/interview-v2.example.json`, `src/lib/interview-contracts.ts` and tests
+`interview_contracts.rs`/`database.rs`; modify `lib.rs`, Cargo and the lock.
+The Rust paths of this section are relative to `src-tauri/src/`.
 
 **Interfaces:**
 
-- `Database::open(path: PathBuf) -> Result<Database>`; `Database: Clone + Send + Sync` por `Arc<Mutex<Connection>>` interno.
-- `Database::with_connection<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T>`; síncrono, nunca chamado diretamente num comando async.
-- Tipos da secção 3 e `validate_question(input: QuestionInput) -> Result<QuestionInput>`; `validate_count(count: u32, eligible: usize) -> Result<()>`.
+- `Database::open(path: PathBuf) -> Result<Database>`; `Database: Clone + Send + Sync` through an internal `Arc<Mutex<Connection>>`.
+- `Database::with_connection<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T>`; synchronous, never called directly in an async command.
+- Types from section 3 and `validate_question(input: QuestionInput) -> Result<QuestionInput>`; `validate_count(count: u32, eligible: usize) -> Result<()>`.
 
-- [x] Escrever `fresh_database_has_version_one`, `failed_migration_rolls_back`, `future_version_is_not_modified`, `foreign_keys_reject_cross_recording_sources` e `v2_contract_matches_fixture`. Asserções: `user_version == 1`; erro injetado conserva esquema/dados/versão; versão 99 não cria tabelas nem seed; fonte de outra gravação é recusada; JSON Rust coincide com o exemplo.
-- [x] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test database --test interview_contracts`; confirmar falha por contrato/esquema ausente.
-- [x] Adicionar rusqlite e implementar os tipos, esquema, triggers, restrições e transação de migração. Acrescentar teste SQL que tenta alterar texto confirmado e transcrição e recebe erro.
-- [x] Reexecutar o comando e `npm.cmd run typecheck`; exigir todos verdes e saída 0. Guardar o lock realmente resolvido.
-- [x] Commit sugerido: `feat: add guided interview contracts and sqlite schema`.
+- [x] Write `fresh_database_has_version_one`, `failed_migration_rolls_back`, `future_version_is_not_modified`, `foreign_keys_reject_cross_recording_sources` and `v2_contract_matches_fixture`. Assertions: `user_version == 1`; an injected error preserves schema/data/version; version 99 creates neither tables nor seed; a source from another recording is refused; the Rust JSON matches the example.
+- [x] Run `cargo test --manifest-path src-tauri/Cargo.toml --test database --test interview_contracts`; confirm failure due to a missing contract/schema.
+- [x] Add rusqlite and implement the types, schema, triggers, constraints and migration transaction. Add an SQL test that tries to change a confirmed text and a transcript and receives an error.
+- [x] Rerun the command and `npm.cmd run typecheck`; require everything green and exit 0. Keep the lock actually resolved.
+- [x] Suggested commit: `feat: add guided interview contracts and sqlite schema`.
 
-### Tarefa 2 — Banco inicial e edição persistente
+### Task 2 — Initial bank and persistent editing
 
-**Ficheiros:** criar `db/questions.rs`, `db/seed-v1.json`, `src-tauri/tests/questions.rs`; completar validação e integração do seed em `db/mod.rs`.
+**Files:** create `db/questions.rs`, `db/seed-v1.json`, `src-tauri/tests/questions.rs`; complete the validation and the seed integration in `db/mod.rs`.
 
-**Interfaces:** métodos síncronos em `Database`:
+**Interfaces:** synchronous methods in `Database`:
 
 - `list_questions(category: Option<Category>) -> Result<Vec<Question>>`.
 - `create_question(input: QuestionInput) -> Result<Question>`.
 - `update_question(id: &str, expected_version: Version, input: QuestionInput) -> Result<Question>`.
-- `ensure_question_seed() -> Result<()>`; invocado dentro da preparação inicial, marca `questions-v1` atomicamente.
+- `ensure_question_seed() -> Result<()>`; invoked inside the initial preparation, marks `questions-v1` atomically.
 
-- [x] Escrever `seed_is_once_and_preserves_edits`, `bank_covers_six_categories`, `question_trims_only_outer_whitespace`, `blank_fields_are_rejected`, `stale_edit_does_not_overwrite`. Asserções: 20 perguntas, distribuição 4/3/3/4/3/3, IDs repetíveis, edição preservada após reabertura, texto interior intacto e versão antiga recusada.
-- [x] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test questions`; observar falha pertinente.
-- [x] Transcrever as 20 linhas da spec para o seed com UUIDs fixos. Guardar critérios específicos na pergunta; definir critérios STAR comuns versionados numa constante e copiá-los na criação de sessão. Validar categoria, arrays não vazios e elementos sem espaços exteriores. Não usar `INSERT OR REPLACE` no banco existente.
-- [x] Reexecutar a suíte; verificar também rollback do seed incompleto, sem marca de versão aplicada.
-- [x] Commit sugerido: `feat: persist the editable interview question bank`.
+- [x] Write `seed_is_once_and_preserves_edits`, `bank_covers_six_categories`, `question_trims_only_outer_whitespace`, `blank_fields_are_rejected`, `stale_edit_does_not_overwrite`. Assertions: 20 questions, distribution 4/3/3/4/3/3, repeatable IDs, an edit preserved after reopening, inner text intact and an old version refused.
+- [x] Run `cargo test --manifest-path src-tauri/Cargo.toml --test questions`; observe the pertinent failure.
+- [x] Transcribe the 20 lines of the spec into the seed with fixed UUIDs. Store question-specific criteria in the question; define common STAR criteria versioned in a constant and copy them when creating the session. Validate the category, non-empty arrays and elements without outer whitespace. Do not use `INSERT OR REPLACE` on the existing bank.
+- [x] Rerun the suite; also verify the rollback of an incomplete seed, with no applied version mark.
+- [x] Suggested commit: `feat: persist the editable interview question bank`.
 
-### Tarefa 3 — Criação atómica, seleção fixa e consulta de sessão
+### Task 3 — Atomic creation, fixed selection and session reading
 
-**Ficheiros:** criar `db/sessions.rs`, `src-tauri/tests/sessions.rs`; completar tipos de consulta.
+**Files:** create `db/sessions.rs`, `src-tauri/tests/sessions.rs`; complete the reading types.
 
-**Interfaces:** métodos de `Database`:
+**Interfaces:** methods of `Database`:
 
 - `start_session(request: StartSession) -> Result<SessionDetail>`.
 - `active_session() -> Result<Option<SessionDetail>>`.
 - `list_sessions() -> Result<Vec<SessionSummary>>`.
 - `load_session(session_id: &str) -> Result<SessionDetail>`.
 
-- [x] Escrever `starts_one_three_and_available_count`, `insufficient_category_creates_nothing`, `snapshots_survive_bank_edits`, `repeated_start_returns_original_session`, `only_one_session_can_be_active`. Asserções: posições 1..N sem repetição; quantidade zero ou excessiva é recusada; texto/competências/critérios não mudam; mesmo recibo após reabrir não insere outra sessão; duas ligações concorrentes não ultrapassam o índice único.
-- [x] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test sessions`; observar as falhas.
-- [x] Implementar `BEGIN IMMEDIATE`, validação, sorteio SQL, cópias completas com critérios STAR e inserção de recibo na mesma transação. Validar contagem real antes do commit. Não testar aleatoriedade com expectativas estatísticas frágeis; testar conjunto, unicidade e preservação da ordem guardada.
-- [x] Reexecutar a suíte e testar erro injetado após inserir a primeira pergunta: a sessão inteira desaparece por rollback.
-- [x] Commit sugerido: `feat: create recoverable sessions with fixed question snapshots`.
+- [x] Write `starts_one_three_and_available_count`, `insufficient_category_creates_nothing`, `snapshots_survive_bank_edits`, `repeated_start_returns_original_session`, `only_one_session_can_be_active`. Assertions: positions 1..N without repetition; a zero or excessive quantity is refused; text/competencies/criteria do not change; the same receipt after reopening does not insert another session; two concurrent connections do not get past the unique index.
+- [x] Run `cargo test --manifest-path src-tauri/Cargo.toml --test sessions`; observe the failures.
+- [x] Implement `BEGIN IMMEDIATE`, validation, SQL draw, complete copies with STAR criteria and insertion of the receipt in the same transaction. Validate the real count before the commit. Do not test randomness with fragile statistical expectations; test the set, the uniqueness and the preservation of the stored order.
+- [x] Rerun the suite and test an injected error after inserting the first question: the whole session disappears through the rollback.
+- [x] Suggested commit: `feat: create recoverable sessions with fixed question snapshots`.
 
-### Tarefa 4 — Originais, publicações interrompidas e transcrições
+### Task 4 — Originals, interrupted publications and transcripts
 
-**Ficheiros:** criar `artifacts.rs`, `db/answers.rs`, `src-tauri/tests/artifacts.rs`; acrescentar casos em `answers.rs` de testes.
+**Files:** create `artifacts.rs`, `db/answers.rs`, `src-tauri/tests/artifacts.rs`; add cases in the `answers.rs` tests.
 
 **Interfaces:**
 
 - `ArtifactStore::new(root: PathBuf) -> ArtifactStore`.
-- `ArtifactStore::reserve(session_id: &str, question_id: &str, recording_id: &str) -> Result<RecordingTarget>`; `RecordingTarget` é o tipo de áudio existente.
-- `ArtifactStore::inspect(target: &RecordingTarget) -> Result<CapturedAudio>`; valida `original.wav` finalizado, não promove `original.partial.wav`.
-- `Database::reserve_recording(question_id: &str, expected_selection: Version) -> Result<RecordingView>`; gera ID/ordinal antes de abrir o microfone.
-- `Database::publish_recording(capture: CapturedAudio) -> Result<RecordingView>`; idempotente pelo ID reservado, liga o alvo já guardado em SQLite.
+- `ArtifactStore::reserve(session_id: &str, question_id: &str, recording_id: &str) -> Result<RecordingTarget>`; `RecordingTarget` is the existing audio type.
+- `ArtifactStore::inspect(target: &RecordingTarget) -> Result<CapturedAudio>`; validates a finalized `original.wav`, does not promote `original.partial.wav`.
+- `Database::reserve_recording(question_id: &str, expected_selection: Version) -> Result<RecordingView>`; generates the ID/ordinal before opening the microphone.
+- `Database::publish_recording(capture: CapturedAudio) -> Result<RecordingView>`; idempotent by the reserved ID, binds the target already stored in SQLite.
 - `Database::append_transcript(target: OperationTarget, transcript: Transcript, configuration: serde_json::Value) -> Result<RecordingView>`.
 - `Database::set_normalized(recording_id: &str, relative_path: &str) -> Result<()>`.
 - `reconcile(database: &Database, artifacts: &ArtifactStore) -> Result<RecoveryReport>`.
 
-- [x] Escrever `finalized_audio_survives_database_failure`, `reopen_reconciles_once`, `part_file_is_not_a_saved_answer`, `older_publication_cannot_replace_newer_selection`, `missing_audio_keeps_text`, `new_capture_failure_keeps_previous_selection`, `transcript_append_does_not_replace_review`. Asserções: WAV existe após falha, publicação após reabrir cria um só registo pronto; `original.partial.wav` nunca é apresentado como resposta válida; original em falta mantém textos legíveis.
-- [x] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test artifacts --test answers`; confirmar falha.
-- [x] Reservar uma linha antes da captura; o original finalizado é a evidência recuperável se a escrita seguinte falhar. Nunca depender apenas do atual `pending_publish` em memória. Reconciliação inspeciona reservas pendentes, recupera WAV fechado e marca `incomplete=true` se o fecho não tiver metadados confirmados. Ausência de original torna captura interrompida, sem inventar duração ou sucesso.
-- [x] Na publicação, mudar seleção apenas para ordinal superior e pergunta ainda não confirmada; incrementar `selectionVersion`. Manter gravações anteriores. Validar WAV com Hound e reutilizar normalização. Resolver caminhos só por IDs/raiz, recusando `..`, absolutos e ligações que escapem à pasta gerida. Acrescentar `paths_cannot_escape_artifact_root`.
-- [x] Guardar resultados automáticos e estado da operação atomicamente; nunca reescrever texto automático ou revisão. Reconciliação marca trabalhos antigos `interrupted`, preserva órfãos desconhecidos com aviso e não os elimina.
-- [x] Reexecutar as suítes com falha injetada no commit e base reaberta; exigir recuperação sem nova captura e sem transcrição duplicada.
-- [x] Commit sugerido: `feat: preserve recording artifacts across publication failures`.
+- [x] Write `finalized_audio_survives_database_failure`, `reopen_reconciles_once`, `part_file_is_not_a_saved_answer`, `older_publication_cannot_replace_newer_selection`, `missing_audio_keeps_text`, `new_capture_failure_keeps_previous_selection`, `transcript_append_does_not_replace_review`. Assertions: the WAV exists after the failure, the publication after reopening creates a single ready record; `original.partial.wav` is never presented as a valid answer; a missing original keeps the texts readable.
+- [x] Run `cargo test --manifest-path src-tauri/Cargo.toml --test artifacts --test answers`; confirm failure.
+- [x] Reserve a row before the capture; the finalized original is the recoverable evidence if the following write fails. Never depend only on the current `pending_publish` in memory. Reconciliation inspects pending reservations, recovers a closed WAV and marks `incomplete=true` if the closing has no confirmed metadata. The absence of an original makes the capture interrupted, without inventing a duration or a success.
+- [x] On publication, change the selection only to a higher ordinal and a question not yet confirmed; increment `selectionVersion`. Keep previous recordings. Validate the WAV with Hound and reuse the normalization. Resolve paths only by IDs/root, refusing `..`, absolute paths and links that escape the managed folder. Add `paths_cannot_escape_artifact_root`.
+- [x] Store automatic results and the operation state atomically; never rewrite automatic text or a review. Reconciliation marks old jobs `interrupted`, preserves unknown orphans with a warning and does not delete them.
+- [x] Rerun the suites with an injected failure in the commit and the database reopened; require recovery without a new capture and without a duplicated transcript.
+- [x] Suggested commit: `feat: preserve recording artifacts across publication failures`.
 
-### Tarefa 5 — Revisão versionada, confirmação e avanço idempotente
+### Task 5 — Versioned review, confirmation and idempotent advance
 
-**Ficheiros:** completar `db/answers.rs`, `db/sessions.rs`, regras em `interview/mod.rs`; testes `answers.rs` e `sessions.rs`.
+**Files:** complete `db/answers.rs`, `db/sessions.rs`, rules in `interview/mod.rs`; tests `answers.rs` and `sessions.rs`.
 
-**Interfaces:** métodos de `Database`:
+**Interfaces:** methods of `Database`:
 
 - `save_review(request: SaveReview) -> Result<ReviewDraft>`.
 - `confirm_answer(request: ConfirmAnswer) -> Result<Confirmation>`.
-- `advance_session(request: AdvanceSession) -> Result<SessionDetail>`; na última posição conclui a sessão.
+- `advance_session(request: AdvanceSession) -> Result<SessionDetail>`; on the last position it completes the session.
 
-- [x] Escrever `save_does_not_confirm`, `confirmation_freezes_exact_seen_text`, `stale_review_cannot_confirm`, `manual_no_speech_keeps_origin`, `cannot_confirm_without_original`, `advance_requires_confirmation`, `replayed_advance_does_not_skip`, `last_advance_completes_only_full_session`. Asserções: revisão mantém texto exato, incluindo espaços; validar `trim()` apenas para recusar vazio; confirmação não altera posição; final tem N confirmações e `mode=local_v2`, sem feedback pendente.
-- [x] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test answers --test sessions`; confirmar as falhas.
-- [x] Implementar revisão append-only e confirmação numa transação, com versão esperada, alvo selecionado, original finalizado presente e pertencente à pergunta. `manual_explicit` permite revisão sem resultado automático ou sobre `no_speech`; não fabrica transcrição. Confirmar insere a revisão exata se mudou e a confirmação, atualiza a versão da sessão e guarda recibo. Um retry igual consulta o recibo antes de recusar por já confirmado.
-- [x] Implementar avanço com posição/pergunta/versão esperadas e recibo. Na última pergunta verificar todas as confirmações dentro da transação. Nunca usar a conclusão de uma transcrição como ação de avanço.
-- [x] Acrescentar `confirmation_failure_rolls_back_review_and_receipt`, `same_request_with_other_text_is_rejected`, `late_transcript_cannot_change_confirmation`, `old_start_replay_after_completion_does_not_create_session`. Reabrir a base entre pedido e replay. Verificar também tentativa SQL de reescrever a confirmação.
-- [x] Reexecutar ambas as suítes; saída 0.
-- [x] Commit sugerido: `feat: confirm immutable answers and advance sessions safely`.
+- [x] Write `save_does_not_confirm`, `confirmation_freezes_exact_seen_text`, `stale_review_cannot_confirm`, `manual_no_speech_keeps_origin`, `cannot_confirm_without_original`, `advance_requires_confirmation`, `replayed_advance_does_not_skip`, `last_advance_completes_only_full_session`. Assertions: the review keeps the exact text, including spaces; validate `trim()` only to refuse empty; the confirmation does not change the position; the finish has N confirmations and `mode=local_v2`, with no pending feedback.
+- [x] Run `cargo test --manifest-path src-tauri/Cargo.toml --test answers --test sessions`; confirm the failures.
+- [x] Implement the append-only review and the confirmation in one transaction, with the expected version, the selected target, a finalized original present and belonging to the question. `manual_explicit` allows a review without an automatic result or over `no_speech`; it does not fabricate a transcript. Confirming inserts the exact review if it changed and the confirmation, updates the session version and stores a receipt. An equal retry checks the receipt before refusing as already confirmed.
+- [x] Implement the advance with expected position/question/version and a receipt. On the last question, check all the confirmations inside the transaction. Never use the completion of a transcription as an advance action.
+- [x] Add `confirmation_failure_rolls_back_review_and_receipt`, `same_request_with_other_text_is_rejected`, `late_transcript_cannot_change_confirmation`, `old_start_replay_after_completion_does_not_create_session`. Reopen the database between the request and the replay. Also verify an SQL attempt to rewrite the confirmation.
+- [x] Rerun both suites; exit 0.
+- [x] Suggested commit: `feat: confirm immutable answers and advance sessions safely`.
 
-### Tarefa 6 — Integrar o serviço, comandos, eventos e arranque
+### Task 6 — Integrate the service, commands, events and startup
 
-**Ficheiros:** modificar `service.rs`, `commands.rs`, `lib.rs`, `domain.rs`, `src-tauri/tests/service.rs` e `domain.rs` de testes; criar `service/interview.rs` e `src/lib/interview-client.ts`.
+**Files:** modify `service.rs`, `commands.rs`, `lib.rs`, `domain.rs`, `src-tauri/tests/service.rs` and the test `domain.rs`; create `service/interview.rs` and `src/lib/interview-client.ts`.
 
 **Interfaces:**
 
-- Adaptar `AppService::new` a `Database` e `ArtifactStore` no lugar do `AttemptStore`; reter a porta de áudio, launcher, manifesto e geração existentes. Inicialização/recuperação em `spawn_blocking`, com snapshot `opening` e janela utilizável.
-- `AppService::snapshot() -> InterviewSnapshot`; `subscribe` publica `interview://snapshot` com esse DTO.
-- Métodos async de `AppService`: `start_session(StartSession)`, `save_review(SaveReview)`, `confirm_answer(ConfirmAnswer)`, `advance_session(AdvanceSession)`, `start_recording(session_question_id: Id, expected_selection: Version)`, `stop_recording()`, `retry_save_recording(recording_id: Id)`, `transcribe_response(target: AnswerTarget)`, todos `-> Result<InterviewSnapshot>`.
-- Métodos async de leitura: `list_questions`, `create_question`, `update_question`, `list_sessions`, `load_session` com os tipos das tarefas anteriores. Leituras devolvem DTOs; mutações de perguntas devolvem `Question`.
-- `play_audio(target: AudioSelection) -> Result<InterviewSnapshot>`, com `AudioSelection = Question { sessionId, sessionQuestionId } | Recording { recordingId } | Legacy { attemptId }`; resolver o caminho no núcleo, permitir leitura de histórico, recusar durante captura.
-- Reutilizar `refresh_availability`, `stop_audio`, `restart_worker`, `prepare_close`; adicionar `retry_database() -> Result<InterviewSnapshot>` para repetir abertura/reconciliação sem reiniciar a janela.
-- `InterviewClient`: métodos camelCase correspondentes e `subscribe(listener) -> Unsubscribe`; concentrar nomes de comandos e evento neste ficheiro. Comandos Tauri novos prefixados `interview_`, incluindo `interview_snapshot`, `interview_list_questions`, `interview_create_question`, `interview_update_question`, `interview_start_session`, `interview_list_sessions`, `interview_load_session`, `interview_start_recording`, `interview_stop_recording`, `interview_retry_save_recording`, `interview_transcribe_response`, `interview_save_review`, `interview_confirm_answer`, `interview_advance_session`, `interview_play_audio`, `interview_stop_audio`, `interview_refresh_availability`, `interview_restart_worker`, `interview_prepare_close`, `interview_retry_database`.
+- Adapt `AppService::new` to `Database` and `ArtifactStore` in place of `AttemptStore`; retain the existing audio port, launcher, manifest and generation. Initialization/recovery in `spawn_blocking`, with an `opening` snapshot and a usable window.
+- `AppService::snapshot() -> InterviewSnapshot`; `subscribe` publishes `interview://snapshot` with that DTO.
+- Async methods of `AppService`: `start_session(StartSession)`, `save_review(SaveReview)`, `confirm_answer(ConfirmAnswer)`, `advance_session(AdvanceSession)`, `start_recording(session_question_id: Id, expected_selection: Version)`, `stop_recording()`, `retry_save_recording(recording_id: Id)`, `transcribe_response(target: AnswerTarget)`, all `-> Result<InterviewSnapshot>`.
+- Async reading methods: `list_questions`, `create_question`, `update_question`, `list_sessions`, `load_session` with the types of the previous tasks. Reads return DTOs; question mutations return `Question`.
+- `play_audio(target: AudioSelection) -> Result<InterviewSnapshot>`, with `AudioSelection = Question { sessionId, sessionQuestionId } | Recording { recordingId } | Legacy { attemptId }`; resolve the path in the core, allow history reading, refuse during capture.
+- Reuse `refresh_availability`, `stop_audio`, `restart_worker`, `prepare_close`; add `retry_database() -> Result<InterviewSnapshot>` to repeat the opening/reconciliation without restarting the window.
+- `InterviewClient`: corresponding camelCase methods and `subscribe(listener) -> Unsubscribe`; gather the command and event names in this file. New Tauri commands prefixed `interview_`, including `interview_snapshot`, `interview_list_questions`, `interview_create_question`, `interview_update_question`, `interview_start_session`, `interview_list_sessions`, `interview_load_session`, `interview_start_recording`, `interview_stop_recording`, `interview_retry_save_recording`, `interview_transcribe_response`, `interview_save_review`, `interview_confirm_answer`, `interview_advance_session`, `interview_play_audio`, `interview_stop_audio`, `interview_refresh_availability`, `interview_restart_worker`, `interview_prepare_close`, `interview_retry_database`.
 
-- [x] Adaptar o harness existente para uma base temporária com seed e sessão iniciada explicitamente com a pergunta fixa dos testes. Manter as asserções de recuperação, timeout, cache, exclusão de reprodução e revisão; mudar apenas contratos e preparação necessários. Acrescentar `recording_requires_active_unconfirmed_question`, `confirmed_question_rejects_capture_and_transcription`, `database_error_keeps_window_recoverable`, `history_read_does_not_retarget_model_job`.
-- [x] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test service --test domain`; confirmar falha dos novos contratos antes de implementar a integração.
-- [x] Ligar métodos da base em `spawn_blocking`, coordenados pelo `transitions` existente. Carregar a sessão ativa após commits; snapshots refletem apenas estado guardado. Separar revisão global do snapshot e versões persistentes. Não adquirir `Mutex<AppState>` enquanto se chama um auxiliar que o readquire para registar erro.
-- [x] Trocar pergunta constante pelo texto da cópia atual ao sintetizar. Ligar resultado do auxiliar a `OperationTarget` sem alterar o protocolo v1; o mapa de operações em Rust faz essa associação. Rever início automático de transcrição para usar apenas gravação publicada e pergunta não confirmada. Resultado cujo alvo já foi confirmado ou substituído termina a operação como interrompida/obsoleta e liberta o trabalho em memória, sem alterar textos ou seleção e sem deixar a interface ocupada.
-- [x] Preservar e executar `repeated_start_returns_busy_instead_of_blocking`, `late_interruption_from_an_older_capture_is_ignored`, `timed_out_stop_recovers_capture`. Acrescentar `late_worker_result_cannot_target_next_question` e `question_cache_distinguishes_session_texts`. Usar prazos curtos de teste para detetar deadlock sem deixar a suíte presa.
-- [x] Registar os comandos no `lib.rs`, gerir erro da base sem `expect` que encerre a aplicação e ligar o novo cliente. Testar serialização IPC contra o exemplo v2 e verificar erros em português. Encerrar a captura e o auxiliar no fecho normal; erro de publicação impede indicar que tudo ficou guardado.
-- [x] Executar as suítes anteriores, `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` e `npm.cmd run typecheck`; exigir saída 0.
-- [x] Commit sugerido: `feat: connect guided sessions to the existing audio service`.
+- [x] Adapt the existing harness to a temporary database with seed and a session explicitly started with the fixed question of the tests. Keep the assertions of recovery, timeout, cache, playback exclusion and review; change only the contracts and the preparation necessary. Add `recording_requires_active_unconfirmed_question`, `confirmed_question_rejects_capture_and_transcription`, `database_error_keeps_window_recoverable`, `history_read_does_not_retarget_model_job`.
+- [x] Run `cargo test --manifest-path src-tauri/Cargo.toml --test service --test domain`; confirm failure of the new contracts before implementing the integration.
+- [x] Bind the database methods in `spawn_blocking`, coordinated by the existing `transitions`. Load the active session after commits; snapshots reflect only stored state. Separate the global revision of the snapshot from the persistent versions. Do not acquire `Mutex<AppState>` while calling a helper that reacquires it to record an error.
+- [x] Replace the constant question with the text of the current copy when synthesizing. Bind the helper result to `OperationTarget` without changing protocol v1; the operation map in Rust makes that association. Review the automatic start of transcription so that it uses only a published recording and an unconfirmed question. A result whose target was already confirmed or replaced ends the operation as interrupted/obsolete and releases the work in memory, without changing texts or selection and without leaving the interface busy.
+- [x] Preserve and run `repeated_start_returns_busy_instead_of_blocking`, `late_interruption_from_an_older_capture_is_ignored`, `timed_out_stop_recovers_capture`. Add `late_worker_result_cannot_target_next_question` and `question_cache_distinguishes_session_texts`. Use short test deadlines to detect a deadlock without leaving the suite stuck.
+- [x] Register the commands in `lib.rs`, handle a database error without an `expect` that shuts the application down and connect the new client. Test the IPC serialization against the v2 example and verify the errors in Portuguese. End the capture and the helper on normal shutdown; a publication error prevents indicating that everything was saved.
+- [x] Run the previous suites, `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` and `npm.cmd run typecheck`; require exit 0.
+- [x] Suggested commit: `feat: connect guided sessions to the existing audio service`.
 
-### Tarefa 7 — Preparação, navegação e banco de perguntas na interface
+### Task 7 — Setup, navigation and question bank in the interface
 
-**Ficheiros:** criar `SessionSetup.tsx`, `QuestionBank.tsx` e respetivos testes nos caminhos da secção 2; modificar `src/App.tsx` e CSS; criar `src/App.test.tsx` inicial.
+**Files:** create `SessionSetup.tsx`, `QuestionBank.tsx` and their tests in the paths of section 2; modify `src/App.tsx` and the CSS; create an initial `src/App.test.tsx`.
 
-**Interfaces:** `SessionSetup({ client, snapshot, onStarted })` e
+**Interfaces:** `SessionSetup({ client, snapshot, onStarted })` and
 `QuestionBank({ client })`; `client: InterviewClient`,
 `snapshot: InterviewSnapshot`, `onStarted(snapshot: InterviewSnapshot): void`.
-`App` recebe cliente injetável nos testes e mantém a subscrição durante toda a
-navegação. Estado local `page: setup/bank/interview/history`, sem router ou
-gestor global de estado adicional. A identidade ativa vem de Rust.
+`App` receives an injectable client in the tests and keeps the subscription throughout the
+navigation. Local state `page: setup/bank/interview/history`, without a router or an
+additional global state manager. The active identity comes from Rust.
 
-- [x] Escrever `defaults_to_three_and_all_categories`, `insufficient_questions_require_explicit_adjustment`, `active_session_offers_resume`, `bank_edit_survives_reload`, `bank_rejects_empty_fields`. Asserções: uma categoria com duas perguntas continua com quantidade três e aviso; só inicia depois da alteração explícita; o banco envia competências/critérios e versão esperada.
-- [x] Executar `npm.cmd test -- src/features/sessions/SessionSetup.test.tsx src/features/questions/QuestionBank.test.tsx src/App.test.tsx`; confirmar falhas.
-- [x] Implementar preparação e formulário de banco com campos rotulados. Consultar total elegível pelo banco, revalidado no núcleo. Bloquear submissões repetidas e conservar o UUID ao repetir uma submissão falhada; nova intenção recebe novo UUID. Mostrar «Retomar sessão» em vez de outro início quando houver sessão em curso.
-- [x] Usar navegação comum e estado de disponibilidade/erro da base; `retryDatabase` permite recuperar. Durante captura/finalização, bloquear mudança de página. Durante modelo ocupado, permitir leitura sem iniciar outra operação incompatível.
-- [x] Reexecutar testes e `npm.cmd run typecheck`; exigir saída 0 e mensagens em português de Portugal.
-- [x] Commit sugerido: `feat: add session setup and editable question bank screens`.
+- [x] Write `defaults_to_three_and_all_categories`, `insufficient_questions_require_explicit_adjustment`, `active_session_offers_resume`, `bank_edit_survives_reload`, `bank_rejects_empty_fields`. Assertions: a category with two questions keeps quantity three and a warning; it only starts after the explicit change; the bank sends competencies/criteria and the expected version.
+- [x] Run `npm.cmd test -- src/features/sessions/SessionSetup.test.tsx src/features/questions/QuestionBank.test.tsx src/App.test.tsx`; confirm the failures.
+- [x] Implement the setup and the bank form with labeled fields. Query the eligible total from the bank, revalidated in the core. Block repeated submissions and keep the UUID when repeating a failed submission; a new intention receives a new UUID. Show «Retomar sessão» instead of another start when there is a session in progress.
+- [x] Use common navigation and the database availability/error state; `retryDatabase` allows recovery. During capture/finalization, block page changes. While the model is busy, allow reading without starting another incompatible operation.
+- [x] Rerun the tests and `npm.cmd run typecheck`; require exit 0 and messages in European Portuguese.
+- [x] Suggested commit: `feat: add session setup and editable question bank screens`.
 
-### Tarefa 8 — Entrevista, confirmação e proteção de alterações
+### Task 8 — Interview, confirmation and protection of changes
 
-**Ficheiros:** criar os ficheiros de `features/interview/` e `features/navigation/` da secção 2; integrar em `App.tsx`. Reutilizar lógica visual/estilos da prática existente, sem montar dois clientes de áudio.
-
-**Interfaces:**
-
-- `useInterview(client: InterviewClient, snapshot: InterviewSnapshot)` expõe `review`, `setReviewText(text)`, `saveReview(): Promise<'saved'|'pending'|'failed'>`, `discardReview()`, `confirm(): Promise<boolean>`; refs mantêm versão e texto recentes.
-- `Interview({ client, snapshot, onSnapshot })`, com `onSnapshot(snapshot: InterviewSnapshot): void`.
-- `NavigationGuard` recebe callbacks de guardar/descartar, estado dirty/ocupado e intenção `navigate | record | close`; uma única decisão controla captura nova, mudança de página e fecho. Manter rascunhos por `recordingId` ao consultar histórico durante inferência.
-
-- [x] Escrever `shows_question_two_of_three`, `save_does_not_enable_next_until_confirmation`, `confirmation_locks_exact_editor_text`, `last_question_uses_finish_label`, `manual_revision_of_no_speech_is_explicit`, `prior_recordings_remain_readable`. Asserções: confirmar e avançar são dois pedidos distintos; botão final chama avanço da última pergunta; interface não mostra feedback nem reabre confirmação.
-- [x] Escrever no guard `save_and_leave_keeps_newer_edit`, `failed_save_does_not_destroy_window`, `cancel_keeps_editor`, `discard_requires_explicit_choice`, `capture_blocks_navigation`. Simular promessa de gravação pendente, editar de novo, resolver e verificar que nem navegação nem `destroy()` são chamados.
-- [x] Executar `npm.cmd test -- src/features/interview/Interview.test.tsx src/features/navigation/NavigationGuard.test.tsx`; confirmar falhas.
-- [x] Implementar cópia editável distinta do original, versões e origem manual explícita. Durante confirmação impedir edição/troca de gravação; o pedido inclui exatamente o texto apresentado, versões esperadas e um UUID estável. Falha mantém texto; confirmação recebida é só de leitura. «Próxima pergunta» só aparece habilitada com confirmação persistida.
-- [x] Integrar fecho Tauri num único listener no nível da aplicação: `prepareClose` finaliza captura, a decisão resolve revisões e só depois se chama `destroy()`. Uma confirmação ou gravação pendente não pode ser ultrapassada pelo fecho; permitir repetir depois do erro. Não retirar a proteção existente de `SaveOutcome` ao adaptar o hook.
-- [x] Acrescentar `old_snapshot_does_not_erase_draft`, `confirm_failure_preserves_text`, `double_next_click_sends_one_request`, `synthesis_failure_still_allows_recording`. Rejeitar snapshots com revisão monotónica inferior. Adaptar os testes válidos de `Practice.test.tsx` para a nova página antes de retirar o componente antigo da aplicação; conservar módulos antigos apenas se ainda servirem testes/consulta, sem UI duplicada.
-- [x] Reexecutar testes e `npm.cmd run typecheck`; saída 0.
-- [x] Commit sugerido: `feat: guide recording review confirmation and session progress`.
-
-### Tarefa 9 — Histórico, retoma e consulta dos treinos da fase 1
-
-**Ficheiros:** criar `legacy.rs`, `src-tauri/tests/legacy.rs`, `History.tsx` e `History.test.tsx`; modificar `storage.rs`, comandos, cliente, `App.tsx` e `App.test.tsx`.
+**Files:** create the files of `features/interview/` and `features/navigation/` from section 2; integrate them in `App.tsx`. Reuse the visual logic/styles of the existing practice, without mounting two audio clients.
 
 **Interfaces:**
 
-- Expor em `AttemptStore` `list_saved() -> Result<Vec<RestoreResult>>` e `load_saved(attempt_id: &str) -> Result<RestoreResult>`, reutilizando a leitura existente. Nunca escrever ao consultar; uma pasta inválida produz `RestoreResult { attempt: None, warnings }` e não aborta a enumeração.
-- `LegacyStore::new(root: PathBuf) -> LegacyStore`; `list() -> Result<Vec<RestoreResult>>`, `load(id: &str) -> Result<RestoreResult>`; expor só leitura e resolução de original para reprodução. Sem referência ao escritor no fluxo runtime.
-- Comandos `interview_list_legacy`, `interview_load_legacy`, cliente `listLegacy()/loadLegacy(id)` com tipos antigos importados de `contracts.ts`. Não reutilizar `AppSnapshot` antigo como se fosse uma sessão.
-- `History({ client, onResume })`, com `onResume(sessionId: string): void`. Ler sessões por `loadSession`, não alterar a seleção corrente ao abrir detalhes.
+- `useInterview(client: InterviewClient, snapshot: InterviewSnapshot)` exposes `review`, `setReviewText(text)`, `saveReview(): Promise<'saved'|'pending'|'failed'>`, `discardReview()`, `confirm(): Promise<boolean>`; refs keep the recent version and text.
+- `Interview({ client, snapshot, onSnapshot })`, with `onSnapshot(snapshot: InterviewSnapshot): void`.
+- `NavigationGuard` receives save/discard callbacks, dirty/busy state and the intention `navigate | record | close`; a single decision controls a new capture, a page change and closing. Keep drafts by `recordingId` when reading the history during inference.
 
-- [x] Escrever `legacy_list_ignores_last_pointer`, `corrupt_legacy_item_does_not_hide_valid_items`, `legacy_read_changes_no_bytes`, `legacy_rejects_path_escape`; testar manifests, revisões e originais com hashes antes/depois da leitura. Confirmar ausência de tabelas/sessões criadas para esses itens.
-- [x] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test legacy --test storage`; confirmar falha dos métodos novos.
-- [x] Implementar enumeração por pastas, avisos por artefacto e leitura protegida sem mudar o formato JSON. Manter os testes antigos de armazenamento, incluindo escrita atómica, como regressão desse formato.
-- [x] Escrever `history_separates_raw_review_and_confirmed`, `resume_keeps_confirmed_question_awaiting_next`, `missing_audio_keeps_confirmed_text`, `legacy_has_no_confirmation_action`; executar `npm.cmd test -- src/features/history/History.test.tsx src/App.test.tsx` e observar falhas.
-- [x] Implementar listagem por data, estado e progresso; detalhes de todas as perguntas e gravações. A sessão concluída mostra resumo, não feedback pendente. Treinos anteriores têm área própria e apenas leitura/reprodução. Retoma obtém snapshot corrente sem avançar automaticamente.
-- [x] Completar teste integrado `three_question_session_can_resume_and_finish`: criar cliente controlado, responder/confirmar primeira, simular reabertura, avançar explicitamente, terminar restantes e consultar três confirmações. Nenhuma chamada de IA ou dispensa de seguimento existe no cliente.
-- [x] Reexecutar as suítes Rust/React indicadas e `npm.cmd run typecheck`; exigir saída 0.
-- [x] Commit sugerido: `feat: browse session history and preserve legacy practice recordings`.
+- [x] Write `shows_question_two_of_three`, `save_does_not_enable_next_until_confirmation`, `confirmation_locks_exact_editor_text`, `last_question_uses_finish_label`, `manual_revision_of_no_speech_is_explicit`, `prior_recordings_remain_readable`. Assertions: confirming and advancing are two distinct requests; the final button calls the advance of the last question; the interface neither shows feedback nor reopens the confirmation.
+- [x] Write in the guard `save_and_leave_keeps_newer_edit`, `failed_save_does_not_destroy_window`, `cancel_keeps_editor`, `discard_requires_explicit_choice`, `capture_blocks_navigation`. Simulate a pending save promise, edit again, resolve and verify that neither navigation nor `destroy()` is called.
+- [x] Run `npm.cmd test -- src/features/interview/Interview.test.tsx src/features/navigation/NavigationGuard.test.tsx`; confirm the failures.
+- [x] Implement an editable copy distinct from the original, versions and an explicit manual origin. During confirmation, prevent editing/switching the recording; the request includes exactly the text presented, the expected versions and a stable UUID. A failure keeps the text; a received confirmation is read-only. «Próxima pergunta» only appears enabled with a persisted confirmation.
+- [x] Integrate the Tauri close in a single application-level listener: `prepareClose` finalizes the capture, the decision resolves the reviews and only then is `destroy()` called. A pending confirmation or save cannot be overridden by the close; allow repeating after the error. Do not remove the existing `SaveOutcome` protection when adapting the hook.
+- [x] Add `old_snapshot_does_not_erase_draft`, `confirm_failure_preserves_text`, `double_next_click_sends_one_request`, `synthesis_failure_still_allows_recording`. Reject snapshots with a lower monotonic revision. Adapt the valid tests of `Practice.test.tsx` to the new page before removing the old component from the application; keep old modules only if they still serve tests/read-only views, without duplicated UI.
+- [x] Rerun the tests and `npm.cmd run typecheck`; exit 0.
+- [x] Suggested commit: `feat: guide recording review confirmation and session progress`.
 
-### Tarefa 10 — Verificação do conjunto e evidência Windows
+### Task 9 — History, resume and reading of the phase 1 practice sessions
 
-**Ficheiros:** `scripts/verify.ps1` apenas se os novos testes não forem já
-descobertos; `README.md`, `AGENTS.md`, `docs/tech-stack.md`, plano das fases,
-`docs/phase-2/setup.md` e `docs/phase-2/validation.md`.
+**Files:** create `legacy.rs`, `src-tauri/tests/legacy.rs`, `History.tsx` and `History.test.tsx`; modify `storage.rs`, commands, client, `App.tsx` and `App.test.tsx`.
 
-**Interfaces:** manter os comandos de execução existentes. Não criar um novo
-instalador ou promessa de execução sem Python; o alvo continua Windows em
-desenvolvimento e release `--no-bundle`.
+**Interfaces:**
 
-- [x] Criar matriz F2-01 a F2-16 em `docs/phase-2/validation.md`, inicialmente pendente, com ligação às tarefas e testes da secção 5. Documentar configuração, diretórios, SQLite e retoma em `setup.md` sem copiar dados pessoais para Git.
-- [x] Executar `.\scripts\verify.ps1` e registar saída real: todos os checks têm de terminar com 0. Não copiar contagens da fase 1 como se fossem as desta execução. Resolver falhas pertinentes antes de repetir.
-- [x] Executar `.\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_offline_models.py -m models -q`; registar resultado real, distinguindo `passed` de `skipped` e preservando configuração/modelos existentes.
-- [x] Executar `npm.cmd run tauri -- build --no-bundle` e testar o arranque/fecho do binário Windows. Registar que não é um instalador autónomo nem valida a distribuição da fase 5.
-- [ ] Executar com o utilizador: sessão de três perguntas reais, uma com termos técnicos; audição de perguntas/originais; revisão e confirmação; sair e retomar após confirmação antes de avançar; terminar e abrir histórico. Registar duração dos áudios e tempos de carregamento/síntese/transcrição, incluindo perceção da espera.
-- [ ] Validar uma sessão de uma pergunta e outra quantidade disponível, insuficiência numa categoria, edição no banco sem alterar cópia de sessão, percurso offline, transcrição indisponível com revisão explícita, erro de escrita e recuperação. Quando se usarem falhas simuladas, identificar a simulação e não a apresentar como hardware real.
-- [ ] Atualizar documentos com o que passou e o que falta. Marcar a fase 2 concluída apenas com critérios demonstrados e validação manual; manter a fase 1 com o estado que a sua própria evidência sustenta. Não iniciar fase 3.
-- [x] Commit sugerido: `docs: record guided interview setup and validation evidence`.
+- Expose in `AttemptStore` `list_saved() -> Result<Vec<RestoreResult>>` and `load_saved(attempt_id: &str) -> Result<RestoreResult>`, reusing the existing reading. Never write while reading; an invalid folder produces `RestoreResult { attempt: None, warnings }` and does not abort the enumeration.
+- `LegacyStore::new(root: PathBuf) -> LegacyStore`; `list() -> Result<Vec<RestoreResult>>`, `load(id: &str) -> Result<RestoreResult>`; expose only reading and resolution of the original for playback. No reference to the writer in the runtime flow.
+- Commands `interview_list_legacy`, `interview_load_legacy`, client `listLegacy()/loadLegacy(id)` with old types imported from `contracts.ts`. Do not reuse the old `AppSnapshot` as if it were a session.
+- `History({ client, onResume })`, with `onResume(sessionId: string): void`. Read sessions through `loadSession`, do not change the current selection when opening details.
 
-**Estado da tarefa 10 (2026-11-02):** executados os passos automáticos e a
-documentação; os três passos de validação manual (422, 423 e o fecho do 424)
-ficam abertos. O passo 424 está parcialmente cumprido — os documentos foram
-atualizados com o que passou e o que falta — mas a fase 2 **não** foi marcada
-como concluída, porque a validação manual continua pendente. Resultados reais em
+- [x] Write `legacy_list_ignores_last_pointer`, `corrupt_legacy_item_does_not_hide_valid_items`, `legacy_read_changes_no_bytes`, `legacy_rejects_path_escape`; test manifests, revisions and originals with hashes before/after the reading. Confirm the absence of tables/sessions created for those items.
+- [x] Run `cargo test --manifest-path src-tauri/Cargo.toml --test legacy --test storage`; confirm failure of the new methods.
+- [x] Implement enumeration by folders, warnings per artifact and protected reading without changing the JSON format. Keep the old storage tests, including atomic writing, as a regression of that format.
+- [x] Write `history_separates_raw_review_and_confirmed`, `resume_keeps_confirmed_question_awaiting_next`, `missing_audio_keeps_confirmed_text`, `legacy_has_no_confirmation_action`; run `npm.cmd test -- src/features/history/History.test.tsx src/App.test.tsx` and observe the failures.
+- [x] Implement listing by date, state and progress; details of all the questions and recordings. A completed session shows a summary, not pending feedback. Earlier practice sessions have their own area and are read-only/playback only. Resume obtains the current snapshot without advancing automatically.
+- [x] Complete the integrated test `three_question_session_can_resume_and_finish`: create a controlled client, answer/confirm the first, simulate a reopening, advance explicitly, finish the remaining ones and read three confirmations. No AI call or follow-up dismissal exists in the client.
+- [x] Rerun the Rust/React suites indicated and `npm.cmd run typecheck`; require exit 0.
+- [x] Suggested commit: `feat: browse session history and preserve legacy practice recordings`.
+
+### Task 10 — Whole-set verification and Windows evidence
+
+**Files:** `scripts/verify.ps1` only if the new tests are not already
+discovered; `README.md`, `AGENTS.md`, `docs/tech-stack.md`, phase plan,
+`docs/phase-2/setup.md` and `docs/phase-2/validation.md`.
+
+**Interfaces:** keep the existing execution commands. Do not create a new
+installer or a promise of execution without Python; the target remains Windows in
+development and release `--no-bundle`.
+
+- [x] Create matrix F2-01 to F2-16 in `docs/phase-2/validation.md`, initially pending, linked to the tasks and tests of section 5. Document the configuration, directories, SQLite and resume in `setup.md` without copying personal data to Git.
+- [x] Run `.\scripts\verify.ps1` and record the real output: all checks must end with 0. Do not copy phase 1 counts as if they were those of this execution. Resolve the pertinent failures before repeating.
+- [x] Run `.\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_offline_models.py -m models -q`; record the real result, distinguishing `passed` from `skipped` and preserving the existing configuration/models.
+- [x] Run `npm.cmd run tauri -- build --no-bundle` and test the startup/shutdown of the Windows binary. Record that it is not a standalone installer and does not validate the phase 5 distribution.
+- [ ] Execute with the user: a session of three real questions, one with technical terms; listening to questions/originals; review and confirmation; leaving and resuming after confirmation before advancing; finishing and opening the history. Record the audio durations and the loading/synthesis/transcription times, including the perception of the wait.
+- [ ] Validate a one-question session and another available quantity, insufficiency in a category, an edit in the bank without changing the session copy, the offline journey, a transcript unavailable with an explicit review, a write error and recovery. When simulated failures are used, identify the simulation and do not present it as real hardware.
+- [ ] Update the documents with what passed and what is missing. Mark phase 2 concluded only with demonstrated criteria and manual validation; keep phase 1 in the state that its own evidence sustains. Do not start phase 3.
+- [x] Suggested commit: `docs: record guided interview setup and validation evidence`.
+
+**Status of task 10 (2026-11-02):** the automatic steps and the
+documentation were executed; the three manual validation steps (422, 423 and the closing of 424)
+remain open. Step 424 is partially met — the documents were
+updated with what passed and what is missing — but phase 2 was **not** marked
+as concluded, because the manual validation remains pending. Real results in
 [docs/phase-2/validation.md](../../phase-2/validation.md).
 
-## 5. Cobertura dos critérios e revisão do plano
+## 5. Criteria coverage and plan review
 
-| Critério | Tarefas | Evidência principal prevista |
+| Criterion | Tasks | Main evidence planned |
 | --- | --- | --- |
-| F2-01 | 1, 2 | Seed transacional, 20 perguntas, seis categorias, edições preservadas. |
-| F2-02 | 2, 7 | Validação, versões e formulário, reabertura da base. |
-| F2-03 | 3, 7, 10 | Quantidades 1/3/outra, insuficiência e ajuste explícito. |
-| F2-04 | 3 | Seleção sem repetição, ordem e cópias persistidas. |
-| F2-05 | 6, 8, 10 | Percurso de três perguntas com áudio real e alternativa sem síntese. |
-| F2-06 | 1, 4, 5, 9 | Relações, imutabilidade e apresentação separada das versões. |
-| F2-07 | 5, 8 | Confirmação exata, controlo de versões, rollback e bloqueio do editor. |
-| F2-08 | 5, 8 | Pré-condições, recibos, versão da sessão e botão final. |
-| F2-09 | 4, 6, 8 | Capturas independentes, seleção só depois de publicação, confirmação bloqueia reabertura. |
-| F2-10 | 8 | Guard comum e testes de edição durante escrita/fecho. |
-| F2-11 | 4, 5, 6, 9 | Reabertura real da base em testes e retoma na janela. |
-| F2-12 | 4 | Falhas entre WAV e SQLite, reconciliação e ficheiros em falta. |
-| F2-13 | 5, 6 | Repetição de comandos, timeouts, interrupção antiga e alvos de operações. |
-| F2-14 | 9, 10 | Histórico, reprodução e hashes inalterados dos treinos antigos. |
-| F2-15 | 1, 3 | Rollback de migração, versão futura e índice de sessão única. |
-| F2-16 | 6, 9, 10 | Sem integração externa no código/cliente e percurso completo offline na janela. |
+| F2-01 | 1, 2 | Transactional seed, 20 questions, six categories, edits preserved. |
+| F2-02 | 2, 7 | Validation, versions and form, reopening of the database. |
+| F2-03 | 3, 7, 10 | Quantities 1/3/other, insufficiency and explicit adjustment. |
+| F2-04 | 3 | Selection without repetition, order and persisted copies. |
+| F2-05 | 6, 8, 10 | Journey of three questions with real audio and an alternative without synthesis. |
+| F2-06 | 1, 4, 5, 9 | Relations, immutability and separate presentation of the versions. |
+| F2-07 | 5, 8 | Exact confirmation, version control, rollback and editor locking. |
+| F2-08 | 5, 8 | Preconditions, receipts, session version and final button. |
+| F2-09 | 4, 6, 8 | Independent captures, selection only after publication, confirmation blocks reopening. |
+| F2-10 | 8 | Shared guard and tests of editing during writing/closing. |
+| F2-11 | 4, 5, 6, 9 | Real reopening of the database in tests and resume in the window. |
+| F2-12 | 4 | Failures between WAV and SQLite, reconciliation and missing files. |
+| F2-13 | 5, 6 | Command repetition, timeouts, old interruption and operation targets. |
+| F2-14 | 9, 10 | History, playback and unchanged hashes of the old practice sessions. |
+| F2-15 | 1, 3 | Migration rollback, future version and single-session index. |
+| F2-16 | 6, 9, 10 | No external integration in the code/client and a complete offline journey in the window. |
 
-Revisão documental deste plano: todos os critérios têm tarefas e verificações;
-as cinco condições de risco têm testes atribuídos; SQLite e ficheiros têm
-recuperação separada; o protocolo Python permanece v1; nenhum passo depende de
-IA ou entidades futuras. As assinaturas e o exemplo v2 devem permanecer
-coerentes em Rust e TypeScript durante a execução. Estes são compromissos do
-plano, não afirmações de testes já executados.
+Documentary review of this plan: every criterion has tasks and verifications;
+the five risk conditions have assigned tests; SQLite and files have
+separate recovery; the Python protocol remains v1; no step depends on
+AI or future entities. The signatures and the v2 example must remain
+coherent in Rust and TypeScript during the execution. These are commitments of the
+plan, not statements about tests already executed.
 
-## 6. Referências técnicas consultadas para o plano
+## 6. Technical references consulted for the plan
 
-- [rusqlite — repositório oficial](https://github.com/rusqlite/rusqlite): acesso direto a SQLite e funcionalidade `bundled`.
-- [rusqlite — documentação de Connection](https://docs.rs/rusqlite/latest/rusqlite/struct.Connection.html): referência consultada identificava 0.41.1; a compilação será verificada na tarefa 1.
-- [SQLite — PRAGMA](https://www.sqlite.org/pragma.html): versão da aplicação, chaves estrangeiras, journal e timeout.
-- [SQLite — índices parciais](https://www.sqlite.org/partialindex.html): restrição de uma única sessão em curso.
+- [rusqlite — official repository](https://github.com/rusqlite/rusqlite): direct access to SQLite and the `bundled` feature.
+- [rusqlite — Connection documentation](https://docs.rs/rusqlite/latest/rusqlite/struct.Connection.html): the reference consulted identified 0.41.1; the compilation will be verified in task 1.
+- [SQLite — PRAGMA](https://www.sqlite.org/pragma.html): application version, foreign keys, journal and timeout.
+- [SQLite — partial indexes](https://www.sqlite.org/partialindex.html): restriction of a single session in progress.
 
-Não foram instalados pacotes, modificados ficheiros de produto, executados
-builds ou ensaiados comandos de teste para elaborar este plano.
+No packages were installed, no product files were modified, no builds were run
+and no test commands were tried out to prepare this plan.

@@ -1,16 +1,16 @@
-# Integração OpenCode Go como no Marlo Expenses
+# OpenCode Go integration as in Marlo Expenses
 
-O utilizador autorizou em 2026-11-04: «utilize o msm forma do Marlo Expense», depois da comparação do contentor em execução. A modalidade passa de pagamento por consumo para OpenCode Go, mantendo `deepseek-v4.1-flash`.
+The user authorized on 2026-11-04: «utilize o msm forma do Marlo Expense», after the comparison of the running container. The modality goes from pay-per-usage to OpenCode Go, keeping `deepseek-v4.1-flash`.
 
-- Endpoint de referência: `https://opencode.ai/inference/go/openai/v1`. Autenticação Bearer no Rust, com a chave que já existe no armazenamento protegido.
-- `User-Agent: LanguageAssistantTutor/<versão>` e `x-opencode-session: language-tutor-<id>`; usar ID persistido da entrevista, ou da prática quando existe, estável entre pedidos, repetições e reinícios. Nunca copiar o ID de sessão, o User-Agent ou a chave do Marlo. Não simular tráfego de programação.
-- Adaptar uma única vez a configuração antiga de referência (endpoint pago exato e modelo DeepSeek de referência). Incrementar versão, limpar consentimento e tarifário atual; conservar a credencial protegida e todos os snapshots/histórico. Registar a adaptação em `ai_receipts`, sem nova versão de esquema. Configurações personalizadas ficam intactas; uma escolha posterior explícita não volta a ser migrada.
-- A mudança exige nova autorização de texto na interface para o destino Go; não há reenvios automáticos. Os dados já confirmados podem ser reutilizados por um pedido explícito.
-- O default Go não tem tarifário fixo. Conservar consumo e custo devolvidos pelo fornecedor, incluindo zero explícito e origem `go`; ausência de custo continua desconhecida. Não converter a mensalidade ou a utilização incluída num custo por pedido inventado.
-- Sem novas dependências, alteração de motores locais ou início da distribuição/fase 5.
+- Reference endpoint: `https://opencode.ai/inference/go/openai/v1`. Bearer authentication in Rust, with the key that already exists in protected storage.
+- `User-Agent: LanguageAssistantTutor/<version>` and `x-opencode-session: language-tutor-<id>`; use the persisted ID of the interview, or of the practice when one exists, stable across requests, repetitions and restarts. Never copy the session ID, the User-Agent or the key from Marlo. Do not simulate programming traffic.
+- Adapt the old reference configuration a single time (exact paid endpoint and reference DeepSeek model). Increment the version, clear consent and the current price list; keep the protected credential and all snapshots/history. Record the adaptation in `ai_receipts`, without a new schema version. Custom configurations remain intact; a later explicit choice is not migrated again.
+- The change requires a new text authorization in the interface for the Go destination; there are no automatic resendings. Already confirmed data can be reused by an explicit request.
+- The Go default has no fixed price list. Keep usage and cost returned by the provider, including explicit zero and origin `go`; absence of cost remains unknown. Do not convert the monthly fee or the included usage into an invented cost per request.
+- No new dependencies, change of local engines or start of distribution/phase 5.
 
-Considerou-se apenas trocar a URL, mas isso omite os headers exigidos. Escolheu-se a mesma estrutura de HTTP do Marlo, com identidade própria e IDs reais por conversa. A documentação do Go descreve o produto para agentes de programação; esta limitação foi comunicada ao utilizador antes da autorização. A integração identifica honestamente o tutor.
+Only changing the URL was considered, but that omits the required headers. The same HTTP structure as Marlo was chosen, with its own identity and real IDs per conversation. The Go documentation describes the product for programming agents; this limitation was communicated to the user before the authorization. The integration honestly identifies the tutor.
 
-Verificar headers e caminho em HTTP local real, estabilidade dos IDs na coordenação, migração idempotente/versões/consentimento/preservação de configurações, consumo Go zero e desconhecido, bateria completa e build release. A aceitação do fornecedor e a inferência real ficam por validar na utilização do utilizador; os testes não fazem pedidos pagos.
+Verify headers and path in real local HTTP, ID stability in the coordination, idempotent migration/versions/consent/preservation of configurations, Go usage zero and unknown, the complete battery of checks and the release build. Provider acceptance and real inference remain to be validated in the user's use; the tests do not make paid requests.
 
-Fontes consultadas: [Go](https://opencode.ai/v2/docs/console/go/) e [API](https://opencode.ai/v2/docs/console/api/inference/); `ConfiguredAssistantModelClient.cs` e configuração pública do contentor `marlo-expenses-app` em execução (só endpoint, modelo e headers, sem extrair chaves).
+Sources consulted: [Go](https://opencode.ai/v2/docs/console/go/) and [API](https://opencode.ai/v2/docs/console/api/inference/); `ConfiguredAssistantModelClient.cs` and public configuration of the running `marlo-expenses-app` container (only endpoint, model and headers, without extracting keys).

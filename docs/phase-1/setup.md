@@ -1,53 +1,53 @@
-# Preparação e execução da fase 1 no Windows
+# Phase 1 setup and execution on Windows
 
-Data da verificação: 2026-11-02 · Ramo: `feature/phase-1-local-audio`
+Verification date: 2026-11-02 · Branch: `feature/phase-1-local-audio`
 
-Este documento regista o ambiente e os comandos que foram realmente executados
-nesta máquina para a aplicação Tauri, o auxiliar Python e os modelos locais.
-Os resultados de aceitação estão em [validation.md](validation.md). O contexto
-do produto e as regras da fase estão na
-[spec da fase 1](../superpowers/specs/2026-11-01-phase-1-local-audio-design.md).
+This document records the environment and the commands that were really executed
+on this machine for the Tauri application, the Python helper and the local models.
+The acceptance results are in [validation.md](validation.md). The product context
+and the phase rules are in the
+[phase 1 spec](../superpowers/specs/2026-11-01-phase-1-local-audio-design.md).
 
-## 1. Ambiente verificado
+## 1. Verified environment
 
-| Componente | Versão observada |
+| Component | Observed version |
 | --- | --- |
 | Windows | Windows 11 Enterprise, `10.0.26300` (build 26300) |
-| CPU / memória | Intel Core i7-12700H (14 núcleos, 20 threads), 34 010 849 280 bytes de RAM |
-| GPU | NVIDIA GeForce RTX 3060 Laptop e Intel Iris Xe; **não usada** (motores em CPU) |
-| WebView2 Runtime | `156.0.4314.50` / `156.0.4314.58` (runtime instalado em `C:\Program Files (x86)\Microsoft\EdgeWebView\Application`) |
-| Visual Studio | Visual Studio Community 2026 `18.10.12224.181`, ferramentas C++ MSVC `14.44.35207` |
+| CPU / memory | Intel Core i7-12700H (14 cores, 20 threads), 34,010,849,280 bytes of RAM |
+| GPU | NVIDIA GeForce RTX 3060 Laptop and Intel Iris Xe; **not used** (engines on CPU) |
+| WebView2 Runtime | `156.0.4314.50` / `156.0.4314.58` (runtime installed in `C:\Program Files (x86)\Microsoft\EdgeWebView\Application`) |
+| Visual Studio | Visual Studio Community 2026 `18.10.12224.181`, MSVC C++ tools `14.44.35207` |
 | Windows SDK | `10.0.26100.0` |
-| Rust | `rustc 1.99.1` / `cargo 1.99.1`, toolchain `1.99.1-x86_64-pc-windows-msvc` (fixada em `rust-toolchain.toml`), componentes `rustfmt`, `clippy` e `rust-std` instalados |
-| Node / npm | `24.11.1` / `11.6.2` (usar sempre `npm.cmd` em PowerShell) |
-| Python | `3.11.9` na `.venv`; o Python predefinido da máquina é `3.13.14`, por isso usar `py -3.11` |
+| Rust | `rustc 1.99.1` / `cargo 1.99.1`, toolchain `1.99.1-x86_64-pc-windows-msvc` (pinned in `rust-toolchain.toml`), `rustfmt`, `clippy` and `rust-std` components installed |
+| Node / npm | `24.11.1` / `11.6.2` (always use `npm.cmd` in PowerShell) |
+| Python | `3.11.9` in the `.venv`; the machine's default Python is `3.13.14`, so use `py -3.11` |
 | PyTorch | `2.15.0+cpu` |
-| Motores Python | `faster-whisper 1.2.1`, `ctranslate2 4.8.4`, `kokoro 0.9.4`, `misaki 0.9.4`, `transformers 5.22.1`, `spacy 3.8.18` |
+| Python engines | `faster-whisper 1.2.1`, `ctranslate2 4.8.4`, `kokoro 0.9.4`, `misaki 0.9.4`, `transformers 5.22.1`, `spacy 3.8.18` |
 
-Notas verificadas:
+Verified notes:
 
-- O Cargo **não está no `PATH`** numa consola nova. Antes de qualquer comando
-  Rust ou `tauri`:
+- Cargo **is not on the `PATH`** in a new console. Before any Rust or `tauri`
+  command:
 
   ```powershell
   $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
   ```
 
-  `scripts/verify.ps1` já acrescenta esse caminho quando o `cargo` não é
-  encontrado. `npm.cmd run tauri -- ...` **também exige** o `cargo` no `PATH`:
-  sem ele o CLI falha logo com `program not found` (observado nesta sessão).
-- O runtime WebView2 já estava instalado; não foi preciso instalar nada para a
-  janela abrir.
-- Não foi necessário instalar o eSpeak-NG no sistema: o pacote
-  `espeakng-loader 0.2.4` traz `espeak-ng.dll` e `espeak-ng-data` dentro da
+  `scripts/verify.ps1` already adds that path when `cargo` is not
+  found. `npm.cmd run tauri -- ...` **also requires** `cargo` on the `PATH`:
+  without it the CLI fails immediately with `program not found` (observed in this session).
+- The WebView2 runtime was already installed; nothing had to be installed for the
+  window to open.
+- It was not necessary to install eSpeak-NG on the system: the
+  `espeakng-loader 0.2.4` package brings `espeak-ng.dll` and `espeak-ng-data` inside the
   `.venv`.
-- A `.venv` desta máquina foi criada e preenchida na tarefa 4 e foi reutilizada
-  nesta verificação; `pip check` confirmou o conjunto instalado.
+- This machine's `.venv` was created and populated in task 4 and was reused
+  in this verification; `pip check` confirmed the installed set.
 
-## 2. Criar a `.venv` (Python 3.11)
+## 2. Creating the `.venv` (Python 3.11)
 
-A partir da raiz do repositório. O PyTorch CPU é instalado **primeiro**, a partir
-do índice oficial, para não trazer as rodas CUDA:
+From the repository root. CPU PyTorch is installed **first**, from
+the official index, so that the CUDA wheels are not brought in:
 
 ```powershell
 py -3.11 -m venv .venv
@@ -58,13 +58,13 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-Resultado observado na criação (`audio-worker/README.md` regista o detalhe):
-`torch-2.15.0+cpu`, depois 100+ pacotes de `requirements.in` (nenhum erro de
-build), `audio-worker-0.1.0` editável com `pytest 9.2.0`, e
+Result observed during creation (`audio-worker/README.md` records the detail):
+`torch-2.15.0+cpu`, then 100+ packages from `requirements.in` (no build
+error), editable `audio-worker-0.1.0` with `pytest 9.2.0`, and
 `No broken requirements found.`
 
-Para reconstruir a partir do lock versionado, depois do PyTorch CPU **fixado na
-versão do lock** (`torch==2.15.0+cpu`):
+To rebuild from the versioned lock, after CPU PyTorch is **pinned to the
+lock version** (`torch==2.15.0+cpu`):
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
@@ -73,90 +73,90 @@ versão do lock** (`torch==2.15.0+cpu`):
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-O `--extra-index-url` mantém o PyPI como índice principal para as restantes
-versões do lock e acrescenta o índice CPU apenas para resolver
-`torch==2.15.0+cpu` (essa roda não existe no PyPI). Sem esse parâmetro, o pip
-procuraria uma roda `+cpu` no PyPI e falharia. A sequência foi executada numa
-`.venv` descartável em `%TEMP%` (356,8 s, com descargas; todos os passos com
-saída 0, `No broken requirements found.` e `torch 2.15.0+cpu`) e o resultado
-está registado em [validation.md](validation.md); a `.venv` descartável foi
-apagada depois.
-A criação acima (sem lock) resolve as versões atuais do índice CPU; é a
-reconstrução a partir do lock que fixa o conjunto exato.
+The `--extra-index-url` keeps PyPI as the main index for the remaining
+lock versions and adds the CPU index only to resolve
+`torch==2.15.0+cpu` (that wheel does not exist on PyPI). Without that parameter, pip
+would look for a `+cpu` wheel on PyPI and fail. The sequence was executed in a
+throwaway `.venv` in `%TEMP%` (356.8 s, with downloads; all steps with
+exit 0, `No broken requirements found.` and `torch 2.15.0+cpu`) and the result
+is recorded in [validation.md](validation.md); the throwaway `.venv` was
+deleted afterwards.
+The creation above (without the lock) resolves the current versions from the CPU index; it is the
+rebuild from the lock that pins the exact set.
 
-O conjunto resolvido (`audio-worker/requirements.lock.txt`) inclui os extras
-ingleses de `misaki[en]` e as dependências transitivas reais: `soundfile`,
-`numpy`, `spacy`, `transformers`, `espeakng-loader`, `av`, `ctranslate2` e
+The resolved set (`audio-worker/requirements.lock.txt`) includes the English
+extras of `misaki[en]` and the real transitive dependencies: `soundfile`,
+`numpy`, `spacy`, `transformers`, `espeakng-loader`, `av`, `ctranslate2` and
 `pytest`.
 
-### Recursos linguísticos
+### Language resources
 
-- **spaCy inglês**: `misaki.en.G2P` usa `en_core_web_sm`. É um recurso de dados,
-  não uma dependência pip, e fica dentro da `.venv` (não em `models/`). O
-  `audio-worker-prepare` instala-o explicitamente; recriar a `.venv` obriga a
-  repetir a preparação.
-- **eSpeak-NG**: incluído no wheel `espeakng-loader`; verificado nesta máquina
-  em `C:\Repos\Thacio\language-assistant-tutor\.venv\Lib\site-packages\espeakng_loader\espeak-ng.dll`.
+- **English spaCy**: `misaki.en.G2P` uses `en_core_web_sm`. It is a data resource,
+  not a pip dependency, and it stays inside the `.venv` (not in `models/`). The
+  `audio-worker-prepare` installs it explicitly; recreating the `.venv` requires
+  repeating the setup.
+- **eSpeak-NG**: included in the `espeakng-loader` wheel; verified on this machine
+  in `C:\Repos\Thacio\language-assistant-tutor\.venv\Lib\site-packages\espeakng_loader\espeak-ng.dll`.
 
-## 3. Preparar os modelos (único passo com rede)
+## 3. Preparing the models (the only step that uses the network)
 
 ```powershell
 .\.venv\Scripts\python.exe -m audio_worker.prepare --models-dir "$env:LOCALAPPDATA\language-assistant-tutor\Modelos de Voz"
 ```
 
-- A pasta indicada é **absoluta e fica fora do repositório**. Nesta máquina foi
-  usada `C:\Users\Utilizador Exemplo\AppData\Local\language-assistant-tutor\Modelos de Voz`
-  (contém espaços, como o exemplo de configuração). `models/` dentro do
-  repositório também é ignorado pelo Git, mas não foi usado.
-- O comando descarrega `Systran/faster-whisper-small` (revisão
-  `536b0662742c02347bc0e980a01041f333bce120`), a configuração, os pesos
-  `kokoro-v1_0.pth` e a voz `voices/af_heart.pt` de `hexgrad/Kokoro-82M`
-  (revisão `f3ff3571791e39611d31c381e3a41a3af07b4987`), instala
-  `en_core_web_sm 3.8.0` quando falta, valida o eSpeak-NG, escreve
-  `<models-dir>\models.json` e termina com uma síntese fixa de verificação.
-- Resultado real: **34,3 s** na primeira execução — medida com a pasta temporária
-  sem espaços `%LOCALAPPDATA%\language-assistant-tutor\models`, antes de os
-  ficheiros serem movidos para o caminho final com espaços (descarga completa,
-  instalação do spaCy e síntese de verificação) — e **10,2 s** na repetição já
-  sobre a pasta final. Tamanho final: 25 ficheiros,
-  **814 144 526 bytes (776,4 MiB)**, dos quais
-  `faster-whisper-small\model.bin` 461,1 MiB e
-  `kokoro\kokoro-v1_0.pth` 312,1 MiB.
-- A síntese de verificação produziu
-  `<models-dir>\smoke-test\af_heart-smoke.wav` com 3 900 ms a 24 kHz.
-- O `models.json` contém caminhos absolutos com espaços (`whisperDir`,
-  `kokoroConfig`, `kokoroWeights`, `kokoroVoice`), as duas revisões e o inventário
-  de recursos (`spacyModel`, `spacyModelVersion`, `espeakLibrary`, `espeakData`,
+- The indicated folder is **absolute and stays outside the repository**. On this machine
+  `C:\Users\Utilizador Exemplo\AppData\Local\language-assistant-tutor\Modelos de Voz`
+  was used (it contains spaces, like the configuration example). `models/` inside the
+  repository is also ignored by Git, but it was not used.
+- The command downloads `Systran/faster-whisper-small` (revision
+  `536b0662742c02347bc0e980a01041f333bce120`), the configuration, the weights
+  `kokoro-v1_0.pth` and the voice `voices/af_heart.pt` from `hexgrad/Kokoro-82M`
+  (revision `f3ff3571791e39611d31c381e3a41a3af07b4987`), installs
+  `en_core_web_sm 3.8.0` when it is missing, validates eSpeak-NG, writes
+  `<models-dir>\models.json` and ends with a fixed verification synthesis.
+- Real result: **34.3 s** on the first run — measured with the temporary folder
+  without spaces `%LOCALAPPDATA%\language-assistant-tutor\models`, before the
+  files were moved to the final path with spaces (full download,
+  spaCy installation and verification synthesis) — and **10.2 s** on the repeat, already
+  on the final folder. Final size: 25 files,
+  **814,144,526 bytes (776.4 MiB)**, of which
+  `faster-whisper-small\model.bin` 461.1 MiB and
+  `kokoro\kokoro-v1_0.pth` 312.1 MiB.
+- The verification synthesis produced
+  `<models-dir>\smoke-test\af_heart-smoke.wav` with 3,900 ms at 24 kHz.
+- The `models.json` contains absolute paths with spaces (`whisperDir`,
+  `kokoroConfig`, `kokoroWeights`, `kokoroVoice`), the two revisions and the resource
+  inventory (`spacyModel`, `spacyModelVersion`, `espeakLibrary`, `espeakData`,
   `espeakFallback`).
-- O comando é idempotente quanto aos ficheiros: repeti-lo valida as revisões no
-  Hugging Face Hub e reutiliza a cache local (na segunda execução os 6 ficheiros
-  do Whisper foram recontados a ~200 ficheiros/s e os pesos não foram
-  transferidos de novo), mas **continua a contactar o Hub** e por isso exige
-  rede — tal como a primeira execução. Foi o que aconteceu na repetição de
-  10,2 s.
+- The command is idempotent as far as files go: repeating it validates the revisions on
+  the Hugging Face Hub and reuses the local cache (on the second run the 6 Whisper
+  files were recounted at ~200 files/s and the weights were not
+  transferred again), but it **still contacts the Hub** and therefore requires
+  the network — just like the first run. That is what happened in the
+  10.2 s repeat.
 
-O teste real opcional corre explicitamente com o manifesto preparado:
+The optional real test runs explicitly with the prepared manifest:
 
 ```powershell
 $env:LANGUAGE_TUTOR_MODELS_MANIFEST = "$env:LOCALAPPDATA\language-assistant-tutor\Modelos de Voz\models.json"
 .\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_offline_models.py -m models -q
 ```
 
-Resultado: `2 passed` em 12,18 s (síntese da pergunta + transcrição; silêncio →
-`no_speech`). Sem pesos, o mesmo comando faz *skip* explícito — um skip não
-prova o percurso real.
+Result: `2 passed` in 12.18 s (question synthesis + transcription; silence →
+`no_speech`). Without weights, the same command performs an explicit *skip* — a skip does not
+prove the real path.
 
-## 4. Configuração pessoal `audio.json` (fora do Git)
+## 4. Personal `audio.json` configuration (outside Git)
 
-A aplicação lê a configuração uma vez no arranque, de
-`app_config_dir()/audio.json` ou do caminho indicado por
-`LANGUAGE_TUTOR_CONFIG`. Nesta máquina o ficheiro ficou em:
+The application reads the configuration once at startup, from
+`app_config_dir()/audio.json` or from the path given by
+`LANGUAGE_TUTOR_CONFIG`. On this machine the file ended up at:
 
 ```text
 C:\Users\Utilizador Exemplo\AppData\Roaming\dev.thacio.languageassistanttutor\audio.json
 ```
 
-Conteúdo usado (caminhos absolutos; a pasta de modelos contém espaços):
+Content used (absolute paths; the models folder contains spaces):
 
 ```json
 {
@@ -166,57 +166,57 @@ Conteúdo usado (caminhos absolutos; a pasta de modelos contém espaços):
 }
 ```
 
-Este ficheiro **não é versionado** e não deve ser copiado para o repositório.
-O exemplo genérico está em
-[`config/audio.example.json`](../../config/audio.example.json). O módulo Python é
-fixo (`audio_worker`), instalado na `.venv`; o processo recebe
-`--models-manifest <caminho>` e usa a pasta de dados da aplicação como diretório
-de trabalho, por isso a aplicação pode ser aberta de qualquer diretório.
+This file **is not versioned** and must not be copied into the repository.
+The generic example is in
+[`config/audio.example.json`](../../config/audio.example.json). The Python module is
+fixed (`audio_worker`), installed in the `.venv`; the process receives
+`--models-manifest <path>` and uses the application's data folder as the working
+directory, so the application can be opened from any directory.
 
-Depois de alterar `audio.json` é preciso reiniciar a aplicação. Sem Python ou
-sem modelos, a janela abre e indica o componente em falta; gravar, ouvir e
-guardar revisões continuam disponíveis.
+After changing `audio.json` the application must be restarted. Without Python or
+without models, the window opens and indicates the missing component; recording, listening and
+saving revisions remain available.
 
-## 5. Verificar o projeto
+## 5. Verifying the project
 
 ```powershell
 .\scripts\verify.ps1
 ```
 
-Executa, pela ordem, e pára no primeiro erro: `npm.cmd run typecheck`,
+It runs, in order, and stops at the first error: `npm.cmd run typecheck`,
 `npm.cmd test`, `npm.cmd run build`, `cargo fmt --check`,
-`cargo clippy --all-targets -- -D warnings`, `cargo test`, `pytest` sem a marca
-`models` e `pip check`. Só imprime sucesso se todos terminarem com saída 0.
-Resultado nesta máquina: 8/8 checks com saída 0 (23,4 s com tudo compilado e 116,4 s
-quando o clippy e os testes precisaram de recompilar e o Vitest correu a frio; a
-duração depende da cache).
+`cargo clippy --all-targets -- -D warnings`, `cargo test`, `pytest` without the
+`models` marker and `pip check`. It only prints success if all of them end with exit 0.
+Result on this machine: 8/8 checks with exit 0 (23.4 s with everything compiled and 116.4 s
+when clippy and the tests needed to recompile and Vitest ran cold; the
+duration depends on the cache).
 
-## 6. Executar a aplicação
+## 6. Running the application
 
 ```powershell
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 npm.cmd run tauri -- dev
 ```
 
-O `tauri dev` arranca o Vite na porta 1420 e abre a janela «Tutor de
-entrevistas» com a pergunta fixa
+`tauri dev` starts Vite on port 1420 and opens the «Tutor de
+entrevistas» window with the fixed question
 `Tell me about a time you solved a difficult problem at work.`
 
-Compilação release sem instalador (antecipa problemas de compilação; **não** é
-um pacote autónomo com Python incluído — o pacote final é da fase 5):
+Release build without an installer (anticipates compilation problems; it is **not**
+a standalone package with Python included — the final package belongs to phase 5):
 
 ```powershell
 npm.cmd run tauri -- build --no-bundle
 ```
 
-O binário fica em `src-tauri\target\release\` e, para funcionar, continua a
-depender da `.venv`, do `audio.json` e dos modelos preparados nesta máquina.
+The binary ends up in `src-tauri\target\release\` and, to work, it still
+depends on the `.venv`, on the `audio.json` and on the models prepared on this machine.
 
-## 7. Problemas reais encontrados
+## 7. Real problems encountered
 
-| Sintoma | Causa | Resolução |
+| Symptom | Cause | Resolution |
 | --- | --- | --- |
-| `failed to run 'cargo metadata' ... program not found` | `cargo` fora do `PATH` ao chamar o CLI do Tauri | acrescentar `%USERPROFILE%\.cargo\bin` ao `PATH` (secção 1) |
-| `npm warn Unknown user config "python"` | configuração global do npm nesta máquina, não do projeto | aviso apenas; não afeta os comandos |
-| A primeira síntese (e a síntese de verificação) demora ~7–8 s até produzir áudio | carregamento inicial do Kokoro em CPU | medido e registado em [validation.md](validation.md); nas chamadas seguintes o modelo é reutilizado (~1,2 s por síntese) |
-| Avisos `UserWarning`/`FutureWarning` do PyTorch e do Misaki | bibliotecas de terceiros durante o carregamento | não impedem a síntese nem a transcrição; ficaram registados |
+| `failed to run 'cargo metadata' ... program not found` | `cargo` not on the `PATH` when calling the Tauri CLI | add `%USERPROFILE%\.cargo\bin` to the `PATH` (section 1) |
+| `npm warn Unknown user config "python"` | global npm configuration on this machine, not the project's | warning only; it does not affect the commands |
+| The first synthesis (and the verification synthesis) takes ~7–8 s to produce audio | initial Kokoro load on CPU | measured and recorded in [validation.md](validation.md); on the following calls the model is reused (~1.2 s per synthesis) |
+| `UserWarning`/`FutureWarning` warnings from PyTorch and Misaki | third-party libraries during loading | they do not prevent synthesis or transcription; they were recorded |

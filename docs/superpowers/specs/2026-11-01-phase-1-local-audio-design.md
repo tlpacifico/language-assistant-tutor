@@ -1,230 +1,230 @@
-# Spec da fase 1 — Validar áudio local
+# Phase 1 spec — Validate local audio
 
-Data: 2026-11-01  
-Estado: aceite como referência para o plano técnico; fase 1 implementada e verificada automaticamente, com a validação manual do utilizador pendente.
+Date: 2026-11-01  
+Status: accepted as reference for the technical plan; phase 1 implemented and automatically verified, with the manual validation of the user pending.
 
-Referências: [plano das fases](../plans/2026-11-01-star-interview-tutor-phases.md), [desenho aprovado do MVP](2026-11-01-star-interview-tutor-design.md) e [stack técnica](../../tech-stack.md).
+References: [phase plan](../plans/2026-11-01-star-interview-tutor-phases.md), [approved design of the MVP](2026-11-01-star-interview-tutor-design.md) and [technical stack](../../tech-stack.md).
 
-Execução detalhada no [plano técnico da fase 1](../plans/2026-11-01-phase-1-local-audio-implementation.md).
+Detailed execution in the [technical plan of phase 1](../plans/2026-11-01-phase-1-local-audio-implementation.md).
 
-## 1. Objetivo
+## 1. Objective
 
-Validar, numa aplicação Tauri para Windows, o percurso completo de áudio local: ouvir uma pergunta fixa em inglês, gravar uma resposta, ouvi-la, obter uma transcrição e corrigir o texto reconhecido.
+Validate, in a Tauri application for Windows, the complete local audio journey: listen to a fixed question in English, record an answer, listen to it, obtain a transcript and correct the recognized text.
 
-Esta fase deve revelar as dificuldades de captura, reprodução, modelos locais, comunicação entre Rust e Python e tempo de processamento no computador do utilizador. O resultado é uma base funcional para a entrevista guiada da fase 2.
+This phase must reveal the difficulties of capture, playback, local models, communication between Rust and Python and processing time on the user's computer. The result is a functional base for the guided interview of phase 2.
 
-A fase não avalia o conteúdo da resposta nem a pronúncia. Não utiliza uma API de IA, não pede credenciais de fornecedores e não envia gravações ou transcrições para serviços externos.
+The phase does not evaluate the content of the answer nor the pronunciation. It does not use an AI API, does not ask for credentials of providers and does not send recordings or transcripts to external services.
 
-## 2. Âmbito e abordagem
+## 2. Scope and approach
 
-Mantém-se a abordagem escolhida no desenho do projeto: React + TypeScript na interface, Rust + Tauri 2 no núcleo e um processo Python auxiliar para faster-whisper e Kokoro-82M.
+The approach chosen in the design of the project is maintained: React + TypeScript in the interface, Rust + Tauri 2 in the core and an auxiliary Python process for faster-whisper and Kokoro-82M.
 
-Esta fase não volta a comparar frameworks nem troca motores de áudio. Uma integração nativa alternativa só será considerada posteriormente se a validação demonstrar uma limitação concreta.
+This phase does not compare frameworks again nor swap the audio engines. An alternative native integration will only be considered later if the validation demonstrates a concrete limitation.
 
-### Incluído
+### Included
 
-- Aplicação desktop executável em desenvolvimento no Windows.
-- Uma pergunta fixa apresentada em texto e reproduzida por voz local.
-- Gravação manual da resposta, reprodução e ficheiro original guardado.
-- Transcrição local e revisão manual, sem alterar a versão automática.
-- Persistência simples dos artefactos e recuperação da última resposta guardada.
-- Estados de processamento, erros recuperáveis e tempos medidos.
-- Documentação dos requisitos e de como executar a integração real.
+- Desktop application executable in development on Windows.
+- A fixed question presented in text and reproduced by local voice.
+- Manual recording of the answer, playback and stored original file.
+- Local transcription and manual review, without changing the automatic version.
+- Simple persistence of the artifacts and recovery of the last stored answer.
+- Processing states, recoverable errors and measured times.
+- Documentation of the requirements and of how to run the real integration.
 
-### Fora desta fase
+### Out of this phase
 
-- Banco editável de perguntas, categorias, contagem de questões ou sessão de entrevista.
-- Seguimentos, avaliação STAR, feedback de inglês, reformulações e OpenCode.
-- SQLite, banco de histórias, listagem de histórico e comparação de tentativas.
-- Pontuação de pronúncia, transcrição em direto e interrupções automáticas.
-- Seletores completos de dispositivos e configurações avançadas de áudio.
-- Assistente de download de modelos, instalador final e suporte a outros sistemas operativos.
+- Editable question bank, categories, question count or interview session.
+- Follow-ups, STAR evaluation, English feedback, rewrites and OpenCode.
+- SQLite, story bank, history listing and comparison of attempts.
+- Pronunciation scoring, live transcription and automatic interruptions.
+- Complete device selectors and advanced audio configurations.
+- Model download assistant, final installer and support for other operating systems.
 
-## 3. Valores de referência desta spec
+## 3. Reference values of this spec
 
-Os valores seguintes são escolhas de especificação para permitir uma primeira implementação verificável; podem ser ajustados com a validação, sem serem apresentados como preferências previamente indicadas pelo utilizador.
+The following values are specification choices to allow a first verifiable implementation; they may be adjusted with the validation, without being presented as preferences previously indicated by the user.
 
-| Elemento | Referência inicial |
+| Element | Initial reference |
 | --- | --- |
-| Pergunta fixa | `Tell me about a time you solved a difficult problem at work.` |
-| Interface e mensagens | Português de Portugal. |
-| Fala e transcrição | Inglês; transcrever, sem traduzir ou melhorar a resposta. |
-| Captura e reprodução | Dispositivos predefinidos do Windows. |
-| Transcrição | faster-whisper, modelo `small` multilingue, CPU/int8, língua definida como inglês. |
-| Síntese | Kokoro-82M com uma voz inglesa. A voz concreta é escolhida e registada no plano técnico. |
-| Concorrência | Um trabalho de transcrição ou síntese de cada vez. |
-| Respostas | Uma resposta ativa na interface; cada nova gravação tem identificador e ficheiros próprios. |
+| Fixed question | `Tell me about a time you solved a difficult problem at work.` |
+| Interface and messages | European Portuguese. |
+| Speech and transcription | English; transcribe, without translating or improving the answer. |
+| Capture and playback | Default devices of Windows. |
+| Transcription | faster-whisper, `small` multilingual model, CPU/int8, language set to English. |
+| Synthesis | Kokoro-82M with an English voice. The concrete voice is chosen and recorded in the technical plan. |
+| Concurrency | One transcription or synthesis job at a time. |
+| Answers | One active answer in the interface; each new recording has its own identifier and files. |
 
-O uso de CPU é a referência inicial, não uma garantia de desempenho. A fase não exige GPU. O modelo pode ser ajustado se as medições demonstrarem necessidade, registando a alteração e a sua razão.
+The use of CPU is the initial reference, not a guarantee of performance. The phase does not require a GPU. The model may be adjusted if the measurements demonstrate the need, recording the change and its reason.
 
-## 4. Percurso do utilizador
+## 4. User journey
 
-1. Abrir a aplicação e consultar a disponibilidade do áudio e dos modelos.
-2. Ler a pergunta fixa e pedir a sua reprodução em inglês.
-3. Iniciar a gravação quando estiver preparado. Mostrar claramente que o microfone está a gravar e o tempo decorrido.
-4. Terminar a gravação por ação explícita. Finalizar e guardar o ficheiro antes de iniciar a transcrição.
-5. Iniciar automaticamente a transcrição da gravação finalizada e indicar o processamento.
-6. Ouvir a gravação guardada, consultar a transcrição automática e editar uma cópia de revisão.
-7. Guardar a revisão ou iniciar uma nova resposta à mesma pergunta.
+1. Open the application and consult the availability of audio and of the models.
+2. Read the fixed question and request its reproduction in English.
+3. Start the recording when ready. Clearly show that the microphone is recording and the elapsed time.
+4. End the recording by explicit action. Finalize and store the file before starting the transcription.
+5. Automatically start the transcription of the finalized recording and indicate the processing.
+6. Listen to the stored recording, consult the automatic transcript and edit a review copy.
+7. Store the review or start a new answer to the same question.
 
-Ouvir a pergunta é opcional: não impede gravar se a síntese estiver indisponível. Transcrever também não impede reproduzir um ficheiro de resposta já guardado.
+Listening to the question is optional: it does not prevent recording if the synthesis is unavailable. Transcribing also does not prevent playing back an answer file already stored.
 
-A captura não depende de o processo Python estar pronto. Se o transcritor estiver indisponível quando a gravação termina, guardar o áudio e disponibilizar a transcrição quando o componente estiver preparado, sem exigir nova captura.
+The capture does not depend on the Python process being ready. If the transcriber is unavailable when the recording ends, store the audio and make the transcription available when the component is prepared, without requiring a new capture.
 
-Não reproduzir áudio enquanto o microfone está a gravar. Ao iniciar a gravação, terminar qualquer reprodução em curso. Depois de gravar, é possível ouvir novamente a pergunta ou a resposta, uma de cada vez.
+Do not play audio while the microphone is recording. On starting the recording, end any playback in progress. After recording, it is possible to listen again to the question or the answer, one at a time.
 
-Uma nova gravação não sobrescreve a anterior. Só passa a ser a resposta ativa depois de ser finalizada e guardada com sucesso; uma tentativa de captura que falha não remove a última resposta válida.
+A new recording does not overwrite the previous one. It only becomes the active answer after being finalized and successfully stored; a capture attempt that fails does not remove the last valid answer.
 
-## 5. Comportamento funcional
+## 5. Functional behavior
 
-### 5.1 Preparação e disponibilidade
+### 5.1 Preparation and availability
 
-- Distinguir disponibilidade do microfone, reprodução, transcrição e síntese. A falta de um modelo não deve impedir consultar os textos e ficheiros já existentes.
-- Nesta fase, preparar os modelos e as dependências através de instruções documentadas e de configuração local de desenvolvimento.
-- Mostrar que componente está indisponível e qual o passo necessário para o preparar. Não apresentar uma instalação em falta como erro da resposta do utilizador.
-- Depois de preparados os modelos, executar o percurso sem rede. Não iniciar downloads silenciosos como consequência de carregar em gravar ou ouvir.
-- Documentar os downloads necessários à preparação inicial; essa preparação não autoriza o envio de dados de treino do utilizador.
+- Distinguish availability of the microphone, playback, transcription and synthesis. The lack of a model must not prevent consulting the texts and files already existing.
+- In this phase, prepare the models and the dependencies through documented instructions and local development configuration.
+- Show which component is unavailable and which step is necessary to prepare it. Do not present a missing installation as an error of the user's answer.
+- Once the models are prepared, run the journey without a network. Do not start silent downloads as a consequence of pressing record or listen.
+- Document the downloads necessary for the initial preparation; that preparation does not authorize the sending of training data of the user.
 
-### 5.2 Pergunta por voz
+### 5.2 Question by voice
 
-- Gerar o áudio real da pergunta fixa com Kokoro, utilizando uma voz inglesa.
-- Guardar o áudio gerado e permitir reproduzi-lo novamente sem repetir a síntese quando texto, voz e configuração não mudaram.
-- Se a geração falhar, conservar a pergunta em texto e permitir repetir a geração.
-- Não substituir silenciosamente Kokoro por uma API, uma voz do sistema ou um ficheiro de exemplo. Duplicados de teste só são usados em testes e identificados como tal.
+- Generate the real audio of the fixed question with Kokoro, using an English voice.
+- Store the generated audio and allow reproducing it again without repeating the synthesis when text, voice and configuration have not changed.
+- If the generation fails, keep the question in text and allow repeating the generation.
+- Do not silently replace Kokoro with an API, a system voice or an example file. Test duplicates are only used in tests and identified as such.
 
-### 5.3 Captura e reprodução
+### 5.3 Capture and playback
 
-- Usar a entrada predefinida do Windows. A biblioteca concreta e a gestão dos formatos do dispositivo pertencem ao plano técnico.
-- Apresentar ações explícitas para iniciar e terminar. Não terminar uma resposta automaticamente por silêncio.
-- Guardar o original em WAV, registando taxa de amostragem, canais, duração e tamanho efetivos. Não o substituir pelo ficheiro convertido para transcrição.
-- Normalizar um derivado para WAV PCM de 16 bits, mono, 16 kHz quando necessário para a transcrição. A reprodução da resposta usa o original.
-- Não cortar nem descartar partes da resposta silenciosamente. Um limite técnico, caso necessário, deve ser definido no plano e comunicado antes de gravar.
-- Se não houver dispositivo, acesso ou espaço para guardar, apresentar um erro recuperável e não indicar que a resposta foi guardada.
-- Se o dispositivo falhar durante a captura, tentar finalizar o áudio capturado; só o marcar como recuperado se existir um ficheiro reproduzível. Indicar que pode estar incompleto.
+- Use the default input of Windows. The concrete library and the management of the formats of the device belong to the technical plan.
+- Present explicit actions to start and end. Do not end an answer automatically due to silence.
+- Store the original in WAV, recording the effective sample rate, channels, duration and size. Do not replace it with the file converted for transcription.
+- Normalize a derivative to 16-bit PCM WAV, mono, 16 kHz when necessary for the transcription. The playback of the answer uses the original.
+- Do not cut nor silently discard parts of the answer. A technical limit, if necessary, must be defined in the plan and communicated before recording.
+- If there is no device, access or space to store, present a recoverable error and do not indicate that the answer was stored.
+- If the device fails during the capture, try to finalize the captured audio; only mark it as recovered if there is a playable file. Indicate that it may be incomplete.
 
-### 5.4 Transcrição
+### 5.4 Transcription
 
-- Transcrever exclusivamente o áudio da resposta, sem incluir a voz da pergunta.
-- Guardar o original antes de qualquer conversão ou inferência.
-- Conservar a transcrição automática tal como foi devolvida pelo motor, com o modelo e a configuração utilizados.
-- Não corrigir gramática, resumir a resposta ou fornecer ao motor uma resposta ideal para tentar aproximar o reconhecimento desse texto.
-- Em caso de falha, disponibilizar uma ação para repetir a transcrição a partir do áudio guardado, sem nova gravação.
-- Não processar ficheiros vazios como respostas válidas. Quando não existir fala reconhecida, mostrar essa situação e permitir ouvir o áudio e gravar novamente.
-- Tratar sinais de silêncio ou baixa confiança como informação de reconhecimento, não como diagnóstico de pronúncia. Não prometer deteção perfeita de ausência de fala.
-- Uma transcrição bem-sucedida não é sobrescrita automaticamente. Se for necessário voltar a processar uma resposta já transcrita, criar outro resultado identificado e preservar o anterior.
+- Transcribe exclusively the audio of the answer, without including the voice of the question.
+- Store the original before any conversion or inference.
+- Keep the automatic transcript as it was returned by the engine, with the model and the configuration used.
+- Do not correct grammar, summarize the answer or provide the engine with an ideal answer to try to bring the recognition closer to that text.
+- In case of failure, make available an action to repeat the transcription from the stored audio, without a new recording.
+- Do not process empty files as valid answers. When there is no recognized speech, show that situation and allow listening to the audio and recording again.
+- Treat signs of silence or low confidence as recognition information, not as a diagnosis of pronunciation. Do not promise perfect detection of absence of speech.
+- A successful transcription is not overwritten automatically. If it is necessary to process again an answer already transcribed, create another identified result and preserve the previous one.
 
-### 5.5 Revisão do texto
+### 5.5 Review of the text
 
-- Mostrar a transcrição automática como referência apenas de leitura e permitir editar uma cópia separada.
-- Inicializar a revisão com a transcrição automática quando ainda não existir revisão do utilizador. Uma repetição do processamento nunca substitui alterações já feitas nessa revisão.
-- A edição serve para recuperar o que foi dito, não para apresentar uma avaliação ou uma resposta melhorada.
-- Disponibilizar uma ação explícita para guardar a revisão. Distinguir alterações por guardar, gravação em curso e revisão guardada.
-- Ao mudar para outra resposta ou fechar normalmente a aplicação, guardar as alterações ou permitir ao utilizador decidir se as quer guardar, descartar ou continuar a editar. Uma falha de escrita mantém as alterações na interface e não pode ser apresentada como sucesso.
-- Nesta fase, guardar uma revisão não equivale a confirmar uma resposta para avaliação. A confirmação imutável da entrevista é introduzida na fase 2; não existe envio à IA na fase 1.
+- Show the automatic transcript as a read-only reference and allow editing a separate copy.
+- Initialize the review with the automatic transcript when there is not yet a review of the user. A repetition of the processing never replaces changes already made in that review.
+- The editing serves to recover what was said, not to present an evaluation or an improved answer.
+- Make available an explicit action to store the review. Distinguish unsaved changes, recording in progress and stored review.
+- When switching to another answer or closing the application normally, store the changes or allow the user to decide whether they want to store them, discard them or continue editing. A write failure keeps the changes in the interface and cannot be presented as success.
+- In this phase, storing a review is not equivalent to confirming an answer for evaluation. The immutable confirmation of the interview is introduced in phase 2; there is no sending to the AI in phase 1.
 
-## 6. Responsabilidades técnicas
+## 6. Technical responsibilities
 
-| Componente | Responsabilidade nesta fase |
+| Component | Responsibility in this phase |
 | --- | --- |
-| React/TypeScript | Pergunta, ações, estado da captura, reprodução, texto automático, revisão e mensagens. |
-| Rust/Tauri | Estado da operação, captura, ficheiros, persistência, comunicação com Python e eventos para a interface. |
-| Processo Python | Carregar modelos, transcrever, sintetizar e devolver resultados ou erros estruturados. |
+| React/TypeScript | Question, actions, state of the capture, playback, automatic text, review and messages. |
+| Rust/Tauri | State of the operation, capture, files, persistence, communication with Python and events for the interface. |
+| Python process | Load models, transcribe, synthesize and return results or structured errors. |
 
-Rust é a autoridade sobre a resposta ativa e o trabalho em curso. Cliques repetidos não iniciam várias gravações ou transcrições para a mesma operação. A interface impede operações incompatíveis e o núcleo valida a mesma regra.
+Rust is the authority over the active answer and the work in progress. Repeated clicks do not start several recordings or transcriptions for the same operation. The interface prevents incompatible operations and the core validates the same rule.
 
-O processo auxiliar usa mensagens JSON delimitadas por linha em entrada/saída padrão, com identificador de pedido. Os registos de diagnóstico seguem para stderr; o áudio circula como ficheiros, não como conteúdo base64 nas mensagens.
+The auxiliary process uses JSON messages delimited by line in standard input/output, with request identifier. The diagnostic logs go to stderr; the audio circulates as files, not as base64 content in the messages.
 
-O contrato distingue disponibilidade, transcrição, síntese e encerramento. Os esquemas exatos e os comandos Tauri são definidos no plano técnico. Caminhos e identificadores são resolvidos pelo núcleo a partir de artefactos da aplicação.
+The contract distinguishes availability, transcription, synthesis and shutdown. The exact schemas and the Tauri commands are defined in the technical plan. Paths and identifiers are resolved by the core from artifacts of the application.
 
-Os modelos podem ser carregados apenas quando necessários e reutilizados. A interface distingue carregamento inicial de execução de uma transcrição ou síntese. O trabalho pesado não bloqueia a janela nem o processamento de eventos.
+The models may be loaded only when necessary and reused. The interface distinguishes initial loading from execution of a transcription or synthesis. The heavy work does not block the window nor the processing of events.
 
-## 7. Ficheiros e persistência mínima
+## 7. Files and minimum persistence
 
-Usar a pasta de dados local da aplicação, obtida através do Tauri. Não escrever gravações na árvore do código-fonte ou depender do diretório de onde a aplicação foi iniciada.
+Use the local data folder of the application, obtained through Tauri. Do not write recordings in the source code tree or depend on the directory from which the application was started.
 
-Para cada resposta, conservar:
+For each answer, keep:
 
-- Identificador único e pergunta utilizada.
-- Áudio original e, quando existir, derivado normalizado.
-- Metadados de captura e datas.
-- Resultados automáticos de transcrição, com identificador, modelo e configuração.
-- Revisão manual guardada, associada ao resultado que lhe deu origem.
-- Estado e erro da última operação, quando aplicável.
-- Medições de duração do processamento.
+- Unique identifier and question used.
+- Original audio and, when it exists, normalized derivative.
+- Metadata of capture and dates.
+- Automatic results of transcription, with identifier, model and configuration.
+- Stored manual review, associated with the result that originated it.
+- State and error of the last operation, when applicable.
+- Measurements of the duration of the processing.
 
-Nesta fase, estes metadados e textos podem usar JSON, com gravação atómica para evitar substituir um ficheiro válido por uma escrita incompleta. Não é necessário construir uma base de dados ou uma listagem de histórico.
+In this phase, these metadata and texts may use JSON, with atomic writing to avoid replacing a valid file with an incomplete write. It is not necessary to build a database or a listing of history.
 
-Manter uma referência à última resposta finalizada com sucesso. Ao reabrir a aplicação, recuperar os seus ficheiros e a revisão já guardada. Outros ficheiros de respostas anteriores mantêm-se preservados, mesmo sem navegação entre eles na interface.
+Keep a reference to the last answer successfully finalized. On reopening the application, recover its files and the review already stored. Other files of previous answers remain preserved, even without navigation between them in the interface.
 
-Uma referência a um ficheiro em falta ou inválido deve produzir informação explícita, sem eliminar os restantes artefactos nem bloquear a possibilidade de gravar outra resposta. O último estado guardado de um trabalho interrompido passa a recuperável, não fica indefinidamente como processamento em curso.
+A reference to a missing or invalid file must produce explicit information, without deleting the remaining artifacts nor blocking the possibility of recording another answer. The last stored state of an interrupted work becomes recoverable, it does not stay indefinitely as processing in progress.
 
-Não prometer recuperação de uma gravação que nunca foi finalizada ou de alterações de texto que ainda não foram guardadas antes de uma falha inesperada.
+Do not promise recovery of a recording that was never finalized or of text changes that were not yet stored before an unexpected failure.
 
-## 8. Estados e recuperação
+## 8. States and recovery
 
-| Situação | Comportamento esperado |
+| Situation | Expected behavior |
 | --- | --- |
-| Modelos em preparação ou carregamento | Indicar o componente ocupado; permitir consultar conteúdos já guardados. |
-| Captura ativa | Mostrar estado e duração; permitir terminar; impedir reproduções e outra captura. |
-| Original a guardar | Só transcrever depois de confirmar que o ficheiro foi finalizado. |
-| Transcrição em curso | Indicar processamento e a resposta correspondente; não iniciar outro trabalho de modelo. |
-| Texto disponível | Permitir ouvir a gravação, editar e guardar a revisão. |
-| Falha de transcrição | Conservar original e revisão existente; permitir repetir o processamento. |
-| Falha de síntese | Conservar texto da pergunta; permitir repetir a geração. A captura continua disponível quando não houver uma operação incompatível em curso. |
-| Processo Python terminou | Marcar o pedido em curso como falhado, conservar ficheiros e permitir reiniciar o auxiliar para repetir a operação. |
-| Erro de escrita | Não assinalar como guardado; manter dados recuperáveis e permitir repetir. |
+| Models in preparation or loading | Indicate the component busy; allow consulting contents already stored. |
+| Active capture | Show state and duration; allow ending; prevent playbacks and another capture. |
+| Original to store | Only transcribe after confirming that the file was finalized. |
+| Transcription in progress | Indicate processing and the corresponding answer; do not start another model job. |
+| Text available | Allow listening to the recording, editing and storing the review. |
+| Transcription failure | Keep the original and the existing review; allow repeating the processing. |
+| Synthesis failure | Keep the text of the question; allow repeating the generation. The capture remains available when there is no incompatible operation in progress. |
+| Python process terminated | Mark the request in progress as failed, keep files and allow restarting the helper to repeat the operation. |
+| Write error | Do not signal as stored; keep data recoverable and allow repeating. |
 
-Uma operação bloqueada deve atingir um prazo limite definido e documentado no plano técnico, sem deixar a aplicação permanentemente ocupada. O tempo de carregamento inicial pode ter prazo diferente do processamento de um pedido.
+A blocked operation must reach a deadline defined and documented in the technical plan, without leaving the application permanently busy. The initial loading time may have a different deadline from the processing of a request.
 
-Aceitar resultados apenas para o identificador de operação e a resposta que os originaram. Depois de timeout, falha ou reinício do auxiliar, um resultado atrasado não substitui a resposta ativa nem o texto revisto.
+Accept results only for the operation identifier and the answer that originated them. After a timeout, failure or restart of the helper, a delayed result does not replace the active answer nor the revised text.
 
-Durante captura ou um trabalho de modelo, não iniciar nova gravação ou outro trabalho de modelo. O utilizador pode continuar a consultar a interface e, quando existir áudio já guardado e não estiver a gravar, ouvi-lo. Ao fechar normalmente, terminar a captura em curso e guardar o que for finalizado, resolver revisões por guardar e encerrar o auxiliar. Uma falha inesperada segue os limites de recuperação da secção 7.
+During the capture or a model job, do not start a new recording or another model job. The user may continue to consult the interface and, when there is audio already stored and they are not recording, listen to it. On closing normally, end the capture in progress and store what is finalized, resolve reviews to store and shut down the helper. An unexpected failure follows the recovery limits of section 7.
 
-## 9. Validação e medições
+## 9. Validation and measurements
 
-### Verificação automática
+### Automated verification
 
-O plano técnico deve prever verificações dos comportamentos com risco de perda de trabalho: separação entre texto automático e revisão, persistência, repetição após erro, exclusão de operações incompatíveis e rejeição de resultados atrasados.
+The technical plan must foresee verifications of the behaviors with a risk of loss of work: separation between automatic text and review, persistence, repetition after error, exclusion of incompatible operations and rejection of delayed results.
 
-Os testes podem usar adaptadores e resultados simulados. A conclusão da fase exige também a integração real de microfone, faster-whisper e Kokoro.
+The tests may use adapters and simulated results. The conclusion of the phase also requires the real integration of microphone, faster-whisper and Kokoro.
 
-### Validação manual com dados reais
+### Manual validation with real data
 
-Usar pelo menos três gravações: uma resposta curta, uma resposta com termos profissionais ou técnicos e uma gravação problemática, como silêncio ou interrupção do dispositivo. Acrescentar casos conforme os problemas encontrados.
+Use at least three recordings: a short answer, an answer with professional or technical terms and a problematic recording, such as silence or interruption of the device. Add cases according to the problems found.
 
-Registar o hardware utilizado, versões relevantes, modelo, voz e configurações. Medir separadamente carregamento dos modelos, síntese da pergunta e transcrição de cada gravação; distinguir primeira utilização de repetições e registar a duração do áudio transcrito.
+Record the hardware used, relevant versions, model, voice and configurations. Measure separately the loading of the models, the synthesis of the question and the transcription of each recording; distinguish first use from repetitions and record the duration of the audio transcribed.
 
-Não fixar uma promessa de latência antes de medir. O utilizador valida se a espera permite praticar confortavelmente. Se não permitir, documentar a limitação e a alteração proposta antes de marcar a fase como concluída.
+Do not fix a latency promise before measuring. The user validates whether the wait allows practicing comfortably. If it does not allow it, document the limitation and the proposed change before marking the phase as concluded.
 
-Documentar os requisitos Windows/Rust/Node/Python e as dependências nativas efetivamente utilizadas, juntamente com os comandos reais de instalação, execução e verificação. Não declarar requisitos mínimos de hardware sem os medir.
+Document the Windows/Rust/Node/Python requirements and the native dependencies effectively used, together with the real installation, execution and verification commands. Do not declare minimum hardware requirements without measuring them.
 
-## 10. Critérios de aceitação
+## 10. Acceptance criteria
 
-- [ ] CA-01: A aplicação abre no Windows e apresenta a pergunta fixa correta.
-- [ ] CA-02: Kokoro gera voz inglesa para essa pergunta e o utilizador consegue ouvi-la novamente.
-- [ ] CA-03: O utilizador inicia e termina uma gravação manualmente, com estado e duração visíveis.
-- [ ] CA-04: Não há reprodução durante a captura nem operações duplicadas por cliques repetidos.
-- [ ] CA-05: O áudio finalizado é guardado e pode ser reproduzido, mesmo quando a transcrição falha.
-- [ ] CA-06: faster-whisper transcreve uma resposta real em inglês, sem tradução ou avaliação linguística.
-- [ ] CA-07: O texto automático é preservado e a revisão pode ser guardada separadamente.
-- [ ] CA-08: Repetir uma transcrição falhada não exige gravar novamente; resultados posteriores não apagam revisões existentes.
-- [ ] CA-09: Uma nova gravação e o reinício da aplicação não apagam a última resposta finalizada nem a revisão guardada.
-- [ ] CA-10: Áudio vazio, ficheiros em falta, ausência de dispositivo e ausência de fala reconhecida têm comportamento explícito e recuperável.
-- [ ] CA-11: Uma falha ou bloqueio do auxiliar permite recuperar o controlo e repetir a operação, sem aplicar resultados atrasados.
-- [ ] CA-12: A interface permanece utilizável durante carregamento e processamento dos modelos.
-- [ ] CA-13: Com os modelos preparados, o percurso funciona sem rede e não faz chamadas a serviços de IA.
-- [ ] CA-14: As gravações reais e os tempos medidos estão registados, e o utilizador considera a espera aceitável.
-- [ ] CA-15: Existem instruções verificadas para preparar e executar a integração no ambiente de desenvolvimento Windows.
+- [ ] CA-01: The application opens on Windows and presents the correct fixed question.
+- [ ] CA-02: Kokoro generates English voice for that question and the user can listen to it again.
+- [ ] CA-03: The user starts and ends a recording manually, with state and duration visible.
+- [ ] CA-04: There is no playback during the capture nor duplicated operations due to repeated clicks.
+- [ ] CA-05: The finalized audio is stored and can be played back, even when the transcription fails.
+- [ ] CA-06: faster-whisper transcribes a real answer in English, without translation or language evaluation.
+- [ ] CA-07: The automatic text is preserved and the review can be stored separately.
+- [ ] CA-08: Repeating a failed transcription does not require recording again; later results do not erase existing reviews.
+- [ ] CA-09: A new recording and the restart of the application do not erase the last finalized answer nor the stored review.
+- [ ] CA-10: Empty audio, missing files, absence of device and absence of recognized speech have explicit and recoverable behavior.
+- [ ] CA-11: A failure or block of the helper allows recovering control and repeating the operation, without applying delayed results.
+- [ ] CA-12: The interface remains usable during loading and processing of the models.
+- [ ] CA-13: With the models prepared, the journey works without a network and does not make calls to AI services.
+- [ ] CA-14: The real recordings and the measured times are recorded, and the user considers the wait acceptable.
+- [ ] CA-15: There are verified instructions to prepare and run the integration in the Windows development environment.
 
-A spec estar escrita não significa que os critérios estejam cumpridos. A fase só termina depois da implementação, da verificação técnica e da validação manual; não inicia automaticamente a fase 2.
+The spec being written does not mean that the criteria are met. The phase only ends after the implementation, the technical verification and the manual validation; it does not automatically start phase 2.
 
-## 11. Decisões deixadas para o plano técnico
+## 11. Decisions left for the technical plan
 
-- Bibliotecas Rust para captura, reprodução, WAV e reamostragem.
-- Versões de ferramentas e dependências; comandos de desenvolvimento, build e teste.
-- Configuração de modelos, escolha da voz inglesa e localização dos seus ficheiros.
-- Organização dos módulos, comandos Tauri, eventos e esquemas JSON do auxiliar.
-- Nomes concretos dos ficheiros de persistência, mecanismos de escrita atómica e formatos dos metadados.
-- Prazos limite e limites técnicos de áudio necessários, com mensagens claras e sem truncamento silencioso.
+- Rust libraries for capture, playback, WAV and resampling.
+- Versions of tools and dependencies; development, build and test commands.
+- Configuration of models, choice of the English voice and location of its files.
+- Organization of the modules, Tauri commands, events and JSON schemas of the helper.
+- Concrete names of the persistence files, atomic writing mechanisms and formats of the metadata.
+- Deadlines and necessary technical audio limits, with clear messages and without silent truncation.
 
-Estas decisões devem respeitar o comportamento desta spec. Não é necessário decidir agora os contratos das sessões, o esquema SQLite ou a integração com a API da fase 3.
+These decisions must respect the behavior of this spec. It is not necessary to decide now the contracts of the sessions, the SQLite schema or the integration with the API of phase 3.

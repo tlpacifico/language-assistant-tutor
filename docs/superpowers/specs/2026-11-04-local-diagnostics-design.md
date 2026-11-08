@@ -1,25 +1,25 @@
-# Diagnóstico local e identificação de builds
+# Local diagnostics and build identification
 
-## Intenção e autorização
+## Intention and authorization
 
-Preparar a utilização real e permitir investigar falhas posteriores. Em 2026-11-04 o utilizador pediu a spec, o plano e a implementação, com preservação dos registos entre versões. Assume-se a opção local proposta na conversa; não existe envio automático.
+Prepare real use and allow investigating later failures. On 2026-11-04 the user asked for the spec, the plan and the implementation, with preservation of the records between versions. The local option proposed in the conversation is assumed; there is no automatic sending.
 
-## Abordagens
+## Approaches
 
-- Diagnóstico local com exportação manual: escolhido para esta implementação; funciona offline, sem conta nem serviço adicional.
-- Serviço remoto: permitiria receber falhas automaticamente, mas acrescenta dependências, configuração e transferência de dados. Fora do âmbito.
+- Local diagnostics with manual export: chosen for this implementation; it works offline, without an account or additional service.
+- Remote service: would allow receiving failures automatically, but adds dependencies, configuration and data transfer. Outside the scope.
 
-## Contrato
+## Contract
 
-- Preservar `identifier = dev.thacio.languageassistanttutor`. Guardar JSONL em `app_data_dir()/diagnostics`, nunca no diretório de instalação, repositório ou temporários. Abrir em append; reiniciar ou mudar de versão não elimina o histórico.
-- Retenção: 30 dias, até cinco ficheiros de 1 MiB cada, com rotação por tamanho. A retenção atua no arranque e nas escritas; apenas nos nomes reservados do diagnóstico. A versão não participa na limpeza. Exportações são independentes e não são limpas pela retenção.
-- Cada evento contém schema, ID, instante Unix em milissegundos, execução, versão, revisão Git, indicador de alterações locais e instante de compilação. Quando Git não estiver disponível, indicar revisão desconhecida.
-- Registar códigos de erros Rust, falhas de comandos IPC com nome e duração, exceções globais/promessas não tratadas e falhas de renderização React; registar frames próprios de exceções inesperadas do auxiliar Python, sem texto do erro. O diagnóstico não garante capturar terminação forçada, falhas nativas do WebView ou aborts do processo.
-- Sem chaves, parâmetros IPC, mensagens livres, stack traces brutos, áudios, transcrições, histórias, respostas ou conteúdos do fornecedor. Campos externos passam por listas fechadas; desconhecidos tornam-se categorias genéricas. Não persistir stderr bruto.
-- Escrita numa thread dedicada, fila limitada e envio sem espera; falhas do diagnóstico não devem impedir entrevistas. Expor estado de escrita e eventos perdidos; a exportação espera os eventos anteriormente enfileirados. A fila pode perder os últimos eventos numa terminação abrupta.
-- Painel «Diagnóstico local» acessível em todas as páginas e na recuperação React, com build, estado e exportação. Exportar JSON num diretório indicado pelo utilizador (por omissão Downloads), com nome único e sem substituir ficheiros. Usar operações de disco fora da thread da interface. Não exportar SQLite, configuração pessoal ou ficheiros de sessões.
-- Não modificar regras da entrevista, esquema SQLite, motores, credenciais ou a versão semântica 0.1.0. Identificar diferentes builds pelo commit, alterações locais e instante da compilação.
+- Preserve `identifier = dev.thacio.languageassistanttutor`. Store JSONL in `app_data_dir()/diagnostics`, never in the installation directory, repository or temporary folders. Open in append; restarting or changing version does not delete the history.
+- Retention: 30 days, up to five files of 1 MiB each, with rotation by size. Retention acts on startup and on writes; only on the reserved diagnostics names. The version does not participate in the cleanup. Exports are independent and are not cleaned by retention.
+- Each event contains schema, ID, Unix instant in milliseconds, run, version, Git revision, local changes indicator and build instant. When Git is not available, indicate unknown revision.
+- Record Rust error codes, IPC command failures with name and duration, global exceptions/unhandled promises and React rendering failures; record own frames of unexpected Python helper exceptions, without the error text. Diagnostics do not guarantee capturing forced termination, native WebView failures or process aborts.
+- No keys, IPC parameters, free messages, raw stack traces, audios, transcripts, stories, answers or provider content. External fields go through closed lists; unknowns become generic categories. Do not persist raw stderr.
+- Writing on a dedicated thread, bounded queue and non-blocking send; diagnostics failures must not prevent interviews. Expose write state and lost events; the export waits for previously queued events. The queue may lose the last events in an abrupt termination.
+- «Diagnóstico local» panel accessible on all pages and in the React recovery, with build, state and export. Export JSON into a folder indicated by the user (by default Downloads), with a unique name and without replacing files. Use disk operations outside the interface thread. Do not export SQLite, personal configuration or session files.
+- Do not modify interview rules, SQLite schema, engines, credentials or the semantic version 0.1.0. Identify different builds by the commit, local changes and build instant.
 
-## Verificação e limites
+## Verification and limits
 
-Testar persistência após reabrir com outra versão, rotação, idade, falha de escrita, privacidade, exportação, fronteira IPC e recuperação React. Executar `scripts/verify.ps1`, build release sem bundle e smoke com dados temporários. A atualização por instalador, áudio real e aceitação das fases continuam pendentes; este trabalho não inicia a fase 5.
+Test persistence after reopening with another version, rotation, age, write failure, privacy, export, IPC boundary and React recovery. Run `scripts/verify.ps1`, release build without bundle and smoke with temporary data. Updating through the installer, real audio and acceptance of the phases remain pending; this work does not start phase 5.

@@ -1,339 +1,339 @@
-# Fase 4 — Melhorar e repetir
+# Phase 4 — Improve and repeat
 
-Data: 2026-11-03  
-Estado: revista e aprovada tecnicamente; implementada em 2026-11-03 por autorização posterior do utilizador e verificada automaticamente ([validação](../../phase-4/validation.md)). Os critérios F4-01 a F4-16 abaixo continuam por marcar: a aceitação manual (F4-16) e a inferência paga real estão pendentes.
-Base: [desenho do MVP](2026-11-01-star-interview-tutor-design.md), [fases](../plans/2026-11-01-star-interview-tutor-phases.md), [stack](../../tech-stack.md), [fase 3](2026-11-02-phase-3-ai-tutor-design.md) e [validação atual](../../phase-3/validation.md).
+Date: 2026-11-03  
+Status: reviewed and technically approved; implemented on 2026-11-03 by later authorization of the user and automatically verified ([validation](../../phase-4/validation.md)). Criteria F4-01 to F4-16 below remain unchecked: manual acceptance (F4-16) and real paid inference are pending.
+Base: [MVP design](2026-11-01-star-interview-tutor-design.md), [phases](../plans/2026-11-01-star-interview-tutor-phases.md), [stack](../../tech-stack.md), [phase 3](2026-11-02-phase-3-ai-tutor-design.md) and [current validation](../../phase-3/validation.md).
 
-## 1. Intenção, autorização e limites
+## 1. Intention, authorization and limits
 
-Fechar o ciclo de prática: consultar o que foi respondido, compreender feedback,
-ler/ouvir uma reformulação fiel, responder novamente e comparar sem perder
-versões anteriores. Acrescentar histórias factuais como apoio local à preparação.
+Close the practice cycle: consult what was answered, understand feedback,
+read/listen to a faithful rewrite, answer again and compare without losing
+previous versions. Add factual stories as local support for preparation.
 
-O utilizador autorizou preparar a próxima fase e limitou expressamente o pedido
-a «somente a spec e o plano de implementação». Este documento não autoriza
-escrever código, instalar dependências, fazer migrações, usar a chave configurada
-ou executar inferência paga. O coordenador avalia a spec antes de delegar o plano.
-As decisões propostas abaixo não são apresentadas como escolhas já aprovadas
-individualmente pelo utilizador.
+The user authorized preparing the next phase and expressly limited the request
+to «somente a spec e o plano de implementação». This document does not authorize
+writing code, installing dependencies, running migrations, using the configured key
+or executing paid inference. The coordinator evaluates the spec before delegating the plan.
+The decisions proposed below are not presented as choices already approved
+individually by the user.
 
-As fases anteriores continuam com aceitação manual incompleta. O relato de
-teste manual satisfatório não incluiu API paga. A configuração local posterior
-não demonstra autenticação, saldo, utilidade semântica ou custo reais. Preparar
-esta fase não altera essa evidência nem marca as fases anteriores como aceites.
+Previous phases still have incomplete manual acceptance. The report of a
+satisfactory manual test did not include paid API. The later local configuration
+does not demonstrate real authentication, balance, semantic usefulness or cost. Preparing
+this phase does not change that evidence nor marks the previous phases as accepted.
 
-Incluído: reformulação em inglês com nível escolhido, distinção correção/estilo,
-síntese local Kokoro, tentativas individuais com avaliação própria, comparação
-local, banco de histórias e seleção opcional, persistência e recuperação.
+Included: English rewrite with a chosen level, correction/style distinction,
+local Kokoro synthesis, individual attempts with their own evaluation, local
+comparison, story bank and optional selection, persistence and recovery.
 
-Excluído: seguimentos de novas tentativas, comparação por nova chamada à IA,
-geração de histórias ou factos, pesquisa vetorial, pontuação global/proficiência,
-diagnóstico acústico/emocional, importação em lote, eliminação de sessões ou
-histórias, instalador e distribuição autónoma. Não iniciar a fase 5.
+Excluded: follow-ups for new attempts, comparison through a new AI call,
+story or fact generation, vector search, global/proficiency scoring,
+acoustic/emotional diagnosis, bulk import, deletion of sessions or
+stories, installer and autonomous distribution. Do not start phase 5.
 
-## 2. Abordagens e decisões propostas
+## 2. Approaches and proposed decisions
 
-| Abordagem | Consequência | Proposta |
+| Approach | Consequence | Proposal |
 | --- | --- | --- |
-| Reabrir resposta/sessão original | Poucas novas entidades, mas altera fontes, progresso e relatórios históricos. | Rejeitada. |
-| Criar uma entrevista completa por repetição | Reutiliza fluxo, mas confunde contadores, modos e seguimentos. | Rejeitada. |
-| Prática individual ligada à pergunta fixa, com alvo de resposta próprio | Preserva originais e reutiliza áudio, confirmação e pedidos. | Recomendada. |
+| Reopen the original answer/session | Few new entities, but it changes sources, progress and historical reports. | Rejected. |
+| Create a complete interview per repetition | Reuses the flow, but confuses counters, modes and follow-ups. | Rejected. |
+| Individual practice linked to the fixed question, with its own answer target | Preserves originals and reuses audio, confirmation and requests. | Recommended. |
 
-Usar React/TypeScript, Rust/Tauri, SQLite e os motores existentes. Nenhum
-fornecedor novo. Comparação por apresentação local dos textos e relatórios;
-sem um segundo avaliador ou chamada de síntese. Histórias exclusivamente locais
-nesta fase: nenhum campo nem identificador de história entra na API.
+Use React/TypeScript, Rust/Tauri, SQLite and the existing engines. No new
+provider. Comparison through local presentation of the texts and reports;
+without a second evaluator or synthesis call. Stories exclusively local in
+this phase: no story field or identifier enters the API.
 
-Propostas de simplicidade: B1 inicialmente, conforme o desenho aprovado §2,
-com seleção B1/B2/C1 na reformulação;
-uma prática não confirmada de cada vez; começar práticas apenas quando não há
-entrevista em curso. Nível é objetivo de linguagem escolhido, não diagnóstico
-de nível CEFR do utilizador. O valor inicial B1 preserva a decisão existente;
-as restantes escolhas de construção são propostas técnicas para revisão.
+Simplicity proposals: B1 initially, according to the approved design §2,
+with B1/B2/C1 selection in the rewrite;
+one unconfirmed practice at a time; start practices only when there is no
+interview in progress. Level is a chosen language goal, not a diagnosis
+of the user's CEFR level. The initial value B1 preserves the existing decision;
+the remaining construction choices are technical proposals for review.
 
-## 3. Ponto de partida e invariantes
+## 3. Starting point and invariants
 
-Alteração aprovada em 2026-11-04: a avaliação e reformulação do original podem ocorrer numa entrevista IA em curso, após confirmação e encerramento do seguimento da pergunta. A criação de práticas continua a exigir sessão concluída. Ver [desenho da alteração](2026-11-04-per-question-ai-coaching-design.md).
+Change approved on 2026-11-04: evaluation and rewrite of the original can occur in an ongoing AI interview, after confirmation and closing of the question's follow-up. Creating practices still requires a completed session. See [design of the change](2026-11-04-per-question-ai-coaching-design.md).
 
-O esquema SQLite v2 tem `answer_slots` para `initial`/`follow_up`, gravações,
-transcrições, revisões e confirmações. A unicidade por pergunta/papel impede
-adicionar repetições apenas reutilizando um papel. `ai_requests` é único por
-finalidade/pergunta e `ai_reports` por pergunta. O serviço resolve alvos de
-resposta da entrevista ativa. Estes contratos têm de evoluir deliberadamente.
+The SQLite v2 schema has `answer_slots` for `initial`/`follow_up`, recordings,
+transcripts, revisions and confirmations. Uniqueness per question/role prevents
+adding repetitions by merely reusing a role. `ai_requests` is unique per
+purpose/question and `ai_reports` per question. The service resolves answer
+targets of the active interview. These contracts have to evolve deliberately.
 
-Uma nova tentativa tem identidade, estado, ordinal e alvo próprios, ligados à
-pergunta da sessão original e, opcionalmente, à tentativa confirmada anterior.
-Nunca muda `position`, `question_count`, etapa de seguimento, confirmação,
-gravação selecionada ou relatório original. Não criar nova pergunta do banco.
-Texto, competências e critérios são os da cópia fixa da sessão de origem,
-mesmo que o banco seja editado entretanto.
+A new attempt has its own identity, state, ordinal and target, linked to the
+question of the original session and, optionally, to the previous confirmed attempt.
+It never changes `position`, `question_count`, follow-up stage, confirmation,
+selected recording or original report. Do not create a new question from the bank.
+Text, skills and criteria are those of the fixed copy of the source session,
+even if the bank is edited meanwhile.
 
-Reutilizar o ciclo de captura/transcrição/revisão/confirmação por um alvo
-tipado que distinga principal, seguimento e tentativa. SQLite e Rust devem
-impedir associar uma gravação, confirmação ou pedido ao alvo errado. A escolha
-física de estender `answer_slots` ou adaptar relações fica para o plano;
-não duplicar os motores nem relaxar a imutabilidade para fazer caber a prática.
+Reuse the capture/transcription/review/confirmation cycle through a typed
+target that distinguishes initial, follow-up and attempt. SQLite and Rust must
+prevent associating a recording, confirmation or request with the wrong target. The
+physical choice of extending `answer_slots` or adapting relations is left to the plan;
+do not duplicate the engines nor relax immutability to fit the practice.
 
-Migração v2 → v3 transacional, também aplicável sequencialmente a bases vazias
-e v1. Preservar todos os dados, recibos, referências, índices e triggers;
-falha reverte e versão futura não é escrita. Não converter `phase1/` nem fabricar
-confirmações para os treinos JSON antigos; continuam só para leitura.
+Transactional v2 → v3 migration, also applicable sequentially to empty
+and v1 databases. Preserve all data, receipts, references, indexes and triggers;
+failure reverts and a future version is not written. Do not convert `phase1/` nor fabricate
+confirmations for the old JSON practice sessions; they remain read-only.
 
-## 4. Reformulação: fontes, nível e contrato
+## 4. Rewrite: sources, level and contract
 
-Disponível para perguntas confirmadas de entrevistas concluídas `local_v2` ou
-`ai_v3`, e para tentativas individuais confirmadas. Não exige relatório prévio:
-as fontes de verdade são confirmações, não o texto do feedback. Uma sessão
-local continua local; pedir um exercício de IA a partir dela não a converte
-em entrevista IA, não gera seguimentos retroativos nem feedback de sessão.
+Available for confirmed questions of completed `local_v2` or
+`ai_v3` interviews, and for confirmed individual attempts. It does not require a prior report:
+the sources of truth are confirmations, not the feedback text. A
+local session remains local; asking for an AI exercise from it does not convert it
+into an AI interview, does not generate retroactive follow-ups nor session feedback.
 
-Na origem principal, enviar exclusivamente pergunta, critérios fixos e textos
-confirmados inicial e do respetivo seguimento, se existir. Na origem tentativa,
-enviar apenas a confirmação dessa tentativa com os mesmos critérios. Nunca
-fundir factos da resposta antiga numa tentativa nova. Nunca incluir áudio,
-notas de história, rascunhos, outra pergunta, relatórios ou reformulações como
-se fossem respostas. Todas as fontes têm identificador e papel inequívocos.
+In the main origin, send exclusively the question, fixed criteria and confirmed
+texts of the initial answer and of the respective follow-up, if any. In the
+attempt origin, send only the confirmation of that attempt with the same criteria. Never
+merge facts from the old answer into a new attempt. Never include audio,
+story notes, drafts, another question, reports or rewrites as
+if they were answers. All sources have an unambiguous identifier and role.
 
-«Gerar reformulação» permite escolher B1/B2/C1; B1 é a sugestão inicial. Guardar
-essa preferência pública localmente para pedidos futuros. Cada pedido/resultante
-fixa o nível efetivo; uma mudança posterior não altera sugestões anteriores.
-Não tentar medir pronúncia, fluência oral, confiança ou certificar proficiência.
+«Gerar reformulação» allows choosing B1/B2/C1; B1 is the initial suggestion. Store
+that public preference locally for future requests. Each request/result
+fixes the effective level; a later change does not alter previous suggestions.
+Do not attempt to measure pronunciation, oral fluency, confidence or certify proficiency.
 
-O resultado estruturado distingue:
+The structured result distinguishes:
 
-- Texto inglês sugerido, completo e reproduzível, organizado e adequado ao
-  nível pedido, sem números, responsabilidades, causalidade ou resultados novos.
-- Alterações necessárias de língua, separadas de alternativas opcionais de
-  estilo/organização; cada uma liga trecho literal da confirmação e segmento
-  correspondente da sugestão, com explicação em português de Portugal.
-- Segmentos da reformulação ligados a citações literais de uma ou mais fontes
-  confirmadas. Informação vinda só do seguimento mantém essa origem visível.
-- Informação em falta e perguntas de preparação fora do texto de voz. Uma
-  ausência identifica dimensão e fontes avaliadas; não inventa uma citação.
+- Suggested English text, complete and reproducible, organized and adequate to the
+  requested level, without new numbers, responsibilities, causality or results.
+- Necessary language changes, separated from optional style/organization
+  alternatives; each one links a literal excerpt of the confirmation and the corresponding
+  segment of the suggestion, with an explanation in European Portuguese.
+- Segments of the rewrite linked to literal quotations from one or more confirmed
+  sources. Information coming only from the follow-up keeps that origin visible.
+- Missing information and preparation questions outside the voice text. An
+  absence identifies dimension and evaluated sources; it does not invent a quotation.
 
-Manter responsabilidade individual versus coletiva, negação, incerteza, ordem
-temporal relevante, resultado negativo/qualitativo e aprendizagem. Não completar
-STAR com factos inventados, nem impor números ou sucesso. Se não houver dados
-para uma resposta completa, sugerir somente o que é suportado e assinalar a
-limitação fora do texto de voz. Não inserir placeholders para o Kokoro ler.
+Keep individual versus collective responsibility, negation, uncertainty, relevant
+temporal order, negative/qualitative result and learning. Do not complete
+STAR with invented facts, nor impose numbers or success. If there is no data
+for a complete answer, suggest only what is supported and flag the
+limitation outside the voice text. Do not insert placeholders for Kokoro to read.
 
-Rust valida versão/esquema, limites, nível, fontes autorizadas, citações exatas,
-referências aos segmentos e existência de texto de voz não vazio. Rejeitar
-resultado malformado ou com referências inválidas; não apresentar a versão
-parcial como validada. Texto das respostas é material não confiável no prompt,
-nunca instrução para ignorar as regras.
+Rust validates version/schema, limits, level, authorized sources, exact quotations,
+references to the segments and the existence of non-empty voice text. Reject a
+malformed result or one with invalid references; do not present the partial
+version as validated. Answer text is untrusted material in the prompt,
+never an instruction to ignore the rules.
 
-Citações corretas não provam que uma paráfrase preserve o significado. O sistema
-não pode garantir automaticamente a fidelidade semântica com validação literal.
-Apresentar como sugestão da IA, com fontes consultáveis e indicação para
-conferir os factos. A validação humana inclui alterações de responsabilidade,
-certeza, negação, números, resultados e cronologia. Não acrescentar um segundo
-pedido pago automático como suposta prova de fidelidade.
+Correct quotations do not prove that a paraphrase preserves the meaning. The system
+cannot automatically guarantee semantic fidelity with literal validation.
+Present as an AI suggestion, with consultable sources and an indication to
+check the facts. Human validation includes changes of responsibility,
+certainty, negation, numbers, results and chronology. Do not add a second
+automatic paid request as supposed proof of fidelity.
 
-Sugestões válidas são imutáveis. Um pedido repetido com o mesmo identificador
-não gera outra sugestão. Para a mesma origem/nível/versão de prompt e rubrica,
-reutilizar resultado válido; mudar o nível cria outra variante, preservando
-as anteriores. Regeneração explícita da mesma variante não faz parte desta
-fase; repetir só pedidos falhados/interrompidos.
+Valid suggestions are immutable. A repeated request with the same identifier
+does not generate another suggestion. For the same origin/level/prompt and rubric
+version, reuse a valid result; changing the level creates another variant, preserving
+the previous ones. Explicit regeneration of the same variant is not part of this
+phase; repeat only failed/interrupted requests.
 
-## 5. Ouvir a sugestão
+## 5. Listening to the suggestion
 
-«Ouvir reformulação» passa só o texto sugerido ao Kokoro local. Não lê citações,
-explicações, notas, lacunas ou etiquetas. Mantém inglês e a configuração local
-de voz/velocidade. Usar o auxiliar e coordenador de áudio existentes; não abrir
-novo serviço, não mandar texto ao fornecedor para sintetizar.
+«Ouvir reformulação» passes only the suggested text to the local Kokoro. It does not read quotations,
+explanations, notes, gaps or labels. It keeps English and the local voice/speed
+configuration. Use the existing helper and audio coordinator; do not open
+a new service, do not send text to the provider for synthesis.
 
-A identidade do áudio derivado inclui sugestão, texto e configuração de voz;
-não reutilizar áudio de outra variante. Guardar texto antes de sintetizar.
-Falha de Kokoro mantém a reformulação legível e permite repetir apenas síntese,
-sem nova chamada à LLM. Falta de ficheiro permite regenerar esse derivado sem
-alterar o resultado textual. Captura interrompe saída; nunca reproduzir durante
-gravação. Síntese/transcrição continuam coordenadas como trabalho local único.
+The identity of the derived audio includes suggestion, text and voice configuration;
+do not reuse audio from another variant. Store text before synthesizing.
+A Kokoro failure keeps the rewrite readable and allows repeating only the synthesis,
+without a new LLM call. A missing file allows regenerating that derivative without
+changing the textual result. Capture interrupts output; never play during
+recording. Synthesis/transcription remain coordinated as a single local job.
 
-## 6. Nova tentativa e avaliação
+## 6. New attempt and evaluation
 
-No histórico de entrevista concluída, escolher uma pergunta e «Tentar novamente».
-Pode fazê-lo sem reformulação nem feedback disponíveis. `local_v2` e `ai_v3`
-com confirmação são elegíveis; treinos JSON sem confirmação não o são.
-Não iniciar durante entrevista em curso; mostrar a opção de a retomar. Uma
-prática pendente impede iniciar outra entrevista ou prática até confirmar ou
-abandonar explicitamente, sem apagar dados. Feedback e reformulações pendentes
-de práticas já confirmadas não bloqueiam novo treino.
+In the history of a completed interview, choose a question and «Tentar novamente».
+It can be done without available rewrite or feedback. `local_v2` and `ai_v3`
+with confirmation are eligible; JSON practice sessions without confirmation are not.
+Do not start during an ongoing interview; show the option to resume it. A
+pending practice prevents starting another interview or practice until explicitly
+confirming or abandoning, without deleting data. Feedback and rewrites pending
+from already confirmed practices do not block a new practice session.
 
-| Estado da prática | Comportamento |
+| State of the practice | Behavior |
 | --- | --- |
-| Preparação | Pergunta fixa, história opcional e opção de ouvir pergunta/reformulação. |
-| Resposta por confirmar | Captura manual, reprodução, transcrição, revisão e confirmação próprias. |
-| Confirmada | Texto imutável; avaliação ainda não pedida ou recuperável. |
-| Abandonada antes de confirmar | Guardar estado, gravações e revisão; consulta apenas, sem avaliar ou reabrir. |
+| Preparation | Fixed question, optional story and the option to listen to the question/rewrite. |
+| Answer to confirm | Own manual capture, playback, transcription, review and confirmation. |
+| Confirmed | Immutable text; evaluation not yet requested or recoverable. |
+| Abandoned before confirming | Store state, recordings and review; consultation only, without evaluating or reopening. |
 
-Criar uma prática é transação idempotente. Cada prática tem ordinal estável;
-regravar antes de confirmar mantém as gravações antigas da própria prática e
-não cria uma tentativa confirmada nova. Confirmação fixa exatamente a revisão
-vista com referências ao áudio e origem automática/manual. Falha de gravação
-ou escrita não perde a seleção anterior nem produz confirmação falsa.
+Creating a practice is an idempotent transaction. Each practice has a stable ordinal;
+re-recording before confirming keeps the old recordings of the practice itself and
+does not create a new confirmed attempt. Confirmation fixes exactly the review
+seen, with references to the audio and automatic/manual origin. A recording or write
+failure does not lose the previous selection nor produce a false confirmation.
 
-Uma prática confirmada nunca cria seguimento, mesmo que o modelo o recomende.
-«Avaliar tentativa» é ação distinta de confirmar e usa credencial/consentimento
-existentes. A carga contém apenas pergunta/critérios originais e confirmação
-desta tentativa; exclui inicial antiga, seguimento antigo, histórias e sugestões.
-As evidências usam o papel próprio `attempt`, nunca `initial` para fingir que
-a tentativa pertence à entrevista original. Usa rubrica e versão compatíveis
-com a avaliação original; onde não existir
-relatório original, fixa a rubrica atual para a primeira avaliação dessa família.
+A confirmed practice never creates a follow-up, even if the model recommends it.
+«Avaliar tentativa» is an action distinct from confirming and uses the existing
+credential/consent. The payload contains only the original question/criteria and the
+confirmation of this attempt; it excludes the old initial answer, the old follow-up, stories and suggestions.
+Evidence uses its own `attempt` role, never `initial` to pretend that
+the attempt belongs to the original interview. It uses a rubric and version compatible
+with the original evaluation; where no original
+report exists, it fixes the current rubric for the first evaluation of that family.
 
-Preservar contrato de feedback STAR/inglês da fase 3, citações/ausências, até
-três prioridades sustentadas, correção versus estilo e ausência de nota global.
-O relatório é próprio da tentativa e imutável. Erro permite repetir só a sua
-avaliação sem gravar novamente; não gerar automaticamente feedback/reformulação
-ao confirmar. Sem rede pode continuar prática local e avaliar depois.
+Preserve the STAR/English feedback contract of phase 3, quotations/absences, up to
+three supported priorities, correction versus style and the absence of a global score.
+The report belongs to the attempt and is immutable. An error allows repeating only its
+evaluation without recording again; do not generate feedback/rewrite automatically
+on confirming. Without network, one can continue with local practice and evaluate later.
 
-## 7. Comparação sem alterar fontes
+## 7. Comparison without changing sources
 
-No histórico, comparar original com uma tentativa confirmada ou duas tentativas
-confirmadas da mesma pergunta. Apresentar por ordem de criação, com datas,
-originais de áudio, automáticos, confirmações e relatórios separados. Rascunho
-ou prática abandonada não conta como resposta confirmada comparável.
+In the history, compare the original with one confirmed attempt or two confirmed
+attempts of the same question. Present in order of creation, with dates,
+original audios, automatic transcripts, confirmations and separate reports. A draft
+or abandoned practice does not count as a comparable confirmed answer.
 
-No original distinguir resposta inicial e seguimento. Nunca concatenar e
-apresentar como se tudo tivesse sido dito antes do seguimento. Reformulação
-aparece em zona «Sugestão da IA», não na coluna do que foi respondido. Notas
-aparecem apenas como «Apoio à preparação», fora das evidências.
+In the original, distinguish the initial answer and the follow-up. Never concatenate and
+present as if everything had been said before the follow-up. Rewrite
+appears in an «Sugestão da IA» zone, not in the column of what was answered. Notes
+appear only as «Apoio à preparação», outside the evidence.
 
-Comparação é local: mostrar classificações e prioridades lado a lado, sem
-inventar uma pontuação de evolução, chamar diferença textual de melhoria ou
-pedir nova avaliação combinada. Se uma avaliação não existir, indicar pendente
-e permitir pedi-la para esse alvo elegível. Avaliação original da entrevista
-só continua disponível pelo fluxo original, sem alterar `local_v2` para a criar.
+Comparison is local: show classifications and priorities side by side, without
+inventing an evolution score, calling textual difference an improvement or
+asking for a new combined evaluation. If an evaluation does not exist, indicate pending
+and allow requesting it for that eligible target. The original interview evaluation
+only remains available through the original flow, without altering `local_v2` to create it.
 
-Guardar versão da rubrica em cada relatório. Se diferentes, indicar comparação
-limitada por critérios/versões diferentes; não recalcular ou substituir
-relatórios antigos automaticamente. A ausência de seguimento numa tentativa
-tem etiqueta explícita, para evitar comparação enganadora com original ampliado.
+Store the rubric version in each report. If they differ, indicate a comparison
+limited by different criteria/versions; do not recalculate or replace
+old reports automatically. The absence of a follow-up in an attempt
+has an explicit label, to avoid a misleading comparison with an expanded original.
 
-## 8. Histórias factuais e isolamento
+## 8. Factual stories and isolation
 
-Banco local com listagem, adição e edição. Cada história tem identificador,
-versão, título, notas de situação, responsabilidade/tarefa, ações, resultado
-ou aprendizagem, competências e datas. Título não vazio, pelo menos um campo
-factual preenchido e uma competência não vazia; aceitar história incompleta
-identificada como tal. Ignorar espaços exteriores na validação/persistência,
-sem reescrever conteúdo interior. Notas podem estar em português ou inglês;
-não as tratar como resposta de treino nem gerar factos automaticamente.
+Local bank with listing, addition and editing. Each story has an identifier,
+version, title, situation notes, responsibility/task, actions, result
+or learning, skills and dates. Non-empty title, at least one
+factual field filled and one non-empty skill; accept an incomplete story
+identified as such. Ignore outer spaces in validation/persistence,
+without rewriting inner content. Notes can be in Portuguese or English;
+do not treat them as a practice answer nor generate facts automatically.
 
-Sem eliminação, importação, extração automática das respostas ou associação
-automática. Filtragem simples por competência é suficiente. Uma história pode
-apoiar várias perguntas/práticas; associação é opcional e manual, uma por alvo.
+No deletion, import, automatic extraction from answers or automatic
+association. Simple filtering by skill is enough. A story can
+support several questions/practices; association is optional and manual, one per target.
 
-Na preparação de cada pergunta principal ou prática, antes da primeira captura,
-permitir escolher, substituir ou remover o apoio. Na primeira captura iniciada
-com sucesso, fixar snapshot do conteúdo/versão selecionado; não aguardar a
-confirmação para preservar a preparação efetiva. Depois fica só de leitura
-nesse alvo. Editar o banco posteriormente não muda snapshots anteriores.
-O seguimento partilha a preparação da principal, sem associação própria.
-Não exigir história para gravar nem bloquear por campos STAR em falta.
+In the preparation of each main question or practice, before the first capture,
+allow choosing, replacing or removing the support. On the first capture successfully
+started, fix a snapshot of the selected content/version; do not wait for
+confirmation to preserve the effective preparation. Afterwards it is read-only
+in that target. Editing the bank later does not change previous snapshots.
+The follow-up shares the preparation of the main question, without its own association.
+Do not require a story to record nor block for missing STAR fields.
 
-Mostrar notas durante preparação/revisão com identificação de que são notas,
-não transcrição. Nunca preencher editor da resposta, confirmação ou prompt a
-partir delas. Não enviar notas, título, competências da história ou snapshot
-em pedidos de seguimento, avaliação ou reformulação. Critérios/competências da
-pergunta fixa continuam permitidos; são entidades diferentes.
+Show notes during preparation/review with an indication that they are notes,
+not a transcript. Never fill the answer editor, confirmation or prompt
+from them. Do not send notes, title, story skills or snapshot
+in follow-up, evaluation or rewrite requests. Criteria/skills of the
+fixed question remain allowed; they are different entities.
 
-Informação apenas nas notas pode ser vista localmente como algo a considerar
-num treino futuro; não produzir análise automática do que «faltou dizer» com
-essas notas nem incorporá-la numa sugestão de voz. Se o utilizador disser essa
-informação numa nova tentativa, a confirmação dessa fala passa a ser fonte
-legítima; o snapshot da história nunca o é.
+Information only in the notes can be seen locally as something to consider
+in a future practice session; do not produce an automatic analysis of what «faltou dizer» with
+those notes nor incorporate it into a voice suggestion. If the user says that
+information in a new attempt, the confirmation of that speech becomes a legitimate
+source; the story snapshot never is.
 
-## 9. Persistência, operações e recuperação
+## 9. Persistence, operations and recovery
 
-Persistir histórias e versões/snapshots, práticas e vínculos, alvos de resposta,
-reformulações/variantes/fontes/nível, relatórios próprios, pedidos/tentativas,
-consumo e referências dos derivados de voz. Não criar base paralela nem
-sobrescrever ficheiros/linhas de origem. Estado de avaliação e sugestão é
-independente do estado da prática; uma falha da IA não desfaz a confirmação.
+Persist stories and versions/snapshots, practices and links, answer targets,
+rewrites/variants/sources/level, own reports, requests/attempts,
+usage and references of the voice derivatives. Do not create a parallel database nor
+overwrite source files/rows. Evaluation and suggestion state is
+independent of the practice state; an AI failure does not undo the confirmation.
 
-Reutilizar os padrões da fase 3: reservar antes da rede, identificadores de
-comando e hash do conteúdo, gerações e fontes imutáveis, configuração/tarifário
-fixados por tentativa, aplicação transacional apenas ao alvo/generation
-esperados. Alargar finalidades para avaliação de tentativa e reformulação,
-sem esbarrar na unicidade atual por pergunta nem confundir `attempt` HTTP com
-tentativa de treino. O plano deve usar nomes/contratos distintos.
+Reuse the phase 3 patterns: reserve before the network, command identifiers
+and content hash, generations and immutable sources, configuration/price list
+fixed per attempt, transactional application only to the expected target/generation.
+Widen purposes for attempt evaluation and rewrite,
+without colliding with the current uniqueness per question nor confusing HTTP `attempt` with a
+practice attempt. The plan must use distinct names/contracts.
 
-Uma chamada remota de cada vez, sem retries pagos automáticos. Rede não mantém
-Mutex SQLite ou bloqueio global de transições; consulta e navegação continuam
-possíveis. Ao regressar, atualizar só o alvo de origem, mesmo que outra prática
-esteja aberta. Não substituir a variante selecionada na interface por um
-resultado tardio para outro nível. Saídas descartadas continuam no consumo.
+One remote call at a time, without automatic paid retries. Network does not hold the
+SQLite Mutex or a global transition lock; consultation and navigation remain
+possible. On returning, update only the origin target, even if another practice
+is open. Do not replace the variant selected in the interface with a late
+result for another level. Discarded outputs remain in the usage.
 
-No reinício, captura não recomeça e pedidos remotos em curso tornam-se
-interrompidos/incertos, sem reenvio automático. Revisão guardada e confirmação
-persistem. Publicação local falhada após resposta remota permite nova escrita
-sem nova rede enquanto resultado estiver em memória; crash nesse intervalo
-mantém resultado incerto, não promete resposta guardada. Gravação finalizada
-sem publicação segue reconciliação existente, sem exigir outra captura.
+On restart, capture does not start again and ongoing remote requests become
+interrupted/uncertain, without automatic resending. Stored review and confirmation
+persist. A local publication that fails after a remote response allows a new write
+without new network while the result is in memory; a crash in that interval
+keeps the result uncertain, it does not promise a stored answer. A finished recording
+without publication follows the existing reconciliation, without requiring another capture.
 
-Custos por finalidade, prática, origem e sessão de proveniência: incluir
-avaliações/reformulações falhadas ou repetidas, preservando registos históricos.
-Não reescrever a avaliação original para adicionar custos; o resumo derivado
-pode distinguir «entrevista original» e «prática posterior», com eventual
-«total combinado» explicitamente rotulado. Uma tentativa
-de rede é contada uma vez, sem duplicar entre prática e sessão. Desconhecidos
-ficam desconhecidos; apresentar subtotais parciais e tentativas incertas.
+Costs per purpose, practice, origin and provenance session: include
+failed or repeated evaluations/rewrites, preserving historical records.
+Do not rewrite the original evaluation to add costs; the derived summary
+can distinguish «entrevista original» and «prática posterior», with an eventual
+«total combinado» explicitly labeled. One network
+attempt is counted once, without duplicating between practice and session. Unknowns
+remain unknown; present partial subtotals and uncertain attempts.
 
-Guardar tarifário/data/fonte e custo reportado separados da estimativa, conforme
-fase 3; não fixar novos preços nesta spec. Síntese local não é consumo da API.
-Sem chave/consentimento, manter funções locais e mostrar como configurar, sem
-ler segredo para o frontend. Não enviar nada automaticamente ao editar história,
-selecionar nível, abrir comparação, confirmar prática ou carregar histórico.
+Store price list/date/source and reported cost separately from the estimate, according to
+phase 3; do not fix new prices in this spec. Local synthesis is not API usage.
+Without key/consent, keep local functions and show how to configure, without
+reading a secret into the frontend. Do not send anything automatically when editing a story,
+selecting a level, opening a comparison, confirming a practice or loading history.
 
-Limites de entrada/saída, tamanho das histórias, texto de reformulação e duração
-de áudio serão concretizados no plano, preservando os limites existentes e
-sem truncamento silencioso. Resultados fora do limite são erros recuperáveis,
-não versões parcialmente aceites.
+Input/output limits, size of stories, rewrite text and audio duration
+will be made concrete in the plan, preserving the existing limits and
+without silent truncation. Results outside the limit are recoverable errors,
+not partially accepted versions.
 
-## 10. Verificação e aceitação
+## 10. Verification and acceptance
 
-Todos os critérios abaixo começam pendentes. Esta tarefa documental só verifica
-coerência e links; não produz evidência de implementação. O plano deve prever
-dados temporários, credenciais/HTTP controlados e testes de falhas, sem usar
-dados pessoais ou inferência paga nos testes automáticos.
+All criteria below start pending. This documentary task only verifies
+coherence and links; it does not produce implementation evidence. The plan must foresee
+temporary data, controlled credentials/HTTP and failure tests, without using
+personal data or paid inference in the automatic tests.
 
-- [ ] F4-01: Migração preserva sessões local/IA, alvos, originais, relatórios e recibos; rollback e versão futura são seguros, incluindo base vazia/v1/v2.
-- [ ] F4-02: Reformulação fixa fonte/nível; apenas confirmações autorizadas entram na carga, incluindo origem de seguimento e exclusão da resposta antiga ao reformular tentativa.
-- [ ] F4-03: Esquema/citações/segmentos inválidos são recusados; casos com negação, incerteza, equipa versus indivíduo, números e resultado negativo/qualitativo têm verificação humana de fidelidade.
-- [ ] F4-04: B1/B2/C1 e valor inicial B1 não são diagnóstico; variantes preservam anteriores e pedido repetido não cobra de novo resultado já válido.
-- [ ] F4-05: Lacunas, citações e explicações não entram no texto Kokoro; falha/falta de áudio derivado permite síntese local sem nova inferência.
-- [ ] F4-06: Nova tentativa só nasce de pergunta confirmada de sessão concluída; não reabre sessão, altera contador ou gera seguimentos. Guarda confirmações e relatórios distintos.
-- [ ] F4-07: Captura/transcrição/revisão/confirmação e regravação preservam versões; falha de escrita e reinício retomam prática sem perder áudio guardado ou duplicar confirmação.
-- [ ] F4-08: Prática pendente pode ser retomada ou abandonada sem eliminação; única captura/prática ativa não interfere em entrevista ou reprodução.
-- [ ] F4-09: Avaliação só usa confirmação da prática e critérios fixos; sem rede fica pendente e retry não repete relatórios válidos nem exige nova gravação.
-- [ ] F4-10: Comparação distingue inicial, seguimento, tentativa e sugestão, apresenta rubricas diferentes/pendências e não afirma melhoria por simples diferença textual.
-- [ ] F4-11: Banco de histórias adiciona/edita com validação, preserva preparação histórica por snapshot e não exige STAR completo para usar.
-- [ ] F4-12: História com marcador exclusivo não aparece em nenhum payload de IA, transcrição, confirmação ou evidência gerada; edição posterior não muda snapshot fixado.
-- [ ] F4-13: Identidades/gerações impedem aplicar resultado a outra prática/nível; comandos repetidos, concorrência e cliques antigos não duplicam efeitos ou custos.
-- [ ] F4-14: Timeout, credencial indisponível, 401/403/429/5xx, JSON inválido, publicação falhada e fecho mantêm fontes e recuperação explícita; não há reenvio automático.
-- [ ] F4-15: Consumo inclui finalidades novas e resultados descartados, sem dupla contagem ou desconhecido tratado como zero; custos de treino distinguem-se da entrevista original.
-- [ ] F4-16: No Windows, utilizador ouve sugestão, repete com palavras próprias, confirma, avalia e compara; valida fidelidade factual, utilidade, espera e isolamento das notas.
+- [ ] F4-01: Migration preserves local/AI sessions, targets, originals, reports and receipts; rollback and future version are safe, including an empty/v1/v2 database.
+- [ ] F4-02: Rewrite fixes source/level; only authorized confirmations enter the payload, including follow-up origin and exclusion of the old answer when rewriting an attempt.
+- [ ] F4-03: Invalid schema/quotations/segments are refused; cases with negation, uncertainty, team versus individual, numbers and negative/qualitative result have human fidelity verification.
+- [ ] F4-04: B1/B2/C1 and the initial value B1 are not a diagnosis; variants preserve previous ones and a repeated request does not charge again for an already valid result.
+- [ ] F4-05: Gaps, quotations and explanations do not enter the Kokoro text; failure/missing derived audio allows local synthesis without new inference.
+- [ ] F4-06: A new attempt only arises from a confirmed question of a completed session; it does not reopen the session, change a counter or generate follow-ups. It stores distinct confirmations and reports.
+- [ ] F4-07: Capture/transcription/review/confirmation and re-recording preserve versions; a write failure and restart resume the practice without losing stored audio or duplicating the confirmation.
+- [ ] F4-08: A pending practice can be resumed or abandoned without deletion; a single active capture/practice does not interfere with an interview or playback.
+- [ ] F4-09: Evaluation only uses the practice confirmation and fixed criteria; without network it stays pending and a retry does not repeat valid reports nor require a new recording.
+- [ ] F4-10: Comparison distinguishes initial, follow-up, attempt and suggestion, presents different rubrics/pending items and does not claim improvement from a mere textual difference.
+- [ ] F4-11: The story bank adds/edits with validation, preserves historical preparation by snapshot and does not require a complete STAR to be used.
+- [ ] F4-12: A story with a unique marker does not appear in any AI payload, transcript, confirmation or generated evidence; a later edit does not change the fixed snapshot.
+- [ ] F4-13: Identities/generations prevent applying a result to another practice/level; repeated commands, concurrency and old clicks do not duplicate effects or costs.
+- [ ] F4-14: Timeout, unavailable credential, 401/403/429/5xx, invalid JSON, failed publication and shutdown keep sources and explicit recovery; there is no automatic resending.
+- [ ] F4-15: Usage includes new purposes and discarded results, without double counting or an unknown treated as zero; practice costs are distinguished from the original interview.
+- [ ] F4-16: On Windows, the user listens to the suggestion, repeats with their own words, confirms, evaluates and compares; validates factual fidelity, usefulness, wait and isolation of the notes.
 
-Validação humana futura: pelo menos uma origem com seguimento, uma sessão local,
-uma resposta sem números com resultado negativo/aprendizagem e duas tentativas
-da mesma pergunta. Usar história com factos que não foram ditos e verificar que
-não surgem na sugestão/feedback. Testar variantes de nível, áudio Kokoro,
-regravação, saída/retoma e indisponibilidade de rede. Registar tempos, modelo,
-consumo/custo conhecido e apreciação real, sem publicar dados profissionais.
-Não dar como validada inferência paga antes de a executar com autorização futura.
+Future human validation: at least one origin with a follow-up, a local session,
+an answer without numbers with a negative result/learning and two attempts
+of the same question. Use a story with facts that were not said and verify that
+they do not appear in the suggestion/feedback. Test level variants, Kokoro audio,
+re-recording, leaving/resuming and network unavailability. Record times, model,
+known usage/cost and real assessment, without publishing professional data.
+Do not consider paid inference validated before executing it with future authorization.
 
-## 11. O que fica para o plano técnico
+## 11. What remains for the technical plan
 
-Esquema físico/migração v3 e restrições, contratos Tauri/DTO, adaptação dos alvos
-de áudio e validação de fontes, prompts/esquemas completos, relações de versões
-de rubrica, limites concretos, componentes do histórico/prática/histórias,
-cache de voz e testes de recuperação. Reutilizar transportes, credenciais,
-consentimento e consumo existentes sem trocar stack.
+Physical schema/v3 migration and constraints, Tauri/DTO contracts, adaptation of the audio
+targets and source validation, complete prompts/schemas, rubric version
+relations, concrete limits, history/practice/stories components,
+voice cache and recovery tests. Reuse existing transports, credentials,
+consent and usage without changing the stack.
 
-O plano deve separar tarefas e verificações executáveis, indicar futuras
-atualizações em setup/validation e preservar alterações existentes da fase 3.
-A aprovação técnica da spec permite escrever o plano, não implementar: o pedido
-atual termina com estes dois documentos revistos. Implementação e comandos que
-alterem o produto exigem uma instrução posterior do utilizador.
+The plan must separate executable tasks and verifications, indicate future
+updates in setup/validation and preserve existing changes of phase 3.
+Technical approval of the spec allows writing the plan, not implementing: the current
+request ends with these two reviewed documents. Implementation and commands that
+change the product require a later instruction from the user.

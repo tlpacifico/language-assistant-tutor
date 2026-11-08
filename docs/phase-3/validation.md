@@ -1,62 +1,62 @@
-# Validação da fase 3
+# Phase 3 validation
 
-Modalidade atual, autorizada em 2026-11-04: [OpenCode Go](../opencode-go/validation.md), com identidade própria e sessão estável. Substitui o default por consumo do registo original, preservando pedidos históricos; não constitui aceitação manual da fase.
+Current modality, authorized on 2026-11-04: [OpenCode Go](../opencode-go/validation.md), with its own identity and a stable session. It replaces the per-usage default of the original record, preserving historical requests; it does not constitute manual acceptance of the phase.
 
-Atualização de 2026-11-04: a avaliação por pergunta durante a entrevista e a reutilização no relatório final têm evidências próprias na [validação do coaching](../ai-coaching/validation.md). Esta extensão não altera as pendências de aceitação manual desta fase.
+Update of 2026-11-04: the per-question evaluation during the interview and its reuse in the final report have their own evidence in the [coaching validation](../ai-coaching/validation.md). This extension does not change the manual acceptance pending items of this phase.
 
-Data: 2026-11-02. Estado: implementação verificada automaticamente; revisão técnica do coordenador concluída; aceitação manual pendente. A antecipação da fase 3 foi autorizada pelo utilizador; não aceita nem conclui as fases 1 e 2.
+Date: 2026-11-02. State: implementation verified automatically; technical review by the coordinator completed; manual acceptance pending. The bringing forward of phase 3 was authorized by the user; it does not accept nor complete phases 1 and 2.
 
-## Evidência automática
+## Automated evidence
 
-Os testes usam SQLite e ficheiros temporários reais, áudio simulado, credenciais de instância falsas e HTTP de loopback controlado. Não usam chave paga, microfone pessoal nem respostas profissionais reais.
+The tests use real SQLite and temporary files, simulated audio, false instance credentials and controlled loopback HTTP. They do not use a paid key, a personal microphone nor real professional answers.
 
-| Critério | Evidência | Pendência humana |
+| Criterion | Evidence | Human pending item |
 | --- | --- | --- |
-| F3-01 | `ai_migration`, `database`, regressões `sessions/answers/service/artifacts`, contratos v2 | Percurso local real após atualização |
-| F3-02 | `ai_service::settings_remove_secret_and_consent_on_destination_change`, UI limpa campo em falha; adaptador Windows sem fallback | Exercitar credencial protegida na máquina |
-| F3-03 | Teste sem confirmação/consentimento não chama rede; teste HTTP inspeciona body/auth | Conferir aviso e conta real |
-| F3-04 | Testes de seguimento único, gravação própria, contador e bloqueio de segundo pedido | Utilidade da pergunta |
-| F3-05 | `ai_service` grava e confirma inicial e seguimento separadamente; regressão de áudio/transcrição/revisão | Gravações reais e reprodução Kokoro |
-| F3-06 | Barreira HTTP permite dispensar, avançar e gravar seguinte; conteúdo tardio descartado | Repetir pela janela |
-| F3-07 | Recibo repetido durante rede não duplica chamada; confirmação e avanço preservam regras existentes | Percurso com cliques e retoma reais |
-| F3-08 | Reinício torna pedido interrompido sem reenvio; fecho não espera por HTTP nem continua batch | Encerrar/reabrir janela em cada etapa |
-| F3-09 | `ai_validation` verifica Unicode literal, papel e fonte; UI apresenta fontes distintas | Fidelidade semântica do feedback |
-| F3-10 | Ausência exige todas as fontes; citações alteradas/prioridades órfãs/campos extra são recusados | Avaliar ausências sugeridas |
-| F3-11 | Fixtures com falha/aprendizagem; instruções da resposta ficam na mensagem de dados; sem nota global/campos acústicos | Respostas qualitativas/negativas e instruções maliciosas reais |
-| F3-12 | Sessão de três: relatório 1 válido, 2 falha; retry pede só 2 e 3; estado parcial/pronto | Consulta e retoma no histórico |
-| F3-13 | `ai_usage`: cache, desconhecido, zero explícito, modelo diferente e subtotal parcial; consumo tardio registado | Comparar com faturação real |
-| F3-14 | HTTP 401/403/429/500, timeout, JSON inválido, excesso sem Content-Length; falha de publicação injetada e retry sem nova rede; rollback da migração | Falhas reais de rede/armazenamento |
-| F3-15 | Teste com HTTP suspenso mantém dispensa/captura seguinte; teste React integrado do seguimento | Responsividade percebida |
-| F3-16 | Não substituível por automação | Sessão real de três principais e custo/espera/utilidade |
+| F3-01 | `ai_migration`, `database`, `sessions/answers/service/artifacts` regressions, v2 contracts | Real local journey after the update |
+| F3-02 | `ai_service::settings_remove_secret_and_consent_on_destination_change`, UI clears the field on failure; Windows adapter without fallback | Exercise a protected credential on the machine |
+| F3-03 | Test without confirmation/consent does not call the network; HTTP test inspects body/auth | Check the warning and the real account |
+| F3-04 | Tests of a single follow-up, its own recording, the counter and the blocking of a second request | Usefulness of the question |
+| F3-05 | `ai_service` records and confirms the initial answer and the follow-up separately; audio/transcription/review regression | Real recordings and Kokoro playback |
+| F3-06 | HTTP barrier allows dismissing, advancing and recording the next one; late content discarded | Repeat through the window |
+| F3-07 | Repeated receipt during the network does not duplicate the call; confirmation and advance preserve the existing rules | Journey with real clicks and resume |
+| F3-08 | Restart turns the request into interrupted without resending; shutdown neither waits for HTTP nor continues the batch | Close/reopen the window at each step |
+| F3-09 | `ai_validation` verifies literal Unicode, role and source; UI presents distinct sources | Semantic fidelity of the feedback |
+| F3-10 | Absence requires all sources; altered citations/orphan priorities/extra fields are refused | Assess the suggested absences |
+| F3-11 | Fixtures with failure/learning; the answer's instructions stay in the data message; no global score/acoustic fields | Qualitative/negative answers and real malicious instructions |
+| F3-12 | Session of three: report 1 valid, 2 fails; retry requests only 2 and 3; partial/ready state | Consult and resume in the history |
+| F3-13 | `ai_usage`: cache, unknown, explicit zero, different model and partial subtotal; late usage recorded | Compare with the real billing |
+| F3-14 | HTTP 401/403/429/500, timeout, invalid JSON, excess without Content-Length; injected publication failure and retry without new network; migration rollback | Real network/storage failures |
+| F3-15 | Test with suspended HTTP keeps dismissal/next capture; integrated React test of the follow-up | Perceived responsiveness |
+| F3-16 | Not replaceable by automation | Real session of three main questions and cost/wait/usefulness |
 
-## Comandos
+## Commands
 
-Em 2026-11-02, `scripts/verify.ps1` terminou com **8/8 checks e código 0 em 77,6 s**: **175 testes Rust, 57 Vitest, 36 pytest sem models**, build frontend, formatação, clippy com -D warnings e pip check limpo. Uma execução anterior deu 8/8 em 96,2 s.
+On 2026-11-02, `scripts/verify.ps1` finished with **8/8 checks and exit code 0 in 77.6 s**: **175 Rust tests, 57 Vitest, 36 pytest without models**, frontend build, formatting, clippy with -D warnings and clean pip check. A previous run gave 8/8 in 96.2 s.
 
-`npm.cmd run tauri -- build --no-bundle` terminou com código 0; Cargo release inicial em 2m00s e rebuild final após a correção do fecho em 1m18s. O binário `src-tauri/target/release/language-assistant-tutor.exe` foi iniciado com APPDATA/LOCALAPPDATA temporários e configuração de áudio inexistente; `CloseMainWindow=True`, saída dentro do prazo de 15 s e **código 0**. Nenhum dado pessoal foi migrado pelo smoke. Não é validação de instalador.
+`npm.cmd run tauri -- build --no-bundle` finished with exit code 0; initial Cargo release in 2m00s and final rebuild after the shutdown correction in 1m18s. The binary `src-tauri/target/release/language-assistant-tutor.exe` was started with temporary APPDATA/LOCALAPPDATA and a nonexistent audio configuration; `CloseMainWindow=True`, exit within the 15 s deadline and **exit code 0**. No personal data was migrated by the smoke. It is not an installer validation.
 
-Os comandos específicos e limitações ficam no [relatório](implementation-report.md).
+The specific commands and limitations are in the [report](implementation-report.md).
 
-## Resultado manual comunicado pelo utilizador — 2026-11-03
+## Manual result reported by the user — 2026-11-03
 
-O utilizador comunicou: «fiz o teste manual, está tudo bem» e esclareceu que não utilizou a API paga. Fica registado o resultado favorável do percurso testado, sem inferência paga real. A integração com o fornecedor, a utilidade dos seguimentos, a fidelidade semântica do feedback e o consumo/custo reais continuam por validar. O relato não discrimina os restantes cenários dos roteiros das três fases, incluindo falhas e recuperação; não se inferem medições, proteção efetiva de credenciais ou cobertura individual desses critérios. A aceitação manual completa continua pendente.
+The user reported: «I did the manual test, everything is fine» and clarified that they did not use the paid API. The favorable result of the tested journey is recorded, without real paid inference. The integration with the provider, the usefulness of the follow-ups, the semantic fidelity of the feedback and the real usage/cost remain to be validated. The report does not distinguish the remaining scenarios of the scripts of the three phases, including failures and recovery; no measurements, effective credential protection or individual coverage of those criteria are inferred. The complete manual acceptance remains pending.
 
-## Roteiro manual pendente
+## Pending manual script
 
-1. Completar a validação manual das fases [1](../phase-1/validation.md) e [2](../phase-2/validation.md), que continuam pendentes.
-2. Configurar chave/saldo na janela, confirmar proteção do segredo e o destino autorizado. Usar texto de teste antes de dados pessoais. Não enviar chaves por chat.
-3. Sessão IA de três principais: resposta completa, outra incompleta e outra com termos técnicos e resultado qualitativo/negativo. Ouvir perguntas, originais iniciais e seguimentos. Rever e confirmar cada alvo.
-4. Conferir que há no máximo um seguimento por principal, que não repete informação respondida e que não exige números ou sucesso. Medir espera e avaliar aceitabilidade.
-5. Falhar rede após confirmação: repetir uma vez e, noutra principal, dispensar explicitamente. Restabelecer ligação e verificar ausência de seguimento atrasado.
-6. Sair e retomar durante decisão, seguimento e feedback; confirmar que não há reenvio automático nem nova gravação exigida.
-7. Gerar feedback, verificar citações e origem inicial/seguimento, ausências e inglês separado de STAR. Interromper o segundo relatório e repetir só os que faltam.
-8. Consultar o histórico durante outra sessão. Comparar modelo, consumo conhecido e estimativas com a conta real; conservar desconhecidos como tal.
-9. Exercitar falha de escrita após resposta recebida e a publicação local sem novo pedido. O teste automático cobre esta condição; o exercício real requer um cenário controlado sem pôr dados pessoais em risco.
+1. Complete the manual validation of phases [1](../phase-1/validation.md) and [2](../phase-2/validation.md), which remain pending.
+2. Configure the key/balance in the window, confirm the protection of the secret and the authorized destination. Use test text before personal data. Do not send keys by chat.
+3. AI session of three main questions: one complete answer, another incomplete and another with technical terms and a qualitative/negative result. Listen to the questions, the initial originals and the follow-ups. Review and confirm each target.
+4. Check that there is at most one follow-up per main question, that it does not repeat information already answered and that it does not demand numbers or success. Measure the wait and assess acceptability.
+5. Fail the network after confirmation: repeat once and, in another main question, dismiss explicitly. Restore the connection and verify the absence of a late follow-up.
+6. Leave and resume during the decision, the follow-up and the feedback; confirm that there is no automatic resending nor a new recording required.
+7. Generate feedback, verify the citations and the initial/follow-up origin, the absences and the English separate from STAR. Interrupt the second report and repeat only the missing ones.
+8. Consult the history during another session. Compare the model, the known usage and the estimates with the real account; keep the unknowns as such.
+9. Exercise a write failure after the answer is received and the local publication without a new request. The automated test covers this condition; the real exercise requires a controlled scenario without putting personal data at risk.
 
-Não marcar a fase como concluída/aceite antes desta evidência. Build `--no-bundle` não valida um instalador nem uma instalação empacotada.
+Do not mark the phase as complete/accepted before this evidence. The `--no-bundle` build does not validate an installer nor a packaged installation.
 
-Revisão final do coordenador: correção da corrida de fecho conferida; execução independente final de scripts/verify.ps1 com 8/8 checks, saída 0 em 42,7 s (175 Rust, 57 React, 36 Python). O build final após a correção terminou com saída 0 em 1m18s; o arranque/fecho isolado terminou com código 0. Aceitação manual e inferência paga continuam pendentes.
+Final review by the coordinator: shutdown race correction checked; final independent run of scripts/verify.ps1 with 8/8 checks, exit 0 in 42.7 s (175 Rust, 57 React, 36 Python). The final build after the correction finished with exit 0 in 1m18s; the isolated startup/shutdown finished with code 0. Manual acceptance and paid inference remain pending.
 
-Configuração local em 2026-11-03: a pedido do utilizador, foi configurado o modelo deepseek-v4.1-flash e a base HTTPS do OpenCode. A chave foi guardada no Windows Credential Manager no alvo usado por keyring e a leitura foi verificada em memória, sem mostrar o segredo. A configuração pública foi persistida sem a chave. Não houve chamada de rede, inferência paga ou teste de saldo/autenticação no fornecedor. A autorização de envio de texto continua por confirmar na janela da aplicação.
+Local configuration on 2026-11-03: at the user's request, the deepseek-v4.1-flash model and the OpenCode HTTPS base were configured. The key was stored in the Windows Credential Manager under the target used by keyring and the read was verified in memory, without showing the secret. The public configuration was persisted without the key. There was no network call, paid inference or balance/authentication test at the provider. The authorization to send text remains to be confirmed in the application window.
 
-Em 2026-11-04 foi corrigida a apresentação de erros de pedidos e a distinção HTTP 402 (faturação) / 403 (acesso). O incidente real foi confirmado pelo utilizador como `Account.InsufficientFunds`; não foram feitas novas chamadas pagas. Ver [diagnóstico e validação](../diagnostics/validation.md#correção-de-faturação-e-erros-ocultos--2026-11-04).
+On 2026-11-04 the presentation of request errors and the HTTP 402 (billing) / 403 (access) distinction were corrected. The real incident was confirmed by the user as `Account.InsufficientFunds`; no new paid calls were made. See [diagnostics and validation](../diagnostics/validation.md#billing-corrections-and-hidden-errors--2026-11-04).

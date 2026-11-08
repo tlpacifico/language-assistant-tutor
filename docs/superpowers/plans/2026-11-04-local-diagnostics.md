@@ -1,59 +1,59 @@
-# Plano — diagnóstico local
+# Plan — local diagnostics
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans para executar tarefa a tarefa.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to run task by task.
 
-**Goal:** investigar falhas durante uso real, preservando diagnósticos entre builds.
+**Goal:** investigate failures during real use, preserving diagnostics between builds.
 
-**Architecture:** escritor Rust com fila limitada, eventos de campos fechados e exportação local; fronteiras React/IPC e supervisor do auxiliar alimentam o escritor. Build metadata produzida pelo build.rs.
+**Architecture:** Rust writer with a bounded queue, closed-field events and local export; React/IPC boundaries and the helper supervisor feed the writer. Build metadata produced by build.rs.
 
-**Tech Stack:** React/TypeScript, Rust/Tauri 2 e Python existentes; sem novas dependências.
+**Tech Stack:** existing React/TypeScript, Rust/Tauri 2 and Python; no new dependencies.
 
-**Spec:** [desenho](../specs/2026-11-04-local-diagnostics-design.md).
+**Spec:** [design](../specs/2026-11-04-local-diagnostics-design.md).
 
 ## Global Constraints
 
-Português de Portugal. Dados em `app_data_dir()/diagnostics`; identidade Tauri estável; cinco ficheiros de 1 MiB, 30 dias. Sem conteúdo pessoal nem envio remoto. Preservar trabalho anterior na branch atual, que contém alterações por consolidar; execução direta pedida pelo utilizador.
+European Portuguese. Data in `app_data_dir()/diagnostics`; stable Tauri identity; five files of 1 MiB, 30 days. No personal content and no remote sending. Preserve earlier work on the current branch, which contains changes still to be consolidated; direct execution requested by the user.
 
 ## Review Focus
 
-- Reiniciar com nova versão conserva eventos anteriores (teste Rust de reabertura).
-- Disco indisponível não interrompe operações (teste Rust de falha de escrita).
-- Eventos externos com segredos não entram nos ficheiros (testes Rust e React de campos fechados).
-- Exportação inclui os eventos anteriores e não substitui ficheiros (teste Rust de barreira/exportação).
-- Falha React permite exportar sem reiniciar automaticamente e perder rascunhos (teste do error boundary).
+- Restarting with a new version keeps the earlier events (Rust reopen test).
+- Unavailable disk does not interrupt operations (Rust write failure test).
+- External events with secrets do not enter the files (Rust and React closed-field tests).
+- Export includes the earlier events and does not replace files (Rust barrier/export test).
+- A React failure allows exporting without automatically restarting and losing drafts (error boundary test).
 
-### Tarefa 1: armazenamento e builds
+### Task 1: storage and builds
 
-**Ficheiros:** criar `src-tauri/src/diagnostics.rs`, `src-tauri/tests/diagnostics.rs`; alterar `src-tauri/build.rs`, `src-tauri/src/lib.rs`.
+**Files:** create `src-tauri/src/diagnostics.rs`, `src-tauri/tests/diagnostics.rs`; change `src-tauri/build.rs`, `src-tauri/src/lib.rs`.
 
-**Interfaces:** `Diagnostics::open(root, build)`, `record(event)`, `status()`, `export(directory)`; `BuildInfo::current()`; escritor limitado, estado partilhado e barreira para exportação.
+**Interfaces:** `Diagnostics::open(root, build)`, `record(event)`, `status()`, `export(directory)`; `BuildInfo::current()`; bounded writer, shared state and barrier for export.
 
-- [x] Escrever testes de preservação entre versões, privacidade, rotação, retenção, exportação e falha de disco; executar `cargo test --manifest-path src-tauri/Cargo.toml --test diagnostics`, observar falha antes da implementação.
-- [x] Implementar escritor e metadata sem novas dependências; executar a mesma bateria até aprovar.
+- [x] Write tests for preservation between versions, privacy, rotation, retention, export and disk failure; run `cargo test --manifest-path src-tauri/Cargo.toml --test diagnostics`, observe the failure before the implementation.
+- [x] Implement writer and metadata without new dependencies; run the same battery until it passes.
 
-### Tarefa 2: captura e interface
+### Task 2: capture and interface
 
-**Ficheiros:** alterar `src-tauri/src/{lib,domain}.rs`, `src-tauri/src/worker/mod.rs`, `audio-worker/src/audio_worker/__main__.py`, `src/{main,App}.tsx`, `src/lib/interview-client.ts`; criar `src/lib/diagnostics.ts`, painel e error boundary em `src/features/diagnostics/`, respetivos testes.
+**Files:** change `src-tauri/src/{lib,domain}.rs`, `src-tauri/src/worker/mod.rs`, `audio-worker/src/audio_worker/__main__.py`, `src/{main,App}.tsx`, `src/lib/interview-client.ts`; create `src/lib/diagnostics.ts`, panel and error boundary in `src/features/diagnostics/`, and their tests.
 
-**Interfaces:** comandos Tauri `diagnostics_status`, `diagnostics_record`, `diagnostics_export`; eventos apenas categorias/códigos permitidos. Exportação devolve caminho local; painel permite indicar diretório.
+**Interfaces:** Tauri commands `diagnostics_status`, `diagnostics_record`, `diagnostics_export`; events only allowed categories/codes. Export returns a local path; the panel allows indicating a directory.
 
-- [x] Escrever testes React da captura sem conteúdo pessoal, falhas de IPC e recuperação React; executar `npm.cmd test -- src/features/diagnostics src/lib/diagnostics.test.ts` e observar falha.
-- [x] Implementar captura de códigos Rust, panic sem mensagem, erros Python com frames próprios, wrapper IPC e captura global; integrar painel e recuperação; aprovar testes.
+- [x] Write React tests for capture without personal content, IPC failures and React recovery; run `npm.cmd test -- src/features/diagnostics src/lib/diagnostics.test.ts` and observe the failure.
+- [x] Implement capture of Rust codes, panic without message, Python errors with their own frames, IPC wrapper and global capture; integrate panel and recovery; pass the tests.
 
-### Tarefa 3: validação e documentação
+### Task 3: validation and documentation
 
-**Ficheiros:** criar `docs/diagnostics/validation.md`; atualizar `AGENTS.md` e `docs/tech-stack.md`.
+**Files:** create `docs/diagnostics/validation.md`; update `AGENTS.md` and `docs/tech-stack.md`.
 
-- [x] Executar `scripts/verify.ps1`, build release `--no-bundle`, smoke isolado, conferir JSON exportado e links locais; registar resultados reais e limites manuais.
-- [x] Rever o diff exclusivamente desta alteração; preservar alterações anteriores e não fazer push sem pedido.
+- [x] Run `scripts/verify.ps1`, release build `--no-bundle`, isolated smoke test, check the exported JSON and local links; record real results and manual limits.
+- [x] Review the diff of this change exclusively; preserve earlier changes and do not push without a request.
 
-## Registo de execução
+## Execution record
 
-As caixas e a validação serão atualizadas com evidência. O pedido explícito inclui implementar, pelo que não se introduz uma nova pausa de aprovação. A branch atual contém trabalho necessário já autorizado; não se cria um checkout limpo que o exclua.
+The checkboxes and the validation will be updated with evidence. The explicit request includes implementing, so no new approval pause is introduced. The current branch contains necessary work already authorized; a clean checkout that excludes it is not created.
 
-- Tarefas 1 e 2: testes focados falharam antes da implementação e aprovaram depois. Verificação agregada: 8/8, 262 Rust, 117 React, 36 Python. Interfaces IPC e escritor conferidas em conjunto.
-- Revisão final independente: quatro problemas importantes corrigidos, com reprodução e testes de regressão (ver validação). Sem problemas menores adiados.
-- Decisão de execução: manter as alterações na branch existente, sem commit ou push automático, para preservar o trabalho anterior por consolidar.
-- Decisão de ensaio: usar `app.appDirectoriesOverride` numa configuração temporária de build e voltar a compilar a configuração normal no fim. Em Windows, os diretórios conhecidos do sistema não ficam necessariamente isolados por mudar apenas APPDATA/LOCALAPPDATA.
+- Tasks 1 and 2: focused tests failed before the implementation and passed afterwards. Aggregated verification: 8/8, 262 Rust, 117 React, 36 Python. IPC interfaces and writer checked together.
+- Final independent review: four important problems fixed, with reproduction and regression tests (see validation). No minor problems deferred.
+- Execution decision: keep the changes on the existing branch, without automatic commit or push, to preserve the earlier work still to be consolidated.
+- Rehearsal decision: use `app.appDirectoriesOverride` in a temporary build configuration and compile the normal configuration again at the end. On Windows, the system's known directories are not necessarily isolated by changing only APPDATA/LOCALAPPDATA.
 
-- Tarefa 3: build isolado, três ensaios WebView2 com saída 0 e persistência entre reinícios, build normal final com saída 0 (1m01s), ausência do diretório de ensaio no binário final e links locais conferidos. Evidência em `docs/diagnostics/validation.md`.
+- Task 3: isolated build, three WebView2 rehearsals with exit code 0 and persistence between restarts, final normal build with exit code 0 (1m01s), absence of the rehearsal directory in the final binary and local links checked. Evidence in `docs/diagnostics/validation.md`.

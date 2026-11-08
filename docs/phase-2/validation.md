@@ -1,55 +1,55 @@
-# Validação da fase 2 — matriz F2-01 a F2-16
+# Phase 2 validation — matrix F2-01 to F2-16
 
-Data: 2026-11-02 · Ramo: `feature/phase-2-guided-interview` · HEAD no início
-desta verificação: `f2eeb20` · Ambiente descrito em [setup.md](setup.md).
+Date: 2026-11-02 · Branch: `feature/phase-2-guided-interview` · HEAD at the start
+of this verification: `f2eeb20` · Environment described in [setup.md](setup.md).
 
-Este documento distingue **o que foi verificado por automação** (comando,
-teste e resultado reais) do que **só o utilizador pode validar** (sessões com
-voz real, audição, espera, percurso offline pela janela e reinício real). A
-fase 2 **não está concluída nem aceite**: a implementação e a verificação
-automática estão feitas, mas a validação manual da secção 4 continua pendente.
-A existência desta matriz não substitui essa validação.
+This document distinguishes **what was verified by automation** (actual command,
+test and result) from what **only the user can validate** (sessions with real
+voice, listening, waiting, the offline journey through the window and a real
+restart). Phase 2 **is not complete or accepted**: the implementation and the
+automated verification are done, but the manual validation of section 4 remains
+pending. The existence of this matrix does not replace that validation.
 
-Legenda dos estados:
+Legend of states:
 
-| Estado | Significado |
+| State | Meaning |
 | --- | --- |
-| **verificado** | Existe evidência executada e reproduzível que cobre o critério por inteiro. |
-| **parcial** | Uma parte do critério tem evidência executada; a restante exige ação do utilizador. |
-| **pendente** | Só pode ser demonstrado pelo utilizador (voz real, audição, espera ou decisão). |
-| **falhado** | Houve evidência contrária. Nenhum critério ficou neste estado. |
+| **verified** | There is executed and reproducible evidence covering the criterion in full. |
+| **partial** | Part of the criterion has executed evidence; the remainder requires user action. |
+| **pending** | It can only be demonstrated by the user (real voice, listening, waiting or decision). |
+| **failed** | There was contrary evidence. No criterion ended in this state. |
 
-## 1. Ambiente e âmbito
+## 1. Environment and scope
 
-O ambiente é o da fase 1, na mesma máquina (ver
-[`docs/phase-1/setup.md`](../phase-1/setup.md)), com uma única dependência nova:
+The environment is that of phase 1, on the same machine (see
+[`docs/phase-1/setup.md`](../phase-1/setup.md)), with a single new dependency:
 
-| Elemento | Valor observado |
+| Element | Observed value |
 | --- | --- |
-| Windows / Rust / Node / Python | Windows 11 Enterprise `10.0.26300`; `rustc 1.99.1`; Node `24.11.1` (npm `11.6.2`); Python `3.11.9` na `.venv` |
-| SQLite em Rust | `rusqlite 0.41.1` com `bundled`, `libsqlite3-sys 0.39.1` compilado no build release |
-| Modelos | Whisper `small` e Kokoro-82M preparados fora do repositório (fase 1) |
-| Configuração pessoal | `audio.json` em `%APPDATA%\dev.thacio.languageassistanttutor\` (não versionado) |
-| Base de dados | `%APPDATA%\dev.thacio.languageassistanttutor\tutor.sqlite3` |
+| Windows / Rust / Node / Python | Windows 11 Enterprise `10.0.26300`; `rustc 1.99.1`; Node `24.11.1` (npm `11.6.2`); Python `3.11.9` in the `.venv` |
+| SQLite in Rust | `rusqlite 0.41.1` with `bundled`, `libsqlite3-sys 0.39.1` compiled in the release build |
+| Models | Whisper `small` and Kokoro-82M prepared outside the repository (phase 1) |
+| Personal configuration | `audio.json` in `%APPDATA%\dev.thacio.languageassistanttutor\` (not versioned) |
+| Database | `%APPDATA%\dev.thacio.languageassistanttutor\tutor.sqlite3` |
 
-Nenhuma gravação pessoal foi criada nesta verificação. A base e os diretórios
-foram criados pelo primeiro arranque da versão da fase 2 e inspecionados em
-modo de leitura.
+No personal recording was created in this verification. The database and the
+directories were created by the first startup of the phase 2 version and
+inspected in read-only mode.
 
-## 2. Verificação automática executada
+## 2. Automated verification executed
 
-| Comando | Saída | Resultado |
+| Command | Exit | Result |
 | --- | --- | --- |
-| `.\scripts\verify.ps1` | 0 | 8/8 checks em 18,5 s (147 testes Rust, 43 Vitest, 36 pytest sem `models`, `pip check` limpo) |
-| `.\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_offline_models.py -m models -q` | 0 | `2 passed` em 48,14 s — **não foi skip** (com `LANGUAGE_TUTOR_MODELS_MANIFEST` para o manifesto preparado) |
-| `npm.cmd run tauri -- build --no-bundle` | 0 | Build release em 1m 17s; binário `src-tauri\target\release\language-assistant-tutor.exe` |
-| Arranque e fecho do binário release | 0 | Janela «Tutor de entrevistas», processo a responder, auxiliar iniciado e terminado, código de saída do processo 0 |
-| Inspeção de `tutor.sqlite3` após os arranques | 0 | `user_version = 1`; 20 perguntas (4/3/3/4/3/3); uma marca `questions-v1`; 0 sessões |
-| Procura de `opencode`, `openai`, `api.deepseek`, `https://api` em Rust/TS/Python | 0 ocorrências | Nenhum cliente ou chamada de IA no código desta fase |
+| `.\scripts\verify.ps1` | 0 | 8/8 checks in 18.5 s (147 Rust tests, 43 Vitest, 36 pytest without `models`, clean `pip check`) |
+| `.\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_offline_models.py -m models -q` | 0 | `2 passed` in 48.14 s — **it was not a skip** (with `LANGUAGE_TUTOR_MODELS_MANIFEST` for the prepared manifest) |
+| `npm.cmd run tauri -- build --no-bundle` | 0 | Release build in 1m 17s; binary `src-tauri\target\release\language-assistant-tutor.exe` |
+| Startup and shutdown of the release binary | 0 | «Tutor de entrevistas» window, process responding, helper started and finished, process exit code 0 |
+| Inspection of `tutor.sqlite3` after the startups | 0 | `user_version = 1`; 20 questions (4/3/3/4/3/3); one `questions-v1` marker; 0 sessions |
+| Search for `opencode`, `openai`, `api.deepseek`, `https://api` in Rust/TS/Python | 0 occurrences | No AI client or call in the code of this phase |
 
 ### 2.1 `.\scripts\verify.ps1`
 
-Saída real (excertos; a saída completa está no relatório da tarefa em
+Real output (excerpts; the complete output is in the task report at
 `.superpowers/sdd/2026-11-02-phase-2-guided-interview-implementation/task-10-report.md`):
 
 ```text
@@ -69,29 +69,29 @@ Saída real (excertos; a saída completa está no relatório da tarefa em
 Verificação concluída: 8/8 checks com saída 0 em 18,5 s.
 ```
 
-Suítes Rust desta execução (147 testes, 0 falhas): `lib` 20, `answers` 16,
+Rust suites of this run (147 tests, 0 failures): `lib` 20, `answers` 16,
 `artifacts` 10, `audio` 11, `database` 7, `domain` 8, `interview_contracts` 4,
 `legacy` 4, `questions` 6, `service` 34, `sessions` 8, `storage` 12, `worker` 7.
-Os dois testes Python deselecionados são os da marca `models`, executados à
-parte na secção 2.2.
+The two deselected Python tests are those of the `models` marker, run separately
+in section 2.2.
 
-### 2.2 Teste real dos motores (`-m models`)
+### 2.2 Real engine test (`-m models`)
 
-Saída real:
+Real output:
 
 ```text
 ..                                                                       [100%]
 2 passed, 5 warnings in 48.14s
 ```
 
-Os avisos são de terceiros e já conhecidos (`UserWarning` do LSTM do PyTorch,
-`FutureWarning` de `weight_norm`/`torch.jit.script`, `DeprecationWarning` do
-Misaki). Sem o manifesto preparado o mesmo comando faz skip explícito; este
-resultado é `passed`, não `skipped`.
+The warnings are third-party and already known (`UserWarning` from PyTorch's
+LSTM, `FutureWarning` from `weight_norm`/`torch.jit.script`, `DeprecationWarning`
+from Misaki). Without the prepared manifest the same command explicitly skips;
+this result is `passed`, not `skipped`.
 
-### 2.3 Build release sem instalador
+### 2.3 Release build without installer
 
-Saída real (excertos):
+Real output (excerpts):
 
 ```text
    Compiling libsqlite3-sys v0.39.1
@@ -101,13 +101,13 @@ Saída real (excertos):
 EXIT=0
 ```
 
-Este build **não** é um instalador autónomo e não valida a distribuição da fase
-5: o binário continua a depender da `.venv`, do `audio.json` e dos modelos
-preparados nesta máquina.
+This build is **not** a standalone installer and does not validate the phase 5
+distribution: the binary still depends on the `.venv`, on `audio.json` and on the
+models prepared on this machine.
 
-### 2.4 Arranque e fecho do binário
+### 2.4 Startup and shutdown of the binary
 
-Saída real do segundo arranque (o primeiro criou a base):
+Real output of the second startup (the first one created the database):
 
 ```text
 auxiliares antes: 0
@@ -122,13 +122,13 @@ auxiliares depois do fecho: 0
 codigo de saida do processo: 0
 ```
 
-O fecho normal finaliza a captura pendente, encerra o auxiliar e termina com
-código 0; nenhum processo `python -m audio_worker` ficou órfão. Os dois
-processos durante a execução são o lançador da `.venv` e o Python que executa o
-módulo.
+Normal shutdown finalizes the pending capture, terminates the helper and exits
+with code 0; no `python -m audio_worker` process was left orphaned. The two
+processes during the run are the `.venv` launcher and the Python that runs the
+module.
 
-Inspeção da base depois do primeiro arranque e de novo depois do segundo
-(leitura apenas):
+Inspection of the database after the first startup and again after the second
+(read only):
 
 ```text
 user_version: 1
@@ -142,14 +142,14 @@ sessoes: 0
 seed: [('questions-v1',)]
 ```
 
-Repetir o arranque manteve 20 perguntas e uma única marca de seed — o banco
-inicial não foi duplicado nem reposto por cima de alterações.
+Repeating the startup kept 20 questions and a single seed marker — the initial
+bank was neither duplicated nor reset over changes.
 
-### 2.5 Reexecução após a correção dos achados da revisão do ramo
+### 2.5 Re-run after fixing the findings of the branch review
 
-A revisão final do ramo encontrou três problemas importantes e duas
-inconsistências documentais; esta secção registra a reexecução depois das
-correções. Saída real (excertos):
+The final review of the branch found three important problems and two
+documentation inconsistencies; this section records the re-run after the
+corrections. Real output (excerpts):
 
 ```text
 [1/8] TypeScript (tsc --noEmit)                 OK (1,3 s)
@@ -165,149 +165,150 @@ correções. Saída real (excertos):
 Verificação concluída: 8/8 checks com saída 0 em 46,1 s.
 ```
 
-Suítes Rust desta reexecução (151 testes, 0 falhas): `lib` 20, `answers` 18,
+Rust suites of this re-run (151 tests, 0 failures): `lib` 20, `answers` 18,
 `artifacts` 10, `audio` 11, `database` 7, `domain` 8, `interview_contracts` 4,
 `legacy` 4, `questions` 6, `service` 36, `sessions` 8, `storage` 12, `worker` 7.
-Os dois testes novos de `answers` cobrem a operação registada em `running` e
-encerrada com tempos/erro; os dois novos de `service` cobrem a recuperação de
-uma operação interrompida no arranque e o encerramento de uma transcrição com os
-seus tempos. As tabelas da secção 2 descrevem a execução anterior; esta
-reexecução é a evidência mais recente.
+The two new `answers` tests cover the operation recorded as `running` and closed
+with times/error; the two new `service` tests cover the recovery of an operation
+interrupted at startup and the closing of a transcription with its times. The
+tables in section 2 describe the previous run; this re-run is the most recent
+evidence.
 
-## 3. Matriz de critérios
+## 3. Criteria matrix
 
-Ligação às tarefas do [plano técnico](../superpowers/plans/2026-11-02-phase-2-guided-interview-implementation.md)
-e aos testes realmente executados. Os nomes de teste são os das suítes Rust
-(`src-tauri/tests/*.rs`), Vitest (`*.test.tsx`) ou unitários internos.
+Link to the tasks of the [technical plan](../superpowers/plans/2026-11-02-phase-2-guided-interview-implementation.md)
+and to the tests actually executed. The test names are those of the Rust suites
+(`src-tauri/tests/*.rs`), Vitest (`*.test.tsx`) or internal unit tests.
 
-| F2 | Critério | Tarefas | Estado | Evidência / o que falta |
+| F2 | Criterion | Tasks | State | Evidence / what is missing |
 | --- | --- | --- | --- | --- |
-| F2-01 | Banco inicial contém 20 perguntas nas seis categorias; repetir o arranque não duplica nem repõe edições. | 1, 2 | **verificado** (automação) | `questions::seed_is_once_and_preserves_edits` (20 perguntas, IDs estáveis, reabrir não duplica, edição preservada, marca única), `questions::bank_covers_six_categories` (4/3/3/4/3/3), `questions::incomplete_seed_rolls_back_without_marker`, unitário `db::questions::tests::embedded_seed_is_valid_and_unpadded`. Arranque real duas vezes: 20 perguntas, uma marca `questions-v1`. |
-| F2-02 | Adicionar e editar texto, categoria, competências e critérios persiste após reinício, com validação dos campos obrigatórios. | 2, 7 | **verificado** (automação) | `questions::blank_fields_are_rejected`, `question_trims_only_outer_whitespace` (persistência depois de reabrir), `stale_edit_does_not_overwrite`; `interview_contracts::question_validation_trims_outer_spaces_and_requires_content`; Vitest `QuestionBank.test.tsx`: `bank_edit_survives_reload`, `bank_rejects_empty_fields`, `creates_a_question_with_competencies_and_criteria`, `keeps_the_editor_open_when_the_save_fails`. |
-| F2-03 | Quantidade inicial três; sessões com uma, três e outra quantidade elegível; insuficiência explícita, sem redução ou repetição silenciosa. | 3, 7, 10 | **parcial** | Regra e interface cobertas: `sessions::starts_one_three_and_available_count`, `insufficient_category_creates_nothing`, `interview_contracts::count_validation_rejects_zero_and_more_than_eligible` (`count == 0` devolve `INSUFFICIENT_QUESTIONS`), Vitest `defaults_to_three_and_all_categories`, `insufficient_questions_require_explicit_adjustment`. Falta completar com o utilizador uma sessão de uma pergunta e outra quantidade elegível (secção 4, itens 1 e 6). |
-| F2-04 | Seleção e ordem sem repetição persistem; editar o banco não altera nenhuma cópia de sessão existente. | 3 | **verificado** (automação) | `sessions::starts_one_three_and_available_count` (posições 1..N, sem repetição, ordem guardada), `snapshots_survive_bank_edits` (texto, categoria, competências e critérios da sessão não mudam após editar o banco), `repeated_start_returns_original_session`, `failed_second_question_rolls_back_session`. |
-| F2-05 | O utilizador completa três perguntas com voz, captura manual e progresso correto; falha de síntese permite responder pelo texto. | 6, 8, 10 | **parcial** | Automação: `service::question_audio_is_synthesized_and_validated`, `question_cache_distinguishes_session_texts`, `synthesis_failure_still_allows_recording`, `start_confirm_and_advance_persist_the_session`, `finishing_the_last_question_completes_the_session`; captura manual já com evidência da fase 1 (CA-03 pendente no hardware). Falta a sessão real de três perguntas com voz, incluindo uma com termos técnicos (secção 4, item 1). |
-| F2-06 | Áudio original, derivado, resultados automáticos, revisão e confirmação permanecem distintos e rastreáveis. | 1, 4, 5, 9 | **verificado** (automação) | Esquema com tabelas e FKs separadas e triggers de imutabilidade: `database::triggers_protect_confirmed_text_and_transcripts`, `foreign_keys_reject_cross_recording_sources`; `answers::normalized_audio_is_linked_to_a_ready_recording`, `transcript_append_creates_and_closes_its_operation`, `transcript_append_does_not_replace_review`, `confirmation_freezes_exact_seen_text`; Vitest `history_separates_raw_review_and_confirmed`. |
-| F2-07 | Guardar não confirma; confirmar fixa exatamente o texto visto; falha, versão antiga ou pedido repetido não cria confirmação indevida. | 5, 8 | **verificado** (automação) | `answers::save_does_not_confirm`, `confirmation_freezes_exact_seen_text`, `stale_review_cannot_confirm`, `same_request_with_other_text_is_rejected`, `confirmation_failure_rolls_back_review_and_receipt`; Vitest `confirmation_locks_exact_editor_text`, `confirm_failure_preserves_text`, `save_does_not_enable_next_until_confirmation`. |
-| F2-08 | Não é possível avançar sem confirmar, saltar por duplo clique ou terminar antes de todas as confirmações; repetir avanço é seguro. | 5, 8 | **verificado** (automação) | `answers::advance_requires_confirmation`, `replayed_advance_does_not_skip`, `last_advance_completes_only_full_session`; `service::confirmation_and_advance_are_refused_during_capture`, `finishing_the_last_question_completes_the_session`; Vitest `double_next_click_sends_one_request`, `last_question_uses_finish_label`. |
-| F2-09 | Nova captura antes da confirmação preserva anteriores; falha da nova captura não perde a seleção válida. Resposta confirmada não é reaberta. | 4, 6, 8 | **verificado** (automação) | `artifacts::new_capture_failure_keeps_previous_selection`, `older_publication_cannot_replace_newer_selection`; `answers::confirmed_question_keeps_selection_and_refuses_new_captures`; `service::failed_stop_keeps_previous_recording`, `confirmed_question_rejects_capture_and_transcription`; Vitest `prior_recordings_remain_readable`. |
-| F2-10 | Fecho e navegação com alterações resolvem guardar/descartar/cancelar e não perdem edição feita durante uma escrita. | 8 | **parcial** | A decisão cobre a revisão da resposta e o rascunho do banco de perguntas, incluindo `beginEdit`/`beginNew`. `NavigationGuard.test.tsx`: `save_and_leave_keeps_newer_edit`, `failed_save_does_not_destroy_window`, `cancel_keeps_editor`, `discard_requires_explicit_choice`, `capture_blocks_navigation`; `App.test.tsx`: resolução da revisão antes de fechar, finalização da captura antes de destruir, janela mantida quando o fecho falha, texto escrito durante a preparação do fecho, bloqueio de mudança de página durante captura/finalização, `pede decisão antes de sair do banco com um rascunho por guardar`, `guarda o rascunho do banco antes de mudar de página`, `não troca de pergunta no editor sem resolver o rascunho atual`, `não fecha com um rascunho do banco por guardar quando a escrita falha`. Falta a experiência real de fecho e navegação com alterações por guardar, incluindo uma escrita falhada que mantenha a janela aberta (secção 4, item 10). |
-| F2-11 | Reiniciar durante transcrição, após guardar revisão, após confirmar e após avançar recupera a etapa persistida, sem duplicações. | 4, 5, 6, 9 | **parcial** | Reabertura real da base em testes: `answers::advance_after_reopen_keeps_the_confirmation_pending_to_advance`, `sessions::old_start_replay_after_completion_does_not_create_session`, `artifacts::reopen_reconciles_once`, `finalized_audio_survives_database_failure`, `storage::restore_interrupted_job`; `service::interrupted_operation_is_recovered_on_the_next_start` (uma operação deixada em `running` pelo processo anterior fica `interrupted` e é reportada); Vitest `resume_keeps_confirmed_question_awaiting_next` e o percurso integrado `three_question_session_can_resume_and_finish`. Falta reiniciar a aplicação real a meio de uma sessão (secção 4, item 4). |
-| F2-12 | Falhas de escrita/publicação permitem recuperar sem nova gravação; referências em falta não apagam textos nem bloqueiam outros itens. | 4 | **verificado** (automação) | `artifacts::finalized_audio_survives_database_failure`, `part_file_is_not_a_saved_answer`, `missing_audio_keeps_text`, `locked_original_stays_publishable_for_the_next_start`, `corrupt_original_is_interrupted_not_retried`, `paths_cannot_escape_artifact_root`; `service::save_publication_can_retry` (a fotografia expõe `pendingRecordingId` e a reserva na pergunta atual, com a repetição alcançável); `storage::failed_publish_preserves_last`; Vitest `failed_publication_keeps_the_take_retryable`, `missing_audio_keeps_confirmed_text`. |
-| F2-13 | Pedidos repetidos não bloqueiam o serviço; eventos e resultados antigos não afetam gravações novas ou confirmações. | 5, 6 | **verificado** (automação) | `service::repeated_start_returns_busy_instead_of_blocking`, `late_interruption_from_an_older_capture_is_ignored`, `timed_out_stop_recovers_capture`, `late_worker_result_cannot_target_next_question`, `history_read_does_not_retarget_model_job`, `playback_is_allowed_while_transcribing`, `close_finalizes_capture_and_ignores_late_results`; `answers::late_transcript_cannot_change_confirmation`; Vitest `old_snapshot_does_not_erase_draft`. |
-| F2-14 | Histórico permite consultar sessões e ouvir originais; treinos da fase 1 continuam consultáveis sem alteração dos seus ficheiros. | 9, 10 | **parcial** | Leitura e preservação: `legacy::legacy_list_ignores_last_pointer`, `corrupt_legacy_item_does_not_hide_valid_items`, `legacy_read_changes_no_bytes`, `legacy_rejects_path_escape`; `service::legacy_attempt_audio_is_read_only`; `sessions::list_sessions_reports_completed_sessions_and_order`; Vitest `History.test.tsx` (5 testes) e `history_separates_raw_review_and_confirmed`. Falta ouvir os originais pela janela com hardware real (secção 4, itens 2 e 5); a reprodução de áudio real continua também pendente na fase 1 (CA-02/CA-05). |
-| F2-15 | Migração falhada preserva a base; versão futura não é escrita; apenas uma sessão permanece em curso. | 1, 3 | **verificado** (automação) | `database::failed_migration_rolls_back`, `future_version_is_not_modified`, `fresh_database_has_version_one`, `only_one_session_can_be_in_progress`; `sessions::only_one_session_can_be_active`, `insufficient_category_creates_nothing`; índice parcial `one_active_session` no esquema. |
-| F2-16 | Com modelos preparados, a sessão completa funciona offline, sem chamadas à IA, dispensas fictícias ou feedback inventado. | 6, 9, 10 | **parcial** | Código sem chamadas de IA: 0 ocorrências de `opencode`, `openai`, `api.deepseek`, `https://api` em Rust/TS/Python; o cliente só usa comandos `interview_*` e o evento `interview://snapshot`; `last_advance_completes_only_full_session` fixa `mode = local_v2` sem feedback pendente; o histórico mostra um resumo sem avaliação. Os motores foram reexecutados com os pesos preparados (2 passed). Falta repetir uma sessão completa pela janela com a rede desligada (secção 4, item 8); essa repetição também continua pendente para a fase 1 (CA-13). |
+| F2-01 | The initial bank contains 20 questions in the six categories; repeating the startup neither duplicates nor restores edits. | 1, 2 | **verified** (automation) | `questions::seed_is_once_and_preserves_edits` (20 questions, stable IDs, reopening does not duplicate, edit preserved, single marker), `questions::bank_covers_six_categories` (4/3/3/4/3/3), `questions::incomplete_seed_rolls_back_without_marker`, unit test `db::questions::tests::embedded_seed_is_valid_and_unpadded`. Real startup twice: 20 questions, one `questions-v1` marker. |
+| F2-02 | Adding and editing text, category, competencies and criteria persists after a restart, with validation of the required fields. | 2, 7 | **verified** (automation) | `questions::blank_fields_are_rejected`, `question_trims_only_outer_whitespace` (persistence after reopening), `stale_edit_does_not_overwrite`; `interview_contracts::question_validation_trims_outer_spaces_and_requires_content`; Vitest `QuestionBank.test.tsx`: `bank_edit_survives_reload`, `bank_rejects_empty_fields`, `creates_a_question_with_competencies_and_criteria`, `keeps_the_editor_open_when_the_save_fails`. |
+| F2-03 | Initial quantity three; sessions with one, three and another eligible quantity; explicit insufficiency, without silent reduction or repetition. | 3, 7, 10 | **partial** | Rule and interface covered: `sessions::starts_one_three_and_available_count`, `insufficient_category_creates_nothing`, `interview_contracts::count_validation_rejects_zero_and_more_than_eligible` (`count == 0` returns `INSUFFICIENT_QUESTIONS`), Vitest `defaults_to_three_and_all_categories`, `insufficient_questions_require_explicit_adjustment`. Still to complete with the user: a session of one question and another eligible quantity (section 4, items 1 and 6). |
+| F2-04 | Selection and order without repetition persist; editing the bank does not change any existing session copy. | 3 | **verified** (automation) | `sessions::starts_one_three_and_available_count` (positions 1..N, without repetition, order stored), `snapshots_survive_bank_edits` (text, category, competencies and criteria of the session do not change after editing the bank), `repeated_start_returns_original_session`, `failed_second_question_rolls_back_session`. |
+| F2-05 | The user completes three questions with voice, manual capture and correct progress; a synthesis failure still allows answering by text. | 6, 8, 10 | **partial** | Automation: `service::question_audio_is_synthesized_and_validated`, `question_cache_distinguishes_session_texts`, `synthesis_failure_still_allows_recording`, `start_confirm_and_advance_persist_the_session`, `finishing_the_last_question_completes_the_session`; manual capture already with evidence from phase 1 (CA-03 pending on the hardware). Still missing: the real session of three questions with voice, including one with technical terms (section 4, item 1). |
+| F2-06 | Original audio, derived audio, automatic results, review and confirmation remain distinct and traceable. | 1, 4, 5, 9 | **verified** (automation) | Schema with separate tables and FKs and immutability triggers: `database::triggers_protect_confirmed_text_and_transcripts`, `foreign_keys_reject_cross_recording_sources`; `answers::normalized_audio_is_linked_to_a_ready_recording`, `transcript_append_creates_and_closes_its_operation`, `transcript_append_does_not_replace_review`, `confirmation_freezes_exact_seen_text`; Vitest `history_separates_raw_review_and_confirmed`. |
+| F2-07 | Saving does not confirm; confirming fixes exactly the text seen; a failure, an old version or a repeated request does not create an undue confirmation. | 5, 8 | **verified** (automation) | `answers::save_does_not_confirm`, `confirmation_freezes_exact_seen_text`, `stale_review_cannot_confirm`, `same_request_with_other_text_is_rejected`, `confirmation_failure_rolls_back_review_and_receipt`; Vitest `confirmation_locks_exact_editor_text`, `confirm_failure_preserves_text`, `save_does_not_enable_next_until_confirmation`. |
+| F2-08 | It is not possible to advance without confirming, to skip by double click or to finish before all confirmations; repeating the advance is safe. | 5, 8 | **verified** (automation) | `answers::advance_requires_confirmation`, `replayed_advance_does_not_skip`, `last_advance_completes_only_full_session`; `service::confirmation_and_advance_are_refused_during_capture`, `finishing_the_last_question_completes_the_session`; Vitest `double_next_click_sends_one_request`, `last_question_uses_finish_label`. |
+| F2-09 | A new capture before confirmation preserves the previous ones; a failure of the new capture does not lose the valid selection. A confirmed answer is not reopened. | 4, 6, 8 | **verified** (automation) | `artifacts::new_capture_failure_keeps_previous_selection`, `older_publication_cannot_replace_newer_selection`; `answers::confirmed_question_keeps_selection_and_refuses_new_captures`; `service::failed_stop_keeps_previous_recording`, `confirmed_question_rejects_capture_and_transcription`; Vitest `prior_recordings_remain_readable`. |
+| F2-10 | Shutdown and navigation with changes resolve save/discard/cancel and do not lose an edit made during a write. | 8 | **partial** | The decision covers the answer review and the question bank draft, including `beginEdit`/`beginNew`. `NavigationGuard.test.tsx`: `save_and_leave_keeps_newer_edit`, `failed_save_does_not_destroy_window`, `cancel_keeps_editor`, `discard_requires_explicit_choice`, `capture_blocks_navigation`; `App.test.tsx`: resolution of the review before closing, finalization of the capture before destroying, window kept when the shutdown fails, text written during the preparation of the shutdown, blocking of a page change during capture/finalization, `pede decisão antes de sair do banco com um rascunho por guardar`, `guarda o rascunho do banco antes de mudar de página`, `não troca de pergunta no editor sem resolver o rascunho atual`, `não fecha com um rascunho do banco por guardar quando a escrita falha`. Still missing: the real experience of shutdown and navigation with unsaved changes, including a failed write that keeps the window open (section 4, item 10). |
+| F2-11 | Restarting during transcription, after saving a review, after confirming and after advancing recovers the persisted step, without duplications. | 4, 5, 6, 9 | **partial** | Real reopening of the database in tests: `answers::advance_after_reopen_keeps_the_confirmation_pending_to_advance`, `sessions::old_start_replay_after_completion_does_not_create_session`, `artifacts::reopen_reconciles_once`, `finalized_audio_survives_database_failure`, `storage::restore_interrupted_job`; `service::interrupted_operation_is_recovered_on_the_next_start` (an operation left in `running` by the previous process becomes `interrupted` and is reported); Vitest `resume_keeps_confirmed_question_awaiting_next` and the integrated journey `three_question_session_can_resume_and_finish`. Still missing: restarting the real application in the middle of a session (section 4, item 4). |
+| F2-12 | Write/publication failures allow recovery without a new recording; missing references do not delete texts nor block other items. | 4 | **verified** (automation) | `artifacts::finalized_audio_survives_database_failure`, `part_file_is_not_a_saved_answer`, `missing_audio_keeps_text`, `locked_original_stays_publishable_for_the_next_start`, `corrupt_original_is_interrupted_not_retried`, `paths_cannot_escape_artifact_root`; `service::save_publication_can_retry` (the snapshot exposes `pendingRecordingId` and the reservation on the current question, with the retry reachable); `storage::failed_publish_preserves_last`; Vitest `failed_publication_keeps_the_take_retryable`, `missing_audio_keeps_confirmed_text`. |
+| F2-13 | Repeated requests do not block the service; old events and results do not affect new recordings or confirmations. | 5, 6 | **verified** (automation) | `service::repeated_start_returns_busy_instead_of_blocking`, `late_interruption_from_an_older_capture_is_ignored`, `timed_out_stop_recovers_capture`, `late_worker_result_cannot_target_next_question`, `history_read_does_not_retarget_model_job`, `playback_is_allowed_while_transcribing`, `close_finalizes_capture_and_ignores_late_results`; `answers::late_transcript_cannot_change_confirmation`; Vitest `old_snapshot_does_not_erase_draft`. |
+| F2-14 | History allows consulting sessions and listening to originals; phase 1 practice sessions remain consultable without changing their files. | 9, 10 | **partial** | Reading and preservation: `legacy::legacy_list_ignores_last_pointer`, `corrupt_legacy_item_does_not_hide_valid_items`, `legacy_read_changes_no_bytes`, `legacy_rejects_path_escape`; `service::legacy_attempt_audio_is_read_only`; `sessions::list_sessions_reports_completed_sessions_and_order`; Vitest `History.test.tsx` (5 tests) and `history_separates_raw_review_and_confirmed`. Still missing: listening to the originals through the window with real hardware (section 4, items 2 and 5); real audio playback also remains pending in phase 1 (CA-02/CA-05). |
+| F2-15 | A failed migration preserves the database; a future version is not written; only one session remains in progress. | 1, 3 | **verified** (automation) | `database::failed_migration_rolls_back`, `future_version_is_not_modified`, `fresh_database_has_version_one`, `only_one_session_can_be_in_progress`; `sessions::only_one_session_can_be_active`, `insufficient_category_creates_nothing`; partial index `one_active_session` in the schema. |
+| F2-16 | With the models prepared, the complete session works offline, without AI calls, fictitious dismissals or invented feedback. | 6, 9, 10 | **partial** | Code without AI calls: 0 occurrences of `opencode`, `openai`, `api.deepseek`, `https://api` in Rust/TS/Python; the client only uses `interview_*` commands and the `interview://snapshot` event; `last_advance_completes_only_full_session` fixes `mode = local_v2` without pending feedback; the history shows a summary without evaluation. The engines were re-run with the prepared weights (2 passed). Still missing: repeating a complete session through the window with the network disconnected (section 4, item 8); that repetition also remains pending for phase 1 (CA-13). |
 
-Nenhum critério foi marcado **falhado**: não apareceu evidência contrária nesta
-verificação.
+No criterion was marked **failed**: no contrary evidence appeared in this
+verification.
 
-## 4. Validação manual que falta (ação do utilizador)
+## 4. Manual validation still missing (user action)
 
-Lista detalhada em [setup.md](setup.md), secção 6. Resumo do que a spec §10
-exige e que **não** está demonstrado por esta automação:
+Detailed list in [setup.md](setup.md), section 6. Summary of what spec §10
+requires and that **is not** demonstrated by this automation:
 
-- [ ] Sessão real de três perguntas, com respostas faladas, incluindo uma com
-      termos técnicos; registar duração dos áudios e tempos de carregamento,
-      síntese e transcrição, e a perceção da espera.
-- [ ] Ouvir as perguntas sintetizadas e os originais gravados, e repetir uma
-      pergunta sem nova síntese.
-- [ ] Rever, guardar e confirmar cada texto; confirmar que guardar não confirma
-      e que confirmar fixa o texto mostrado.
-- [ ] Sair depois de confirmar e antes de avançar, reabrir e retomar a etapa
-      persistida sem duplicar a confirmação nem avançar sozinho.
-- [ ] Terminar a sessão e consultar o histórico, incluindo o resumo sem
-      avaliação.
-- [ ] Completar uma sessão de uma pergunta e outra quantidade elegível.
-- [ ] Confirmar a insuficiência numa categoria e que só inicia após ajuste
-      explícito da quantidade.
-- [ ] Editar uma pergunta depois de iniciar a sessão e confirmar que a cópia da
-      sessão não muda.
-- [ ] Repetir o percurso com a rede desligada.
-- [ ] Com a transcrição indisponível (auxiliar parado) ou `no_speech`, usar a
-      revisão manual explícita e confirmar que nada é tratado como problema de
-      pronúncia.
-- [ ] Provocar uma falha de escrita e confirmar a recuperação; identificar
-      qualquer falha simulada como simulação, não como hardware real.
+- [ ] Real session of three questions, with spoken answers, including one with
+      technical terms; record the duration of the audios and the loading,
+      synthesis and transcription times, and the perception of the wait.
+- [ ] Listen to the synthesized questions and to the recorded originals, and
+      repeat a question without new synthesis.
+- [ ] Review, save and confirm each text; confirm that saving does not confirm
+      and that confirming fixes the text shown.
+- [ ] Leave after confirming and before advancing, reopen and resume the
+      persisted step without duplicating the confirmation or advancing on its
+      own.
+- [ ] Finish the session and consult the history, including the summary without
+      evaluation.
+- [ ] Complete a session of one question and another eligible quantity.
+- [ ] Confirm the insufficiency in a category and that it only starts after an
+      explicit adjustment of the quantity.
+- [ ] Edit a question after starting the session and confirm that the session
+      copy does not change.
+- [ ] Repeat the journey with the network disconnected.
+- [ ] With the transcript unavailable (helper stopped) or `no_speech`, use the
+      explicit manual review and confirm that nothing is treated as a
+      pronunciation problem.
+- [ ] Provoke a write failure and confirm the recovery; identify any simulated
+      failure as a simulation, not as real hardware.
 
-Enquanto estes passos não tiverem evidência registada pelo utilizador, a fase 2
-não é marcada como concluída.
+While these steps do not have evidence recorded by the user, phase 2 is not
+marked as complete.
 
-## 5. Fase 1: critérios manuais que continuam pendentes
+## 5. Phase 1: manual criteria that remain pending
 
-Esta verificação da fase 2 **não** fecha nem altera o registo da fase 1. Em
-[`docs/phase-1/validation.md`](../phase-1/validation.md), continuam como antes:
+This phase 2 verification **does not** close or change the phase 1 record. In
+[`docs/phase-1/validation.md`](../phase-1/validation.md), they continue as before:
 
-| CA | Estado na fase 1 | Porque continua pendente |
+| CA | State in phase 1 | Why it remains pending |
 | --- | --- | --- |
-| CA-02 | pendente | Ouvir a voz Kokoro pela janela e repeti-la. |
-| CA-03 | pendente | Gravação manual com microfone real e duração visível. |
-| CA-05 | pendente | Ouvir a resposta guardada e recuperá-la com o transcritor indisponível. |
-| CA-06 | pendente | Transcrever uma gravação humana em inglês. |
-| CA-10 | pendente | Remover/restaurar o microfone real. |
-| CA-13 | parcial | Repetir o percurso completo pela janela com a rede desligada. |
-| CA-14 | pendente | Três gravações reais e decisão do utilizador sobre a espera. |
+| CA-02 | pending | Listen to the Kokoro voice through the window and repeat it. |
+| CA-03 | pending | Manual recording with a real microphone and visible duration. |
+| CA-05 | pending | Listen to the stored answer and recover it with the transcriber unavailable. |
+| CA-06 | pending | Transcribe a human recording in English. |
+| CA-10 | pending | Remove/restore the real microphone. |
+| CA-13 | partial | Repeat the complete journey through the window with the network disconnected. |
+| CA-14 | pending | Three real recordings and the user's decision on the wait. |
 
-Os testes reais dos motores reexecutados nesta verificação (2 `passed`) são a
-mesma evidência de motor já registada na fase 1; não substituem gravações
-humanas nem audição, e não alteram nenhum destes estados.
+The real engine tests re-run in this verification (2 `passed`) are the same engine
+evidence already recorded in phase 1; they do not replace human recordings or
+listening, and they do not change any of these states.
 
-## 6. Decisões tomadas durante a implementação (registo tipo ADR)
+## 6. Decisions taken during the implementation (ADR-type record)
 
-1. **rusqlite 0.41.1 com `bundled`, como previsto.** A resolução funcionou sem
-   alterações; o `Cargo.lock` fixa `rusqlite 0.41.1` e `libsqlite3-sys 0.39.1`,
-   ambos compilados no build release. Vantagem: sem dependência de um SQLite
-   instalado no sistema. Custo: primeira compilação mais longa (~1m 17s no build
-   release desta máquina). Uma única `Connection` dentro de `Arc<Mutex<…>>`,
-   sempre em `spawn_blocking`; o guard nunca atravessa um `await`.
-2. **A interface `practice` da fase 1 foi removida na tarefa 6**, quando o
-   serviço passou a ser o da entrevista guiada. As proteções foram portadas, não
-   perdidas: distinção `saved/pending/failed` ao guardar revisão, bloqueio de
-   edição durante o pedido e decisão guardar/descartar/cancelar antes de navegar
-   ou fechar vivem agora em `useInterview`/`NavigationGuard`. Só
-   `practice.css` permanece, reutilizado pela interface nova. O formato JSON de
-   `phase1/` mantém-se apenas para leitura dos treinos antigos.
-3. **`ReviewDraft.savedAt` é nulo enquanto a revisão não está guardada**
-   (`version = 0` representa o rascunho). Assim a interface distingue «nunca
-   guardada» de «guardada numa data», sem inventar uma data para o rascunho e
-   sem usar `null`/`0` como se fosse uma revisão persistida. A confirmação
-   guarda no máximo uma versão exata por pergunta.
-4. **`validate_count(0)` devolve `INSUFFICIENT_QUESTIONS`**, o mesmo código de
-   uma quantidade superior ao total elegível. Zero não é um pedido válido de
-   sessão nem um caso separado: a mensagem pede uma quantidade entre 1 e o total
-   elegível, e nada é criado (a validação corre antes da transação).
-5. **A reconciliação só considera repetíveis os erros de I/O transitórios do
-   Windows: 32 (partilha), 5 (acesso negado) e 33 (bloqueio).** Todos os outros
-   erros de I/O — incluindo o erro sintético do Hound para fim de ficheiro, que
-   não tem código do sistema — são permanentes e marcam a gravação como
-   interrompida, em vez de a repetirem indefinidamente. Um ficheiro bloqueado
-   por antivírus continua publicável no arranque seguinte
-   (`locked_original_stays_publishable_for_the_next_start`).
-6. **R8: a única escrita em `phase1/` é a cache de síntese**
-   (`phase1/question-cache/`), prevista no plano técnico. Os treinos da fase 1
-   continuam a ser apenas de leitura; a cache é partilhada porque a chave inclui
-   o texto, a voz e a velocidade. «No writes to `phase1/`» significa, portanto,
-   «nenhuma escrita nos treinos», não «nenhuma escrita em toda a árvore».
-7. **As operações do auxiliar são registadas em `running` antes do pedido e
-   encerradas com o resultado.** Uma transcrição fecha a linha na mesma
-   transação do texto; uma síntese fecha-a como `completed`; uma falha guarda o
-   erro; um fecho ou encerramento abrupto deixa a linha para a reconciliação
-   marcar `interrupted`. Assim `RecoveryReport.interruptedOperations` deixa de
-   ser sempre vazio.
+1. **rusqlite 0.41.1 with `bundled`, as planned.** The resolution worked without
+   changes; `Cargo.lock` pins `rusqlite 0.41.1` and `libsqlite3-sys 0.39.1`, both
+   compiled in the release build. Advantage: no dependency on a SQLite installed
+   on the system. Cost: longer first compilation (~1m 17s in the release build of
+   this machine). A single `Connection` inside `Arc<Mutex<…>>`, always in
+   `spawn_blocking`; the guard never crosses an `await`.
+2. **The phase 1 `practice` interface was removed in task 6**, when the service
+   became the guided interview one. The protections were ported, not lost: the
+   `saved/pending/failed` distinction when saving a review, blocking of editing
+   during the request and the save/discard/cancel decision before navigating or
+   closing now live in `useInterview`/`NavigationGuard`. Only `practice.css`
+   remains, reused by the new interface. The JSON format of `phase1/` is kept only
+   for reading the old practice sessions.
+3. **`ReviewDraft.savedAt` is null while the revision is not saved**
+   (`version = 0` represents the draft). The interface thus distinguishes «never
+   saved» from «saved on a date», without inventing a date for the draft and
+   without using `null`/`0` as if it were a persisted revision. The confirmation
+   stores at most one exact version per question.
+4. **`validate_count(0)` returns `INSUFFICIENT_QUESTIONS`**, the same code as a
+   quantity above the eligible total. Zero is not a valid session request nor a
+   separate case: the message asks for a quantity between 1 and the eligible
+   total, and nothing is created (the validation runs before the transaction).
+5. **Reconciliation only considers the transient Windows I/O errors as
+   repeatable: 32 (sharing), 5 (access denied) and 33 (lock).** All other I/O
+   errors — including Hound's synthetic end-of-file error, which has no system
+   code — are permanent and mark the recording as interrupted, instead of
+   repeating it indefinitely. A file locked by antivirus remains publishable on
+   the next startup (`locked_original_stays_publishable_for_the_next_start`).
+6. **R8: the only write in `phase1/` is the synthesis cache**
+   (`phase1/question-cache/`), foreseen in the technical plan. The phase 1
+   practice sessions remain read-only; the cache is shared because the key
+   includes the text, the voice and the speed. «No writes to `phase1/`» means,
+   therefore, «no writes to the practice sessions», not «no writes in the whole
+   tree».
+7. **The helper operations are recorded as `running` before the request and
+   closed with the result.** A transcription closes the row in the same
+   transaction as the text; a synthesis closes it as `completed`; a failure stores
+   the error; a shutdown or abrupt termination leaves the row for reconciliation
+   to mark it as `interrupted`. `RecoveryReport.interruptedOperations` therefore
+   stops being always empty.
 
-## 7. Limites e riscos registados
+## 7. Recorded limits and risks
 
-- A verificação automática usa áudio sintetizado e auxiliares controlados. Não
-  prova qualidade de voz, inteligibilidade no hardware do utilizador, latência
-  percebida nem o comportamento com microfone removido a meio.
-- O build `--no-bundle` não é um instalador: não inclui Python, modelos nem a
-  `.venv`. A fase 5 continua responsável pela distribuição.
-- A base criada nesta máquina não contém sessões; os percursos de sessão foram
-  exercitados por testes com diretórios temporários e por um cliente controlado,
-  não por uma entrevista falada.
-- A procura de chamadas de IA é uma verificação textual do código atual
-  (0 ocorrências), não uma captura de tráfego de rede. A prova offline completa
-  exige a repetição pela janela com a rede desligada.
-- Avisos de terceiros durante o carregamento dos modelos (`PyTorch`,
-  `weight_norm`, Misaki) não impedem o funcionamento e já estavam registados na
-  fase 1.
+- The automated verification uses synthesized audio and controlled helpers. It
+  does not prove voice quality, intelligibility on the user's hardware, perceived
+  latency nor the behavior with the microphone removed midway.
+- The `--no-bundle` build is not an installer: it does not include Python, the
+  models nor the `.venv`. Phase 5 remains responsible for distribution.
+- The database created on this machine contains no sessions; the session journeys
+  were exercised by tests with temporary directories and by a controlled client,
+  not by a spoken interview.
+- The search for AI calls is a textual verification of the current code
+  (0 occurrences), not a network traffic capture. The complete offline proof
+  requires repeating the journey through the window with the network
+  disconnected.
+- Third-party warnings during model loading (`PyTorch`, `weight_norm`, Misaki) do
+  not prevent operation and were already recorded in phase 1.

@@ -1,348 +1,366 @@
-# Fase 3 — Tutor com IA
+# Phase 3 — AI tutor
 
-Alteração autorizada em 2026-11-04: a modalidade atual é OpenCode Go, substituindo o default por consumo deste desenho histórico. Headers, adaptação única da configuração e conservação de chave/histórico são definidos na [spec Go](2026-11-04-opencode-go-design.md); as restantes regras de confirmação, fontes e recuperação mantêm-se.
+Authorized change on 2026-11-04: the current modality is OpenCode Go, replacing the per-usage default of this historical design. Headers, the one-time adaptation of the configuration and the preservation of key/history are defined in the [Go spec](2026-11-04-opencode-go-design.md); the remaining rules of confirmation, sources and recovery remain.
 
-Data: 2026-11-02  
-Estado: revista e aprovada tecnicamente pelo coordenador, por delegação do utilizador; implementação verificada automaticamente; revisão técnica do coordenador concluída; aceitação manual pendente.  
-Base: [fases](../plans/2026-11-01-star-interview-tutor-phases.md), [desenho aprovado](2026-11-01-star-interview-tutor-design.md), [stack](../../tech-stack.md) e [fase 2](2026-11-02-phase-2-guided-interview-design.md).
+Date: 2026-11-02  
+Status: reviewed and technically approved by the coordinator, by delegation of the user; implementation automatically verified; technical review by the coordinator concluded; manual acceptance pending.  
+Base: [phases](../plans/2026-11-01-star-interview-tutor-phases.md), [approved design](2026-11-01-star-interview-tutor-design.md), [stack](../../tech-stack.md) and [phase 2](2026-11-02-phase-2-guided-interview-design.md).
 
-## 1. Intenção e autorização
+## 1. Intent and authorization
 
-Acrescentar à entrevista guiada um seguimento contextual opcional por pergunta
-principal e feedback final sobre conteúdo/STAR e inglês no texto confirmado.
-A aplicação continua a controlar a entrevista; a LLM recomenda conteúdo e não
-executa transições, comandos ou ferramentas.
+Add to the guided interview an optional contextual follow-up per main question
+and final feedback on content/STAR and on English in the confirmed text. The
+application continues to control the interview; the LLM recommends content and
+does not execute transitions, commands or tools.
 
-As fases 1 e 2 têm implementação e verificação automática, mas continuam com
-aceitação manual pendente nos respetivos registos de
-[fase 1](../../phase-1/validation.md) e [fase 2](../../phase-2/validation.md).
-Nesta sessão, o utilizador autorizou explicitamente «Antecipar a fase 3»,
-mantendo essas validações pendentes. Esta é uma exceção autorizada à sequência
-anterior de validar antes de avançar; não é aceitação das fases anteriores.
-Pediu ainda delegar spec, plano e implementação, com avaliação e melhorias do
-coordenador entre etapas. As opções abaixo são propostas técnicas para essa
-revisão, não escolhas já aprovadas individualmente pelo utilizador.
+Phases 1 and 2 have implementation and automated verification, but remain with
+manual acceptance pending in their respective records of
+[phase 1](../../phase-1/validation.md) and [phase 2](../../phase-2/validation.md).
+In this session, the user explicitly authorized «Antecipar a fase 3», keeping
+those validations pending. This is an authorized exception to the earlier
+sequence of validating before advancing; it is not acceptance of the earlier
+phases. The user also asked to delegate spec, plan and implementation, with
+evaluation and improvements by the coordinator between stages. The options
+below are technical proposals for that review, not choices already approved
+individually by the user.
 
-## 2. Âmbito e alternativas
+## 2. Scope and alternatives
 
-Inclui configuração do fornecedor e credenciais protegidas, consentimento para
-envio de texto, seguimentos com voz/revisão/confirmação, feedback fundamentado,
-consumo/custo por pedido e sessão e recuperação de falhas desde a integração.
-Reutiliza áudio, modelos e banco de perguntas existentes.
+It includes configuration of the provider and protected credentials, consent for
+sending text, follow-ups with voice/review/confirmation, grounded feedback,
+usage/cost per request and session and recovery from failures since the
+integration. It reuses existing audio, models and question bank.
 
-Não inclui reformulações completas, reprodução de respostas sugeridas, novas
-tentativas depois da confirmação, comparação, histórias pessoais, eliminação
-de sessões, instalador, contas ou diagnóstico acústico/emocional. São fases
-posteriores. Não acrescenta outro fornecedor ou motor como fallback silencioso.
+It does not include complete rewrites, playback of suggested answers, new
+attempts after the confirmation, comparison, personal stories, deletion of
+sessions, installer, accounts or acoustic/emotional diagnosis. Those are later
+phases. It does not add another provider or engine as a silent fallback.
 
-| Abordagem | Consequência | Proposta |
+| Approach | Consequence | Proposal |
 | --- | --- | --- |
-| Um pedido final para toda a sessão | Menos pedidos, mas repete tudo numa falha e dificulta recuperação granular. | Não escolhida. |
-| Um relatório por pergunta e agregação local | Evidências pequenas, repetição apenas dos relatórios em falta e custo atribuível. | Recomendada. |
-| Relatórios por pergunta e nova chamada de síntese | Pode produzir narrativa global, mas acrescenta custo e evidências indiretas. | Adiada. |
+| One final request for the whole session | Fewer requests, but it repeats everything on a failure and hinders granular recovery. | Not chosen. |
+| One report per question and local aggregation | Small evidence, repetition only of the missing reports and attributable cost. | Recommended. |
+| Reports per question and a new synthesis call | It may produce a global narrative, but adds cost and indirect evidence. | Postponed. |
 
-Outras propostas: modo IA explícito em novas sessões; manter modo local;
-pedidos externos apenas por ações identificáveis; sem repetição automática de
-pedidos pagos; explicações/feedback em português de Portugal, perguntas,
-seguimentos, citações e correções inglesas em inglês.
+Other proposals: explicit AI mode in new sessions; keep the local mode; external
+requests only through identifiable actions; no automatic repetition of paid
+requests; explanations/feedback in European Portuguese, questions, follow-ups,
+quotations and corrections in English.
 
-## 3. Ponto de integração e compatibilidade
+## 3. Integration point and compatibility
 
-O código atual tem `SessionMode::LocalV2`, estados `in_progress`/`completed`,
-uma confirmação por `session_question_id` e restrições SQL que só admitem
-`local_v2`. `operations` admite apenas transcrição/síntese. `command_receipts`
-também limita os tipos permitidos. A migração é necessária, não basta
-acrescentar variantes aos DTOs.
+The current code has `SessionMode::LocalV2`, states `in_progress`/`completed`,
+one confirmation per `session_question_id` and SQL restrictions that only admit
+`local_v2`. `operations` admits only transcription/synthesis. `command_receipts`
+also limits the allowed types. Migration is needed; adding variants to the DTOs
+is not enough.
 
-Manter React/TypeScript, Rust/Tauri, SQLite `rusqlite` e auxiliar Python.
-Introduzir `ai_v3` para novas sessões; `local_v2` continua disponível, sem
-seguimentos, custos fictícios ou feedback retroativo. Uma sessão local já em
-curso termina no seu modo original. Não converter dados de `phase1/`.
+Keep React/TypeScript, Rust/Tauri, SQLite `rusqlite` and the Python helper.
+Introduce `ai_v3` for new sessions; `local_v2` remains available, without
+follow-ups, fictitious costs or retroactive feedback. A local session already in
+progress finishes in its original mode. Do not convert data from `phase1/`.
 
-Migração transacional v1 → v2 preserva identidades, textos, gravações, relações,
-recibos, cópias das perguntas e versões. Deve funcionar também em base vazia,
-aplicando ambas as migrações. Se reconstruir tabelas devido aos CHECKs,
-recriar índices/triggers e verificar chaves estrangeiras. Erro faz rollback;
-versão futura é recusada sem escrita. Não desativar garantias de imutabilidade
-como solução para suportar seguimentos.
+Transactional migration v1 → v2 preserves identities, texts, recordings,
+relations, receipts, copies of the questions and versions. It must also work on
+an empty database, applying both migrations. If tables are rebuilt due to the
+CHECKs, recreate indexes/triggers and verify foreign keys. An error causes a
+rollback; a future version is refused without writing. Do not disable
+immutability guarantees as a solution to support follow-ups.
 
-O seguimento é uma entidade dependente da pergunta principal, com resposta
-própria e identidade distinta. Nunca reutiliza a confirmação da principal nem
-se torna uma pergunta sorteada do banco. O plano deve escolher a alteração
-física mínima para reutilizar captura, transcrição e revisões com alvos
-inequívocos, garantindo uma confirmação por resposta e um seguimento por
-principal. Não duplicar o motor de áudio nem representar seguimentos como
-perguntas principais artificiais.
+The follow-up is an entity dependent on the main question, with its own answer
+and a distinct identity. It never reuses the confirmation of the main question
+nor becomes a question drawn from the bank. The plan must choose the minimal
+physical change to reuse capture, transcription and revisions with unambiguous
+targets, guaranteeing one confirmation per answer and one follow-up per main
+question. Do not duplicate the audio engine nor represent follow-ups as
+artificial main questions.
 
-## 4. Configuração, credenciais e envio
+## 4. Configuration, credentials and sending
 
-Configuração apresenta modelo pago e URL base; a referência inicial é
-`deepseek-v4.1-flash`, base `https://opencode.ai/inference/openai/v1`, com
-`/chat/completions` acrescentado uma única vez. Chave configurada pelo núcleo
-no armazenamento protegido do Windows. A biblioteca/adaptador concreto é
-escolhido no plano; não introduzir ficheiro de texto alternativo se falhar.
+Configuration presents the paid model and base URL; the initial reference is
+`deepseek-v4.1-flash`, base `https://opencode.ai/inference/openai/v1`, with
+`/chat/completions` appended a single time. Key configured by the core in the
+Windows protected storage. The concrete library/adapter is chosen in the plan;
+do not introduce an alternative text file if it fails.
 
-A interface pode receber a chave apenas no campo de introdução e enviá-la
-uma vez ao comando Rust para guardar. Limpa o campo após conclusão; nunca
-volta a receber o segredo do núcleo. O estado apenas diz configurada ou não,
-com possibilidade de substituir/remover. Não persistir em frontend, SQLite,
-ficheiros de configuração, mensagens de erro ou logs.
+The interface may receive the key only in the introduction field and send it
+once to the Rust command to store. It clears the field after completion; it
+never receives the secret from the core again. The state only says configured or
+not, with the possibility of replacing/removing. Do not persist in the frontend,
+SQLite, configuration files, error messages or logs.
 
-Aceitar HTTPS sem credenciais embutidas, fragmentos ou parâmetros secretos;
-não seguir redirecionamentos que reenviem a chave. Ao mudar destino, invalidar
-a autorização de envio para o novo destino e exigir confirmação desse
-destinatário antes de enviar. Não testar rede nem enviar respostas ao guardar
-configuração. Modelos gratuitos não substituem o modelo pago.
+Accept HTTPS without embedded credentials, fragments or secret parameters; do
+not follow redirects that resend the key. When changing destination, invalidate
+the authorization for sending to the new destination and require confirmation
+of that recipient before sending. Do not test the network nor send answers when
+saving the configuration. Free models do not replace the paid model.
 
-Explicar antes do primeiro envio que só texto confirmado, pergunta e critérios
-seguem para o destinatário configurado. Não prometer retenção nula. O
-consentimento fica persistido com destino e versão do aviso. Recusar envio sem
-consentimento no Rust. A confirmação de texto guarda primeiro; a ação «Pedir
-seguimento» só é disponibilizada depois. Assim confirmação local não depende
-da rede nem é confundida com consentimento. O modo IA é identificado no início
-e na entrevista. Sem configuração pode guardar respostas, dispensar explicitamente
-o seguimento indisponível e deixar feedback pendente.
+Explain before the first sending that only confirmed text, question and criteria
+go to the configured recipient. Do not promise zero retention. The consent is
+persisted with destination and version of the notice. Refuse sending without
+consent in Rust. The confirmation of text is stored first; the action «Pedir
+seguimento» is only made available afterwards. Thus the local confirmation does
+not depend on the network nor is confused with consent. The AI mode is
+identified at the start and in the interview. Without configuration it is
+possible to store answers, explicitly dismiss the unavailable follow-up and
+leave feedback pending.
 
-Não enviar áudio, caminhos locais, rascunhos, transcrições automáticas distintas
-da versão confirmada, banco de perguntas completo ou notas pessoais. Nesta
-fase o seguimento usa apenas pergunta, critérios fixados e resposta principal
-confirmada. Não existe resumo por IA de respostas anteriores.
+Do not send audio, local paths, drafts, automatic transcripts distinct from the
+confirmed version, the complete question bank or personal notes. In this phase
+the follow-up uses only the question, the fixed criteria and the confirmed main
+answer. There is no AI summary of earlier answers.
 
-## 5. Entrevista e seguimento
+## 5. Interview and follow-up
 
-Quantidade e progresso contam apenas perguntas principais. Para N principais,
-há no máximo N seguimentos. A captura continua iniciada/terminada pelo
-utilizador. Síntese usa Kokoro e nunca toca durante gravação.
+Count and progress count only main questions. For N main questions, there are at
+most N follow-ups. The capture remains started/ended by the user. Synthesis uses
+Kokoro and never plays during recording.
 
-| Etapa persistente por principal no modo IA | Ações permitidas |
+| Persistent step per main question in AI mode | Allowed actions |
 | --- | --- |
-| Resposta principal por confirmar | Capturar, transcrever, rever e confirmar como na fase 2. |
-| Decisão por pedir | Pedir seguimento; se serviço indisponível, dispensa explícita com motivo. |
-| Pedido em curso | Consultar dados; aguardar ou dispensar explicitamente, invalidando o resultado. |
-| Pedido falhado/interrompido | Repetir com novo identificador de tentativa ou dispensar. |
-| IA decidiu sem seguimento | Avançar explicitamente. |
-| Seguimento criado | Ouvir/ler, gravar, rever e confirmar a resposta ao seguimento. |
-| Seguimento respondido | Avançar explicitamente; nunca gerar outro seguimento. |
-| Seguimento dispensado | Avançar; a etapa não reabre depois. |
+| Main answer awaiting confirmation | Capture, transcribe, review and confirm as in phase 2. |
+| Decision to be requested | Request follow-up; if the service is unavailable, explicit dismissal with a reason. |
+| Request in progress | Consult data; wait or dismiss explicitly, invalidating the result. |
+| Failed/interrupted request | Repeat with a new attempt identifier or dismiss. |
+| AI decided without follow-up | Advance explicitly. |
+| Follow-up created | Listen/read, record, review and confirm the answer to the follow-up. |
+| Follow-up answered | Advance explicitly; never generate another follow-up. |
+| Follow-up dismissed | Advance; the step does not reopen afterwards. |
 
-Uma recomendação de seguimento contém pergunta inglesa não vazia, critério ou
-dimensão STAR em falta e motivo ligado à resposta. Quando já foi explicada
-informação suficiente, recomendar não fazer seguimento. Não usar seguimento
-para corrigir gramática ou exigir números. A relevância semântica exige teste
-humano; validação estrutural não prova que a pergunta é útil.
+A follow-up recommendation contains a non-empty English question, the missing
+STAR criterion or dimension and a reason linked to the answer. When enough
+information has already been explained, recommend not making a follow-up. Do
+not use the follow-up to correct grammar or demand numbers. Semantic relevance
+requires human testing; structural validation does not prove that the question
+is useful.
 
-Recomendação «sem seguimento» tem motivo e não cria entidade nem confirmação.
-Dispensa por falha/indisponibilidade é decisão do utilizador e tem estado e
-motivo próprios; não afirmar que a IA considerou a resposta completa. Não
-permitir dispensar resposta a um seguimento já apresentado nesta fase.
+A «sem seguimento» recommendation has a reason and creates no entity nor
+confirmation. Dismissal due to failure/unavailability is the user's decision and
+has its own state and reason; do not claim that the AI considered the answer
+complete. Do not allow dismissing an answer to a follow-up already presented in
+this phase.
 
-Confirmar o seguimento preserva original, automático, revisões e confirmação
-com a mesma política da principal. Retranscrição ou nova gravação só antes da
-confirmação desse alvo. O progresso principal não aumenta ao criar/confirmar
-seguimento. Avanço valida no núcleo confirmação principal e etapa encerrada;
-um botão antigo ou comando local não contorna as regras IA.
+Confirming the follow-up preserves original, automatic, revisions and
+confirmation with the same policy as the main question. Retranscription or a new
+recording only before the confirmation of that target. The main progress does
+not increase when creating/confirming a follow-up. Advancing validates in the
+core the main confirmation and the closed step; an old button or local command
+does not bypass the AI rules.
 
-Após fechar a última principal, a entrevista fica terminada para captura e
-aguarda feedback. Separar estado da entrevista de estado da avaliação:
-`pending`, `running`, `partial`, `failed`, `ready`. Entrevistas terminadas com
-feedback pendente não impedem começar outra entrevista, respeitando a regra
-de uma única entrevista com captura em curso. Histórico mostra ambos os
-estados. Relatórios continuam acessíveis e recuperáveis sem reabrir respostas.
+After closing the last main question, the interview becomes finished for capture
+and awaits feedback. Separate the interview state from the evaluation state:
+`pending`, `running`, `partial`, `failed`, `ready`. Finished interviews with
+pending feedback do not prevent starting another interview, respecting the rule
+of a single interview with capture in progress. The history shows both states.
+Reports remain accessible and recoverable without reopening answers.
 
-## 6. Pedidos, concorrência e recuperação
+## 6. Requests, concurrency and recovery
 
-Cada operação lógica referencia finalidade, sessão, principal, confirmações
-imutáveis de origem, versão de prompt/rubrica/esquema e configuração efetiva.
-Cada tentativa de rede tem identificador próprio, geração, datas, estado,
-modelo pedido/devolvido e consumo. Repetir um comando com o mesmo identificador
-e conteúdo não cria outra tentativa; reutilizar identificador com conteúdo
-diferente é recusado. Repetir após falha é uma ação nova ligada à operação.
+Each logical operation references purpose, session, main question, immutable
+source confirmations, version of prompt/rubric/schema and effective
+configuration. Each network attempt has its own identifier, generation, dates,
+state, requested/returned model and usage. Repeating a command with the same
+identifier and content does not create another attempt; reusing an identifier
+with different content is refused. Repeating after a failure is a new action
+linked to the operation.
 
-Persistir a reserva do pedido antes da rede. Validar e aplicar o resultado numa
-transação que confira operação/generation ainda corrente, alvo e confirmações,
-estado esperado e ausência de resultado já aplicado. Registar consumo conhecido
-mesmo se o conteúdo falhar validação ou chegar depois da dispensa; nunca aplicar
-esse conteúdo à sessão. Garantias locais não prometem execução única no fornecedor.
+Persist the reservation of the request before the network. Validate and apply
+the result in a transaction that checks that the operation/generation is still
+current, the target and the confirmations, the expected state and the absence of
+an already applied result. Record known usage even if the content fails
+validation or arrives after the dismissal; never apply that content to the
+session. Local guarantees do not promise single execution at the provider.
 
-Uma única chamada externa de cada vez limita custo e complexidade; áudio local
-tem coordenação independente. HTTP corre fora do bloqueio de transições e do
-Mutex SQLite. Durante espera deve ser possível consultar, navegar e resolver
-dispensa. Reservar sob bloqueio curto, libertar, pedir, readquirir e validar.
-Não manter o `transitions` de `AppService` durante o `await` HTTP.
+A single external call at a time limits cost and complexity; local audio has
+independent coordination. HTTP runs outside the blocking of transitions and of
+the SQLite Mutex. During the wait it must be possible to consult, navigate and
+resolve dismissal. Reserve under a short lock, release, request, reacquire and
+validate. Do not keep the `transitions` of `AppService` during the HTTP `await`.
 
-Timeout, ligação perdida e fecho podem deixar faturação desconhecida. No
-arranque, pedidos `running` passam a interrompidos/resultado incerto; nunca
-reenviar automaticamente. Mostrar que repetir pode gerar novo custo. Uma
-dispensa invalida a geração e fecha a etapa antes de avançar; cancelamento do
-transporte é apenas otimização, não a garantia contra resultados tardios.
+Timeout, lost connection and shutdown may leave unknown billing. On startup,
+`running` requests become interrupted/uncertain result; never resend
+automatically. Show that repeating may generate a new cost. A dismissal
+invalidates the generation and closes the step before advancing; cancellation
+of the transport is only an optimization, not the guarantee against late
+results.
 
-Sem rede, preservar tudo localmente; repetir seguimento ou dispensá-lo, continuar
-captura e pedir feedback quando houver rede. Não gerar seguimentos anteriores
-após reconexão. Distinguir credencial inválida, falta de saldo/limite, rate
-limit, timeout/rede, resposta inválida e erro de escrita sem expor corpo bruto.
-Não fazer retries automáticos nem reparações pagas automáticas nesta fase.
+Without network, preserve everything locally; repeat the follow-up or dismiss
+it, continue the capture and request feedback when there is network. Do not
+generate earlier follow-ups after reconnection. Distinguish invalid credential,
+lack of balance/limit, rate limit, timeout/network, invalid response and write
+error without exposing the raw body. Do not do automatic retries nor automatic
+paid repairs in this phase.
 
-Se a rede terminar mas a escrita falhar, conservar resultado em memória e
-permitir repetir a publicação sem nova chamada. Após crash nesse intervalo,
-marcar resultado incerto e manter dados confirmados; não afirmar que a resposta
-remota foi guardada. Não apagar ou regravar o áudio como recuperação.
+If the network finishes but the write fails, keep the result in memory and allow
+repeating the publication without a new call. After a crash in that interval,
+mark the result as uncertain and keep the confirmed data; do not claim that the
+remote answer was stored. Do not delete or rewrite the audio as recovery.
 
-## 7. Contrato do feedback e evidências
+## 7. Feedback contract and evidence
 
-Alteração aprovada em 2026-11-04: a avaliação pode ser pedida por pergunta assim que a resposta esteja confirmada e o seguimento encerrado. A ação explícita pode pedir também uma reformulação pela infraestrutura da fase 4. O feedback final reutiliza esses relatórios. Os contratos e restantes garantias desta secção mantêm-se. Ver [desenho da alteração](2026-11-04-per-question-ai-coaching-design.md).
+Change approved on 2026-11-04: the evaluation may be requested per question as
+soon as the answer is confirmed and the follow-up is closed. The explicit action
+may also request a rewrite through the phase 4 infrastructure. The final
+feedback reuses those reports. The contracts and remaining guarantees of this
+section remain. See the [design of the change](2026-11-04-per-question-ai-coaching-design.md).
 
-No fim, «Gerar feedback» pede relatórios das perguntas que ainda não têm um
-relatório válido, sequencialmente. Cada pedido recebe pergunta/critérios e
-confirmação principal, mais confirmação do seguimento quando existe. Dispensa
-é metadado, não resposta vazia fictícia. Não avaliar notas de histórias.
+At the end, «Gerar feedback» requests reports of the questions that do not yet
+have a valid report, sequentially. Each request receives question/criteria and
+main confirmation, plus the follow-up confirmation when it exists. Dismissal is
+metadata, not a fictitious empty answer. Do not evaluate story notes.
 
-O JSON estruturado tem versão e separa conteúdo/STAR de inglês. Inclui:
+The structured JSON has a version and separates content/STAR from English. It
+includes:
 
-- Relevância, situação, responsabilidade individual, ações, resultado e
-  aprendizagem com classificação `claro`, `parcial` ou `não identificado`.
-- Pontos fortes e lacunas com explicações sustentadas; aceitar resultados
-  qualitativos, negativos e aprendizagens sem exigir sucesso ou números.
-- Correções necessárias de inglês e sugestões opcionais de estilo separadas,
-  sempre com trecho inglês de origem e alteração proposta fiel aos factos.
-- Até três prioridades concretas por pergunta; podem ser menos ou nenhuma,
-  com explicação de que não se identificaram outras prioridades sustentadas.
+- Relevance, situation, individual responsibility, actions, result and learning
+  with classification `claro`, `parcial` or `não identificado`.
+- Strengths and gaps with supported explanations; accept qualitative, negative
+  and learning results without demanding success or numbers.
+- Necessary English corrections and optional style suggestions, separated,
+  always with the source English excerpt and a proposed change faithful to the facts.
+- Up to three concrete priorities per question; there may be fewer or none,
+  with an explanation that no other supported priorities were identified.
 
-Cada observação positiva, erro ou facto sobre o que foi dito referencia
-`confirmationId`, papel `initial`/`follow_up` e citação literal não vazia.
-Rust resolve apenas as confirmações fornecidas ao pedido e verifica a substring
-exata, incluindo Unicode e pontuação; não procurar numa revisão diferente nem
-normalizar para fabricar correspondência. Distinguir avaliação inicial da
-informação esclarecida apenas no seguimento.
+Each positive observation, error or fact about what was said references
+`confirmationId`, role `initial`/`follow_up` and a non-empty literal quotation.
+Rust resolves only the confirmations provided to the request and verifies the
+exact substring, including Unicode and punctuation; do not search in a different
+revision nor normalize to fabricate a match. Distinguish the initial evaluation
+from the information clarified only in the follow-up.
 
-Uma ausência não pode ter citação inventada. Usa tipo `absence`, dimensão em
-falta e lista dos identificadores efetivamente avaliados; só é permitida para
-dimensões/critérios fornecidos. Deve dizer «não identificado no texto» e não
-afirmar que o utilizador não realizou a ação na realidade. Classificação
-`parcial` requer também trecho que mostre o conteúdo parcial. Rust valida
-estrutura e referências; a conclusão semântica de ausência é recomendação do
-modelo, não facto provado pelo algoritmo.
+An absence cannot have an invented quotation. It uses type `absence`, the
+missing dimension and the list of the identifiers effectively evaluated; it is
+only allowed for the dimensions/criteria provided. It must say
+«não identificado no texto» and not claim that the user did not carry out the
+action in reality. Classification `parcial` also requires an excerpt that shows the
+partial content. Rust validates structure and references; the semantic
+conclusion of absence is a recommendation of the model, not a fact proved by the
+algorithm.
 
-Prioridades referenciam observações válidas do próprio relatório; uma prioridade
-baseada em ausência herda essa limitação. A síntese da sessão é construída
-localmente: relatórios por ordem, até três prioridades escolhidas por ordem
-de lacunas de conteúdo e depois correções necessárias, com origem visível e
-sem nota global. Pode mostrar menos de três. Não criar novas afirmações na
-agregação. Se houver relatórios em falta, indicar feedback parcial.
+Priorities reference valid observations of the report itself; a priority based
+on absence inherits that limitation. The session synthesis is built locally:
+reports in order, up to three priorities chosen in order of content gaps and
+then necessary corrections, with visible origin and without a global grade. It
+may show fewer than three. Do not create new statements in the aggregation. If
+there are missing reports, indicate partial feedback.
 
-Rejeitar o relatório completo se tiver esquema inválido, referências erradas,
-citação inexistente, classificação fora do enum, prioridade órfã, nota global
-ou campos de diagnóstico de pronúncia/confiança emocional. Guardar o erro e
-consumo sem apresentar observações inválidas. Texto de resposta é material
-não confiável delimitado no prompt; nunca é instrução para alterar rubrica.
-Validação literal não garante verdade semântica: manter a apresentação como
-feedback da IA e validar utilidade/fidelidade com respostas reais.
+Reject the complete report if it has an invalid schema, wrong references, a
+nonexistent quotation, a classification outside the enum, an orphan priority, a
+global grade or fields of pronunciation/emotional confidence diagnosis. Store
+the error and the usage without presenting invalid observations. Answer text is
+untrusted material delimited in the prompt; it is never an instruction to change
+the rubric. Literal validation does not guarantee semantic truth: keep the
+presentation as AI feedback and validate usefulness/fidelity with real answers.
 
-Relatórios válidos são imutáveis e mantêm as fontes/prompt/rubrica. Repetir
-feedback parcial só pede os relatórios em falta/falhados; não substitui os
-válidos nem reabre o seguimento. Sem uma funcionalidade explícita de regeneração
-nesta fase, não cobrar novamente uma avaliação já válida.
+Valid reports are immutable and keep the sources/prompt/rubric. Repeating partial
+feedback only requests the missing/failed reports; it does not replace the valid
+ones nor reopen the follow-up. Without an explicit regeneration feature in this
+phase, do not charge again for an evaluation already valid.
 
-## 8. Consumo, configuração efetiva e limites
+## 8. Usage, effective configuration and limits
 
-Guardar separadamente tokens conhecidos de entrada, saída e cache, custo
-reportado pelo fornecedor, respetiva natureza e estimativa local com moeda,
-tarifário/data/fonte. Ausente é `null`/desconhecido, nunca zero inferido.
-Entrada e cache podem ter semânticas diferentes conforme os campos: o plano
-deve fixar a normalização para evitar contar cache duas vezes.
+Store separately known input, output and cache tokens, cost reported by the
+provider, its nature and the local estimate with currency, price list/date/source.
+Absent is `null`/unknown, never inferred zero. Input and cache may have different
+semantics depending on the fields: the plan must fix the normalization to avoid
+counting cache twice.
 
-Tarifário local é configuração datada editável, copiada para cada pedido.
-Não codificar preços como verdade permanente. Sem tarifa aplicável ao modelo,
-mostrar estimativa indisponível. Se só há entrada total sem cache separada,
-usar tarifa normal e identificar a estimativa conservadora. Não somar custo
-reportado e estimativa como duas despesas do mesmo pedido.
+The local price list is dated editable configuration, copied to each request. Do
+not encode prices as permanent truth. Without a rate applicable to the model,
+show the estimate as unavailable. If there is only total input without separate
+cache, use the normal rate and identify the conservative estimate. Do not add the
+reported cost and the estimate as two expenses of the same request.
 
-Totais da sessão incluem tentativas repetidas, inválidas e tardias. Se houver
-pedidos de custo desconhecido, mostrar subtotal conhecido e quantidade de
-pedidos desconhecidos; não chamar a esse subtotal custo total. Valores de
-tokens parciais também se apresentam como parciais. Erros antes de qualquer
-envio distinguem-se de pedidos enviados sem recibo de consumo.
+Session totals include repeated, invalid and late attempts. If there are requests
+of unknown cost, show the known subtotal and the number of unknown requests; do
+not call that subtotal the total cost. Values of partial tokens are also presented
+as partial. Errors before any sending are distinguished from requests sent
+without a usage receipt.
 
-Modelo, URL, tarifário e versões usados ficam fixados por tentativa. Mudança
-na configuração só afeta pedidos futuros; nunca muda a interpretação do
-histórico. Não enviar chave ao catálogo. Não é preciso CLI OpenCode.
+Model, URL, price list and versions used are fixed per attempt. A change in the
+configuration only affects future requests; it never changes the interpretation
+of the history. Do not send the key to the catalog. The OpenCode CLI is not
+needed.
 
-O plano fixa timeout, limite de resposta HTTP/JSON, comprimento de pergunta
-gerada, contexto de entrada e máximo de saída, com erros claros. Não truncar
-texto confirmado nem aceitar JSON cortado como relatório completo. Excesso
-de limite conserva textos e permite diagnóstico/reconfiguração, sem inventar
-uma nova tentativa de resposta nem recorrer a outro modelo silenciosamente.
+The plan fixes timeout, HTTP/JSON response limit, length of the generated
+question, input context and maximum output, with clear errors. Do not truncate
+confirmed text nor accept cut JSON as a complete report. Exceeding a limit keeps
+the texts and allows diagnosis/reconfiguration, without inventing a new answer
+attempt nor resorting to another model silently.
 
-## 9. Persistência e interface
+## 9. Persistence and interface
 
-Persistir configuração pública/consentimento, modo IA, etapa por principal,
-seguimento único, alvo da resposta, pedidos/tentativas/gerações, metadados de
-consumo e relatórios/fontes. Não criar tabelas antecipadas para a fase 4.
-Reutilizar o padrão de recibos de comandos e versões esperado pelo núcleo.
-Testar invariantes também no SQLite, com chaves estrangeiras e unicidade,
-não apenas por desativação de botões.
+Persist public configuration/consent, AI mode, step per main question, single
+follow-up, target of the answer, requests/attempts/generations, usage metadata
+and reports/sources. Do not create tables anticipated for phase 4. Reuse the
+pattern of command receipts and versions expected by the core. Test invariants
+also in SQLite, with foreign keys and uniqueness, not only by disabling buttons.
 
-Estender preparação, entrevista e histórico existentes; acrescentar configuração
-de IA e leitura de feedback. Mostrar estado atual sem depender de página aberta.
-Seguimento tem etiqueta própria junto de «Pergunta X de N». Durante rede mostrar
-espera e opções legítimas; erro dá recuperação correspondente. Confirmações e
-fontes do feedback são consultáveis; originais continuam reproduzíveis.
+Extend the existing preparation, interview and history; add AI configuration and
+reading of feedback. Show the current state without depending on the open page.
+The follow-up has its own label next to «Pergunta X de N». During the network,
+show the wait and the legitimate options; an error gives the corresponding
+recovery. Confirmations and sources of the feedback are consultable; originals
+remain playable.
 
-No modo local conservar percurso offline da fase 2. No modo IA distinguir
-dispensa, decisão sem seguimento, feedback pendente/parcial/pronto e custos
-desconhecidos. Não chamar uma entrevista terminada de «avaliada» antes de
-existirem todos os relatórios válidos.
+In the local mode keep the phase 2 offline journey. In the AI mode distinguish
+dismissal, decision without follow-up, pending/partial/ready feedback and unknown
+costs. Do not call a finished interview «avaliada» before all the valid reports
+exist.
 
-## 10. Verificação e aceitação
+## 10. Verification and acceptance
 
-Todas as caixas começam pendentes. O plano detalha testes do núcleo com
-transporte/credenciais falsos, testes HTTP com servidor controlado, migrações
-v1 com dados reais de teste e interface com estados persistidos. Nenhum teste
-automático necessita de chave paga ou envia respostas profissionais reais.
+All the boxes start pending. The plan details core tests with fake
+transport/credentials, HTTP tests with a controlled server, v1 migrations with
+real test data and interface with persisted states. No automated test needs a
+paid key or sends real professional answers.
 
-- [ ] F3-01: Modo local permanece funcional; sessões anteriores mantêm conteúdo e comportamento após migração, incluindo sessão em curso.
-- [ ] F3-02: Chave fica protegida no Windows e não regressa em DTO, configuração, SQLite, erro ou log; falha de armazenamento não usa texto simples.
-- [ ] F3-03: Nenhum envio antes de guardar confirmação e consentimento para destino atual; carga HTTP contém apenas texto necessário, nunca áudio/rascunhos.
-- [ ] F3-04: Sessão IA com N principais tem no máximo N seguimentos; nunca gera seguimento de seguimento nem altera o contador principal.
-- [ ] F3-05: Seguir com voz, revisão e confirmação preserva as versões e gravações, incluindo nova captura antes de confirmar e recuperação de transcrição falhada.
-- [ ] F3-06: Falha exige retry ou dispensa explícita antes de avançar; dispensa fica distinguível de decisão da IA e bloqueia resultado tardio.
-- [ ] F3-07: Cliques repetidos, pedidos simultâneos, versão antiga e resultados fora de ordem não duplicam seguimentos, confirmações ou avanços.
-- [ ] F3-08: Reinício em pedido/decisão/seguimento/feedback recupera etapa sem reenviar automaticamente nem exigir nova gravação.
-- [ ] F3-09: Feedback separa STAR/inglês, inicial/seguimento e correção/estilo; evidências só apontam às confirmações avaliadas e citações exatas.
-- [ ] F3-10: Ausências usam contrato próprio sem citações fabricadas; referências/citações inválidas e JSON truncado não produzem feedback apresentado como válido.
-- [ ] F3-11: Resultados qualitativos, negativos, aprendizagens e instruções maliciosas na resposta são cobertos por testes de contrato e validação humana; não há diagnóstico acústico nem nota global.
-- [ ] F3-12: Falha parcial de feedback conserva relatórios válidos e retry só pede os em falta; histórico distingue entrevista terminada de avaliação pronta.
-- [ ] F3-13: Tokens e custos desconhecidos continuam desconhecidos; subtotal parcial, cache, tentativas falhadas/tardias e mudanças de tarifário não falseiam totais.
-- [ ] F3-14: Rede lenta/timeout/401/403/429/5xx, credencial indisponível, resultado remoto seguido de falha SQLite e versão futura da base têm recuperação sem perda das fontes.
-- [ ] F3-15: UI continua utilizável durante rede; dispensa não espera pelo timeout; áudio/captura conservam as proteções e não bloqueiam consulta.
-- [ ] F3-16: Sessão real de três principais produz seguimentos úteis quando necessários, feedback fiel e custo observável, com testes de indisponibilidade e retoma no Windows.
+- [ ] F3-01: Local mode remains functional; earlier sessions keep content and behavior after the migration, including a session in progress.
+- [ ] F3-02: The key stays protected in Windows and does not return in DTO, configuration, SQLite, error or log; a storage failure does not use plain text.
+- [ ] F3-03: No sending before storing confirmation and consent for the current destination; the HTTP payload contains only the necessary text, never audio/drafts.
+- [ ] F3-04: An AI session with N main questions has at most N follow-ups; it never generates a follow-up of a follow-up nor changes the main counter.
+- [ ] F3-05: Following with voice, review and confirmation preserves the versions and recordings, including a new capture before confirming and recovery of a failed transcription.
+- [ ] F3-06: A failure requires retry or explicit dismissal before advancing; the dismissal stays distinguishable from an AI decision and blocks a late result.
+- [ ] F3-07: Repeated clicks, simultaneous requests, an old version and out-of-order results do not duplicate follow-ups, confirmations or advances.
+- [ ] F3-08: Restart in request/decision/follow-up/feedback recovers the step without resending automatically nor requiring a new recording.
+- [ ] F3-09: Feedback separates STAR/English, initial/follow-up and correction/style; evidence only points to the evaluated confirmations and exact quotations.
+- [ ] F3-10: Absences use their own contract without fabricated quotations; invalid references/quotations and truncated JSON do not produce feedback presented as valid.
+- [ ] F3-11: Qualitative, negative and learning results and malicious instructions in the answer are covered by contract tests and human validation; there is no acoustic diagnosis nor global grade.
+- [ ] F3-12: A partial failure of feedback keeps the valid reports and the retry only requests the missing ones; the history distinguishes a finished interview from a ready evaluation.
+- [ ] F3-13: Unknown tokens and costs remain unknown; partial subtotal, cache, failed/late attempts and price list changes do not falsify totals.
+- [ ] F3-14: Slow network/timeout/401/403/429/5xx, unavailable credential, remote result followed by SQLite failure and future version of the database have recovery without loss of the sources.
+- [ ] F3-15: The UI remains usable during the network; dismissal does not wait for the timeout; audio/capture keep the protections and do not block consultation.
+- [ ] F3-16: A real session of three main questions produces useful follow-ups when necessary, faithful feedback and observable cost, with tests of unavailability and resuming on Windows.
 
-Validação humana: usar respostas completas e incompletas, termos técnicos,
-contribuição individual, resultado qualitativo/negativo e aprendizagem. Conferir
-citações e classificação inicial versus seguimento; confirmar ausência de
-exigência artificial de números. Medir espera e utilidade do modelo pago.
-Registar envio real, modelo e consumo/custo disponíveis, sem publicar respostas
-pessoais. Não afirmar integração paga validada sem chave/saldo e execução real.
+Human validation: use complete and incomplete answers, technical terms,
+individual contribution, qualitative/negative result and learning. Check
+quotations and the classification initial versus follow-up; confirm the absence
+of artificial demand for numbers. Measure the wait and the usefulness of the paid
+model. Record the real sending, model and available usage/cost, without
+publishing personal answers. Do not claim the paid integration validated without
+key/balance and real execution.
 
-Executar verificações existentes adequadas à alteração, incluindo regressão
-das fases anteriores. Durante implementação criar `docs/phase-3/setup.md` e
-`validation.md` com comandos/evidências reais e pendências; atualizar documentos
-afetados e AGENTS.md sem marcar aceitação manual antecipadamente.
+Run the existing checks suitable to the change, including regression of the
+earlier phases. During the implementation create `docs/phase-3/setup.md` and
+`validation.md` with real commands/evidence and pending items; update affected
+documents and AGENTS.md without marking manual acceptance in advance.
 
-## 11. Fontes e decisões para o plano
+## 11. Sources and decisions for the plan
 
-Consultado em 2026-11-02, sem executar inferência paga:
+Consulted on 2026-11-02, without executing paid inference:
 
-- [API oficial OpenCode](https://opencode.ai/v2/docs/console/api/inference/): autenticação Bearer, rota Chat Completions e metadados de custo em `usage`, incluindo natureza estimada quando indicada pelo fornecedor.
-- [Modelos e preços oficiais](https://opencode.ai/v2/docs/console/models/): `deepseek-v4.1-flash` pago, endpoint acima e referência de US$0,30 entrada, US$1,20 saída e US$0,006 leitura de cache por milhão de tokens.
-- [Catálogo oficial](https://opencode.ai/inference/v1/models): consulta pública disponível; não constitui teste de autorização/saldo da conta.
+- [Official OpenCode API](https://opencode.ai/v2/docs/console/api/inference/): Bearer authentication, Chat Completions route and cost metadata in `usage`, including the estimated nature when indicated by the provider.
+- [Official models and prices](https://opencode.ai/v2/docs/console/models/): `deepseek-v4.1-flash` paid, endpoint above and reference of US$0.30 input, US$1.20 output and US$0.006 cache read per million tokens.
+- [Official catalog](https://opencode.ai/inference/v1/models): public consultation available; it does not constitute a test of authorization/balance of the account.
 
-Disponibilidade, preços e campos efetivamente devolvidos podem mudar. As páginas
-não demonstram suporte específico a JSON Schema estrito neste modelo; não
-depender dessa capacidade sem confirmação. Exigir JSON no prompt e validar no
-Rust. O consumo pode faltar apesar de documentado; preservar desconhecido.
+Availability, prices and fields effectively returned may change. The pages do
+not demonstrate specific support for strict JSON Schema in this model; do not
+depend on that capability without confirmation. Require JSON in the prompt and
+validate in Rust. Usage may be missing despite being documented; preserve it as
+unknown.
 
-Ficam para o plano apenas decisões de construção: biblioteca HTTP e mecanismo
-Windows de credenciais; migração física e reutilização dos alvos de áudio;
-DTOs/esquemas JSON completos; organização de módulos; limites concretos;
-normalização dos campos de consumo; componentes e testes reproduzíveis. Não
-trocar a stack, ampliar para a fase 4 ou considerar validações anteriores feitas.
+Only construction decisions are left for the plan: HTTP library and Windows
+credentials mechanism; physical migration and reuse of the audio targets; complete
+DTOs/JSON schemas; organization of modules; concrete limits; normalization of the
+usage fields; components and reproducible tests. Do not change the stack, expand
+to phase 4 or consider earlier validations done.

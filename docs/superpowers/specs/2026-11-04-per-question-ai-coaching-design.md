@@ -1,71 +1,71 @@
-# Avaliação e correções por pergunta
+# Per-question evaluation and corrections
 
-Data: 2026-11-04. Estado: aprovado pelo utilizador («pode avancar»); execução e evidências no [plano](../plans/2026-11-04-per-question-ai-coaching.md) e na [validação](../../ai-coaching/validation.md). Aceitação manual pendente.
+Date: 2026-11-04. Status: approved by the user («pode avancar»); execution and evidence in the [plan](../plans/2026-11-04-per-question-ai-coaching.md) and in the [validation](../../ai-coaching/validation.md). Manual acceptance pending.
 
-## Intenção
+## Intention
 
-O utilizador quer que o fornecedor de IA avalie a resposta e proponha as
-correções. Concordou com o percurso «gravar → confirmar transcrição → receber
-avaliação, correções explicadas e uma versão melhorada», preservando o original.
-Não escolheu expressamente entre avaliação por resposta e no fim da entrevista.
-A proposta é apresentá-la por pergunta, antes de avançar para a seguinte.
+The user wants the AI provider to evaluate the answer and propose the
+corrections. They agreed with the path «gravar → confirmar transcrição → receber
+avaliação, correções explicadas e uma versão melhorada», preserving the original.
+They did not expressly choose between evaluation per answer and at the end of the interview.
+The proposal is to present it per question, before advancing to the next one.
 
-## Abordagens
+## Approaches
 
-1. Manter avaliação e reformulação no fim da entrevista: reutiliza o percurso
-   atual, mas adia as correções e não permite aplicá-las na pergunta seguinte.
-2. Disponibilizar avaliação e reformulação após cada pergunta: reutiliza os
-   contratos existentes, adaptando as condições que atualmente exigem sessão
-   concluída. Abordagem escolhida através da aprovação deste documento.
+1. Keep evaluation and rewrite at the end of the interview: reuses the current
+   path, but postpones the corrections and does not allow applying them in the next question.
+2. Make evaluation and rewrite available after each question: reuses the
+   existing contracts, adapting the conditions that currently require a completed
+   session. Approach chosen through the approval of this document.
 
-## Comportamento proposto
+## Proposed behavior
 
-- A revisão da transcrição é opcional quando existe texto automático utilizável.
-  Serve para corrigir palavras mal reconhecidas, preservando os erros de inglês
-  efetivamente ditos para a IA os avaliar. O texto apresentado para confirmação
-  começa com a transcrição automática, salvo revisão já existente.
-- A confirmação guarda uma versão imutável localmente. Não implica, por si só,
-  um pedido pago. O modo local conserva o funcionamento sem rede.
-- No modo IA, mantém-se a decisão de seguimento e o limite de um seguimento por
-  pergunta principal. A avaliação fica disponível depois de o seguimento estar
-  respondido, dispensado ou considerado desnecessário. Assim não se fixa um
-  relatório incompleto antes de conhecer todas as fontes da pergunta.
-- Uma ação explícita «Avaliar e sugerir melhorias» inicia primeiro a avaliação
-  e depois a reformulação. A interface explica que utiliza a API configurada e
-  pode gerar custo; o consentimento para o destino continua obrigatório.
-- Mostrar conteúdo/STAR, correções necessárias com trecho original, proposta e
-  explicação, e sugestões opcionais de estilo separadas.
-- Mostrar uma versão melhorada em inglês, separada do original, com nível B1
-  por omissão e reutilização das variantes B1/B2/C1 já existentes. O nível é um
-  objetivo de linguagem, não uma classificação do utilizador.
-- A reformulação preserva factos e assinala lacunas sem inventar responsabilidades,
-  números ou resultados. Não substitui a confirmação, o áudio ou a transcrição.
-- A avaliação é uma ajuda opcional antes de avançar: uma falha do fornecedor não
-  obriga a regravar nem cria uma nova condição para terminar a entrevista.
-- O relatório final reutiliza avaliações válidas por pergunta e pede apenas as
-  que faltam; não volta a cobrar relatórios já disponíveis.
+- Review of the transcript is optional when there is usable automatic text.
+  It serves to correct misrecognized words, preserving the English errors
+  actually said for the AI to evaluate them. The text presented for confirmation
+  starts with the automatic transcript, unless a review already exists.
+- Confirmation stores an immutable version locally. It does not, by itself,
+  imply a paid request. Local mode keeps working without network.
+- In AI mode, the follow-up decision and the limit of one follow-up per
+  main question are kept. Evaluation becomes available after the follow-up is
+  answered, dismissed or considered unnecessary. Thus an incomplete
+  report is not fixed before knowing all the sources of the question.
+- An explicit action «Avaliar e sugerir melhorias» starts the evaluation first
+  and then the rewrite. The interface explains that it uses the configured API and
+  may generate cost; consent for the destination remains mandatory.
+- Show content/STAR, necessary corrections with the original excerpt, proposal and
+  explanation, and optional style suggestions separated.
+- Show an improved version in English, separate from the original, with level B1
+  by default and reuse of the existing B1/B2/C1 variants. The level is a
+  language goal, not a classification of the user.
+- The rewrite preserves facts and flags gaps without inventing responsibilities,
+  numbers or results. It does not replace the confirmation, the audio or the transcript.
+- Evaluation is an optional help before advancing: a provider failure does not
+  oblige re-recording nor creates a new condition to end the interview.
+- The final report reuses valid per-question evaluations and asks only for the
+  missing ones; it does not charge again for reports already available.
 
-## Persistência e recuperação
+## Persistence and recovery
 
-Reutilizar o fornecedor, os contratos de evidências, pedidos, consumo e
-reformulações das fases 3 e 4. Alargar a elegibilidade apenas às perguntas com
-fontes confirmadas e etapa de seguimento encerrada, mantendo as restrições das
-práticas e as verificações no núcleo Rust. Uma resposta tardia aplica-se apenas
-à origem que iniciou o pedido, mesmo que a interface já mostre outra pergunta.
+Reuse the provider, the evidence, request, usage and rewrite
+contracts of phases 3 and 4. Widen eligibility only to questions with
+confirmed sources and a closed follow-up stage, keeping the practice
+restrictions and the checks in the Rust core. A late response applies only
+to the origin that started the request, even if the interface already shows another question.
 
-Avaliação e reformulação são operações separadas: se a primeira terminar e a
-segunda falhar, conservar a avaliação e permitir repetir apenas a operação em
-falta. Não reenviar automaticamente após reinício ou falha. Manter consumo
-desconhecido como desconhecido e recuperação de publicação sem nova chamada.
+Evaluation and rewrite are separate operations: if the first finishes and the
+second fails, keep the evaluation and allow repeating only the missing
+operation. Do not resend automatically after a restart or failure. Keep unknown usage
+as unknown and publication recovery without a new call.
 
-## Verificação necessária
+## Required verification
 
-Testar elegibilidade por pergunta, confirmação e seguimento, preservação das
-fontes, resultados tardios, reutilização no relatório final, falha parcial entre
-avaliação e reformulação, ausência de pedidos automáticos ao abrir uma página e
-percurso local. Verificar também a inicialização do editor com transcrição
-utilizável e os avisos de origem manual, face à incoerência observada na imagem.
+Test eligibility per question, confirmation and follow-up, preservation of the
+sources, late results, reuse in the final report, partial failure between
+evaluation and rewrite, absence of automatic requests when opening a page and
+the local path. Also verify the editor initialization with a usable transcript
+and the manual-origin notices, given the inconsistency observed in the image.
 
-Atualizar a documentação afetada com os resultados reais. A inferência paga, a
-utilidade semântica e o áudio real continuam sujeitos a validação específica;
-esta alteração não aceita as fases anteriores nem inicia a fase 5.
+Update the affected documentation with the real results. Paid inference,
+semantic usefulness and real audio remain subject to specific validation;
+this change does not accept the previous phases nor start phase 5.

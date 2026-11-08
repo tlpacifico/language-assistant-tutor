@@ -1,26 +1,26 @@
-# Relatório de implementação da fase 3
+# Phase 3 implementation report
 
-Data: 2026-11-02. Branch `feature/phase-3-ai-tutor`. Sem commits, push, inferência paga ou leitura de credenciais pessoais pelos testes.
+Date: 2026-11-02. Branch `feature/phase-3-ai-tutor`. No commits, push, paid inference or reading of personal credentials by the tests.
 
-## Decisões e desvios internos
+## Internal decisions and deviations
 
-- Um agente implementou; o coordenador revê o código e as evidências. A autorização do utilizador para antecipar a fase 3 preserva as aceitações manuais anteriores.
-- `answer_slots` é a autoridade do alvo de resposta; a coluna interna legada `session_question_id` nas tabelas de áudio conserva o nome para reutilizar o pipeline, mas a FK aponta ao slot. `answerId` e `currentAnswer` explicitam os alvos nos contratos públicos. As principais e o progresso mantêm-se separados.
-- `QuestionDetail.followUp` reutiliza o DTO de resposta, com `initialAnswerId` a identificar a principal. Não existe uma pergunta principal artificial para o seguimento.
-- As tabelas/recibos IA são separados dos trabalhos locais. O resultado por publicar fica em memória até commit ou fecho; após crash a operação fica incerta. Não se promete persistir dados que não foram escritos.
-- Feedback é JSON validado em Rust com whitelists de campos e evidências. A validação literal não prova relevância ou fidelidade semântica.
-- `reqwest` 0.13.5 (JSON/Rustls) e `keyring` 3.6.3 Windows foram acrescentados, sem mudar os motores existentes. Prettier foi usado como ferramenta transitória, sem dependência nova do projeto.
+- One agent implemented; the coordinator reviews the code and the evidence. The user's authorization to bring phase 3 forward preserves the previous manual acceptances.
+- `answer_slots` is the authority for the answer target; the legacy internal column `session_question_id` in the audio tables keeps the name to reuse the pipeline, but the FK points to the slot. `answerId` and `currentAnswer` make the targets explicit in the public contracts. The main questions and the progress remain separate.
+- `QuestionDetail.followUp` reuses the answer DTO, with `initialAnswerId` identifying the main one. There is no artificial main question for the follow-up.
+- The AI tables/receipts are separate from the local jobs. The result awaiting publication stays in memory until commit or shutdown; after a crash the operation remains uncertain. It is not promised to persist data that was not written.
+- Feedback is JSON validated in Rust with field and evidence whitelists. Literal validation does not prove relevance or semantic fidelity.
+- `reqwest` 0.13.5 (JSON/Rustls) and `keyring` 3.6.3 Windows were added, without changing the existing engines. Prettier was used as a transient tool, without a new project dependency.
 
-## Testes e processo
+## Tests and process
 
-TDD foi parcial. O teste inicial de migração falhou com versão 1 antes da implementação; um teste de feedback parcial identificou uma corrida no estado inicial do batch e ficou verde após a correção. Vários testes de HTTP, contrato, custos e UI foram acrescentados depois do código e não são apresentados como ciclos red/green completos. A comparação das fixtures de esquema/DTOs também encontrou assertions v1 que foram atualizadas para v2, mantendo igualdade exata do contrato.
+TDD was partial. The initial migration test failed with version 1 before the implementation; a partial feedback test identified a race in the initial state of the batch and went green after the correction. Several HTTP, contract, cost and UI tests were added after the code and are not presented as complete red/green cycles. The comparison of the schema/DTO fixtures also found v1 assertions that were updated to v2, keeping exact contract equality.
 
-Comandos executados: testes Rust específicos `ai_migration`, `ai_service`, `ai_validation`, `ai_usage`, `database`, `interview_contracts`; testes HTTP internos com `--lib ai::transport`; testes React específicos `Ai.test.tsx` e `Interview.test.tsx`; `npm.cmd run typecheck`; `cargo fmt`; `cargo clippy --all-targets -- -D warnings`; regressão Rust completa. A evidência final consolidada é registada na [validação](validation.md).
+Commands executed: specific Rust tests `ai_migration`, `ai_service`, `ai_validation`, `ai_usage`, `database`, `interview_contracts`; internal HTTP tests with `--lib ai::transport`; specific React tests `Ai.test.tsx` and `Interview.test.tsx`; `npm.cmd run typecheck`; `cargo fmt`; `cargo clippy --all-targets -- -D warnings`; full Rust regression. The final consolidated evidence is recorded in the [validation](validation.md).
 
-Não foram exercitados: inferência paga real, armazenamento protegido real com chave pessoal, microfone/reprodução reais, semântica/utilidade do modelo e pacote instalado. São pendências explícitas, não falhas ocultadas por mocks.
+Not exercised: real paid inference, real protected storage with a personal key, real microphone/playback, model semantics/usefulness and installed package. These are explicit pending items, not failures hidden by mocks.
 
-Evidência final: agregado 8/8 em 77,6 s (175 Rust, 57 React, 36 Python), build --no-bundle com saída 0 e smoke isolado com fecho/saída 0. Os testes de reinício, fecho durante batch e replay de configuração/consentimento também passaram.
+Final evidence: 8/8 aggregate in 77.6 s (175 Rust, 57 React, 36 Python), `--no-bundle` build with exit 0 and isolated smoke with shutdown/exit 0. The restart tests, shutdown during batch and configuration/consent replay also passed.
 
-A revisão técnica identificou uma corrida entre o fecho e a reserva do próximo relatório. O teste closing_queued_before_batch_reservation_prevents_new_attempts reproduziu o erro (uma chamada externa quando eram esperadas zero). A reserva e a admissão ao transporte passaram a verificar o fecho sob transitions, libertado antes da espera HTTP. O teste ficou verde e o agregado posterior passou 8/8 em 77,6 s (175 Rust, 57 React, 36 Python).
+The technical review identified a race between the shutdown and the reservation of the next report. The test closing_queued_before_batch_reservation_prevents_new_attempts reproduced the error (one external call when zero were expected). The reservation and the admission to the transport started checking the shutdown under transitions, released before the HTTP wait. The test went green and the later aggregate passed 8/8 in 77.6 s (175 Rust, 57 React, 36 Python).
 
-Após a correção: rebuild --no-bundle com saída 0 em 1m18s e smoke final com APPDATA/LOCALAPPDATA temporários; fecho e saída 0, sem dados pessoais.
+After the correction: `--no-bundle` rebuild with exit 0 in 1m18s and final smoke with temporary APPDATA/LOCALAPPDATA; shutdown and exit 0, without personal data.

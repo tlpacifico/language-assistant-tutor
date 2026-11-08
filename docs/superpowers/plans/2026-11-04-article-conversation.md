@@ -1,53 +1,53 @@
-# Conversa sobre artigos — plano de implementação
+# Conversation about articles — implementation plan
 
-> **Para execução por agentes:** usar a skill `executing-plans` para execução direta, tarefa a tarefa; `subagent-driven-development` apenas se essa modalidade for escolhida pelo utilizador. Os passos usam caixas de verificação para acompanhamento.
+> **For agent execution:** use the `executing-plans` skill for direct execution, task by task; `subagent-driven-development` only if that modality is chosen by the user. The steps use checkboxes for tracking.
 
-**Objetivo:** conversar em inglês sobre um artigo, com turnos ligados entre si, envio automático autorizado e feedback final sobre coesão, coerência, desenvolvimento e interação.
+**Goal:** converse in English about an article, with turns linked to each other, authorized automatic sending and final feedback on cohesion, coherence, development and interaction.
 
-**Arquitetura:** domínio próprio de artigos no mesmo núcleo Rust e SQLite, reutilizando captura, modelos locais, credenciais, transporte HTTP e normalização de consumo. React apresenta fotografias do estado persistido. A voz incremental entrega blocos apenas depois de o texto completo do tutor ter sido validado e guardado.
+**Architecture:** a dedicated article domain in the same Rust core and SQLite, reusing capture, local models, credentials, HTTP transport and usage normalization. React presents photographs of the persisted state. The incremental voice delivers chunks only after the tutor's complete text has been validated and saved.
 
-**Stack:** React/TypeScript, Tauri 2/Rust, rusqlite, CPAL/Rodio, auxiliar Python com faster-whisper/Kokoro e OpenCode Go. Sem novas dependências previstas.
+**Stack:** React/TypeScript, Tauri 2/Rust, rusqlite, CPAL/Rodio, Python helper with faster-whisper/Kokoro and OpenCode Go. No new dependencies foreseen.
 
-**Spec:** [desenho aprovado](../specs/2026-11-04-article-conversation-design.md).
+**Spec:** [approved design](../specs/2026-11-04-article-conversation-design.md).
 
-**Estado:** execução concluída em 2026-11-05 no ramo `feat/article-conversation`: tarefas 1 a 9 implementadas, com `verify.ps1` 8/8 (354 Rust, 147 Vitest, 56 Python), build `--no-bundle` e ensaio com dados temporários com saída 0. Desvios registados em [validação](../../article-conversation/validation.md) (sem capability no `health`, limite do artigo em 30 000 bytes, ramos antigos só em base de dados, sem regravação como ramo). **Pendente e não feito**: medições reais de desempenho e fidelidade (tarefa 8), roteiro manual com áudio, voz e inferência reais (tarefa 9) e validação visual. Nada disto é aceitação manual.
+**Status:** execution completed on 2026-11-05 on the branch `feat/article-conversation`: tasks 1 to 9 implemented, with `verify.ps1` 8/8 (354 Rust, 147 Vitest, 56 Python), `--no-bundle` build and rehearsal with temporary data with exit code 0. Deviations recorded in [validation](../../article-conversation/validation.md) (no capability in `health`, article limit of 30,000 bytes, old branches only in the database, no re-recording as a branch). **Pending and not done**: real measurements of performance and fidelity (task 8), manual script with real audio, voice and inference (task 9) and visual validation. None of this is manual acceptance.
 
-## Restrições globais
+## Global constraints
 
-- Interface e explicações em português de Portugal; perguntas, comentários e respostas de treino em inglês.
-- O utilizador começa e termina a resposta manualmente. Sem classificação de pronúncia, ritmo ou confiança emocional.
-- Correções apenas no final; preservar áudio, transcrição, versões enviadas e ramos anteriores.
-- Modo separado de STAR: não alterar a confirmação obrigatória nem o limite de seguimentos existentes.
-- Guardar antes de enviar; apenas texto necessário segue para o fornecedor, nunca áudio ou chave nos logs.
-- Consentimento explícito por sessão para artigo e envio automático; destino alterado ou autorização revogada bloqueiam novos envios.
-- Identidade Tauri e diretório de diagnóstico preservados; operações novas nas listas fechadas.
-- Sem inferência paga nos testes automáticos. Sem importação URL/PDF, GPU ou transcrição durante a gravação nesta entrega.
-- Não iniciar fase 5 nem marcar fases anteriores como aceites.
+- Interface and explanations in European Portuguese; practice questions, comments and answers in English.
+- The user starts and ends the answer manually. No rating of pronunciation, rhythm or emotional confidence.
+- Corrections only at the end; preserve audio, transcript, sent revisions and earlier branches.
+- Mode separate from STAR: do not change the mandatory confirmation or the existing follow-up limit.
+- Save before sending; only the necessary text goes to the provider, never audio or the key in the logs.
+- Explicit consent per session for the article and automatic sending; a changed destination or revoked authorization blocks new sends.
+- Tauri identity and diagnostics directory preserved; new operations in the closed lists.
+- No paid inference in the automated tests. No URL/PDF import, GPU or transcription during recording in this delivery.
+- Do not start phase 5 and do not mark earlier phases as accepted.
 
-## Foco de revisão
+## Review focus
 
-1. Clique duplo ou retoma durante um envio: um turno e uma aplicação do resultado (tarefas 2 e 4).
-2. Artigo com instruções hostis, Unicode e dimensão excessiva: tratar como dados e recusar excesso sem cortar (tarefas 1 e 3).
-3. Correção de um turno antigo com respostas posteriores: ramo novo, sem reinterpretar descendentes antigos (tarefa 5).
-4. Interrupção de voz entre dois blocos ou perda do dispositivo: não reiniciar áudio atrasado nem perder texto (tarefa 7).
-5. Revogação ou mudança de destino enquanto há rede em curso: não aplicar resposta obsoleta nem ocultar consumo conhecido (tarefas 3 e 4).
+1. Double click or resumption during a send: one turn and one application of the result (tasks 2 and 4).
+2. Article with hostile instructions, Unicode and excessive size: treat as data and refuse the excess without truncating (tasks 1 and 3).
+3. Correction of an old turn with later answers: new branch, without reinterpreting old descendants (task 5).
+4. Voice interruption between two chunks or loss of the device: do not restart delayed audio and do not lose text (task 7).
+5. Revocation or destination change while a network request is in progress: do not apply a stale answer and do not hide known usage (tasks 3 and 4).
 
-## Decisões técnicas e interfaces comuns
+## Technical decisions and common interfaces
 
-Estas decisões concretizam pontos deixados ao plano; não são medições de desempenho:
+These decisions make concrete points left to the plan; they are not performance measurements:
 
-- Artigo entre 1 e 12 000 caracteres Unicode após remover espaços exteriores; título opcional até 200. Uma resposta transcrita pode ter até 8 000 caracteres para envio. Excesso conserva o original e pede revisão explícita; nunca corta automaticamente.
-- Até 20 respostas por ramo; sugerir conclusão após cinco. Contexto de artigo e falas até 48 000 bytes UTF-8. Reservar 16 000 bytes dentro desse teto para a resposta seguinte; se já não houver essa margem, oferecer conclusão antes de outra gravação. Respeitar também o limite HTTP existente de 160 000 bytes, incluindo instruções e serialização. Artigo excessivo em bytes é recusado antes de criar a sessão.
-- Comentário do tutor até 500 caracteres e pergunta até 300; abertura só contém pergunta. Feedback contém as quatro dimensões com estado `clear|partial|insufficient_evidence`, evidências e até três melhorias. A qualidade semântica continua a exigir validação manual.
-- Uma conversa de artigo ativa de cada vez; pode coexistir guardada com uma entrevista STAR, mas só um proprietário pode usar captura/modelos/reprodução. A navegação não inicia nem retoma operações externas.
-- Esquema SQLite v4 com tabelas próprias `article_sessions`, `article_branches`, `article_turns`, `article_versions`, `article_requests`, `article_reports`, `article_artifacts`, `article_receipts`. Não reutilizar confirmações STAR para envios automáticos.
-- `article_sessions`: texto fixo, título, versão otimista, ramo ativo, estado e autorização com destino/versão do aviso. Revogação incrementa versão e invalida geração em curso.
-- Ramos guardam pai e turno de bifurcação. Turnos e versões são imutáveis; o percurso ativo é prefixo ancestral até à bifurcação mais turnos do novo ramo. Uma correção cria uma versão do turno de bifurcação e substitui apenas essa versão na projeção do novo ramo.
-- Pedidos guardam operação, geração, ramo, fontes exatas, configuração pública, contexto textual exato, estado e consumo. Não guardar a chave. Relatórios fixam IDs de versões e ramo. Recibos tornam comandos repetidos idempotentes; repetir após falha cria uma tentativa identificada, sem retry HTTP oculto.
-- Artefactos exclusivos em `articles/<sessionId>/...`, resolvidos pelo núcleo. Eliminação lógica impede novas operações antes da limpeza dos ficheiros; ficheiros não removidos entram em reconciliação, sem apagar pesos ou caches partilhadas.
-- Estados: `draft`, `awaiting_tutor`, `ready`, `recording`, `transcribing`, `needs_review`, `recoverable_error`, `finishing`, `completed`, `paused`. Estado de reprodução é independente; transições validadas no núcleo.
+- Article between 1 and 12,000 Unicode characters after removing outer whitespace; optional title up to 200. A transcribed answer may have up to 8,000 characters for sending. Excess keeps the original and asks for an explicit review; it never truncates automatically.
+- Up to 20 answers per branch; suggest conclusion after five. Article and utterance context up to 48,000 UTF-8 bytes. Reserve 16,000 bytes within that ceiling for the next answer; if that margin no longer exists, offer conclusion before another recording. Also respect the existing HTTP limit of 160,000 bytes, including instructions and serialization. An article excessive in bytes is refused before creating the session.
+- Tutor comment up to 500 characters and question up to 300; the opening contains only a question. Feedback contains the four dimensions with state `clear|partial|insufficient_evidence`, evidence and up to three improvements. Semantic quality still requires manual validation.
+- One active article conversation at a time; it may coexist saved with a STAR interview, but only one owner may use capture/models/playback. Navigation does not start or resume external operations.
+- SQLite schema v4 with dedicated tables `article_sessions`, `article_branches`, `article_turns`, `article_versions`, `article_requests`, `article_reports`, `article_artifacts`, `article_receipts`. Do not reuse STAR confirmations for automatic sends.
+- `article_sessions`: fixed text, title, optimistic version, active branch, state and authorization with destination/notice version. Revocation increments the version and invalidates the generation in progress.
+- Branches store the parent and the fork turn. Turns and versions are immutable; the active path is the ancestral prefix up to the fork plus the turns of the new branch. A correction creates a version of the fork turn and replaces only that version in the projection of the new branch.
+- Requests store operation, generation, branch, exact sources, public configuration, exact textual context, state and usage. Do not store the key. Reports pin version IDs and branch. Receipts make repeated commands idempotent; repeating after a failure creates an identified attempt, without a hidden HTTP retry.
+- Exclusive artifacts in `articles/<sessionId>/...`, resolved by the core. Logical deletion prevents new operations before the files are cleaned; files not removed enter reconciliation, without deleting shared weights or caches.
+- States: `draft`, `awaiting_tutor`, `ready`, `recording`, `transcribing`, `needs_review`, `recoverable_error`, `finishing`, `completed`, `paused`. Playback state is independent; transitions validated in the core.
 
-Criar `src-tauri/src/article/types.rs` e equivalentes camelCase em `src/lib/article-contracts.ts`:
+Create `src-tauri/src/article/types.rs` and camelCase equivalents in `src/lib/article-contracts.ts`:
 
 ```rust
 struct ArticleCommand { request_id: String, session_id: String, expected_version: u64 }
@@ -57,133 +57,133 @@ struct ArticleCorrection { command: ArticleCommand, turn_id: String, text: Strin
 struct ArticleSnapshot { session: ArticleSessionView, turns: Vec<ArticleTurnView>, report: Option<ArticleReport>, audio: ArticleAudioView }
 ```
 
-As views contêm apenas dados públicos: IDs/versões/estado, texto e origem de cada versão (`automatic_sent|manual_review`), reprodução disponível, erro recuperável e consumo opcional. Não expor caminhos arbitrários nem credenciais. Os detalhes de campos de apresentação podem ser definidos na tarefa 1 sem mudar estas identidades.
+The views contain only public data: IDs/versions/state, text and origin of each version (`automatic_sent|manual_review`), available playback, recoverable error and optional usage. Do not expose arbitrary paths or credentials. The details of presentation fields may be defined in task 1 without changing these identities.
 
-## Mapa de ficheiros
+## File map
 
-- Novo `src-tauri/src/article/{mod,types,state}.rs`: contratos e transições puras.
-- Novo `src-tauri/src/db/articles.rs` e migração `004_article_conversation.sql`: transações, projeção de ramos e recuperação.
-- Novo `src-tauri/src/ai/article.rs`: contexto, prompts e validação; adaptar `ai/transport.rs` para partilhar HTTP sem converter artigos em fontes STAR.
-- Novo `src-tauri/src/service/article.rs` e `article_commands.rs`: orquestração e comandos; registar em `service.rs` e `lib.rs`.
-- Novos `src/lib/article-{contracts,client}.ts` e `src/features/articles/{ArticleSetup,ArticleConversation,ArticleReport,useArticle}.tsx`: percurso e subscrição. O hook pode usar extensão `.ts` se não contiver JSX.
-- Alterar `App.tsx`, `features/layout/TutorNavigation.tsx`, estilos e guarda de navegação para integrar a página e a propriedade do áudio.
-- Alterar auxiliar, protocolo Rust, supervisor e reprodução para blocos de voz, mantendo os pedidos antigos.
-- Testes novos por tarefa em `src-tauri/tests/article_*.rs`, `src/features/articles/*.test.tsx` e testes Python existentes. Acrescentar exemplos em `contracts/article-v1.examples.json` e no contrato do auxiliar.
+- New `src-tauri/src/article/{mod,types,state}.rs`: contracts and pure transitions.
+- New `src-tauri/src/db/articles.rs` and migration `004_article_conversation.sql`: transactions, branch projection and recovery.
+- New `src-tauri/src/ai/article.rs`: context, prompts and validation; adapt `ai/transport.rs` to share HTTP without converting articles into STAR sources.
+- New `src-tauri/src/service/article.rs` and `article_commands.rs`: orchestration and commands; register in `service.rs` and `lib.rs`.
+- New `src/lib/article-{contracts,client}.ts` and `src/features/articles/{ArticleSetup,ArticleConversation,ArticleReport,useArticle}.tsx`: flow and subscription. The hook may use the `.ts` extension if it does not contain JSX.
+- Change `App.tsx`, `features/layout/TutorNavigation.tsx`, styles and navigation guard to integrate the page and the audio ownership.
+- Change the helper, Rust protocol, supervisor and playback for voice chunks, keeping the old requests.
+- New tests per task in `src-tauri/tests/article_*.rs`, `src/features/articles/*.test.tsx` and existing Python tests. Add examples in `contracts/article-v1.examples.json` and in the helper contract.
 
-## Tarefa 1 — domínio, limites e contratos
+## Task 1 — domain, limits and contracts
 
-**Ficheiros:** novos módulos `article` e contratos/exemplos acima; `src-tauri/src/lib.rs`; teste `src-tauri/tests/article_domain.rs`.
+**Files:** new `article` modules and the contracts/examples above; `src-tauri/src/lib.rs`; test `src-tauri/tests/article_domain.rs`.
 
-**Interfaces:** `validate_article(input: &ArticleCreate) -> Result<()>`; `transition(state: ArticleState, event: ArticleEvent) -> Result<ArticleState>`; tipos comuns publicados em `article::types`.
+**Interfaces:** `validate_article(input: &ArticleCreate) -> Result<()>`; `transition(state: ArticleState, event: ArticleEvent) -> Result<ArticleState>`; common types published in `article::types`.
 
-- [ ] Escrever testes `article_limits_are_unicode_aware` (12 000 caracteres aceites, 12 001 recusados; vazio recusado), `article_context_reserves_next_answer`, `automatic_send_requires_consent` e `recording_only_stops_on_user_action`.
-- [ ] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test article_domain`; confirmar falha por interfaces ausentes.
-- [ ] Implementar tipos, estados e validadores; definir exemplos de abertura, turno, correção, relatório e erro. Fixar aviso `article-auto-v1` com artigo, envio por turno, destino e áudio local explícitos.
-- [ ] Repetir o comando, exigir saída 0; executar `npm.cmd run typecheck` após contratos TS.
-- [ ] Rever diff e criar commit `feat: define article conversation contracts`.
+- [ ] Write tests `article_limits_are_unicode_aware` (12,000 characters accepted, 12,001 refused; empty refused), `article_context_reserves_next_answer`, `automatic_send_requires_consent` and `recording_only_stops_on_user_action`.
+- [ ] Run `cargo test --manifest-path src-tauri/Cargo.toml --test article_domain`; confirm the failure due to missing interfaces.
+- [ ] Implement types, states and validators; define examples of opening, turn, correction, report and error. Pin the notice `article-auto-v1` with article, per-turn sending, destination and local audio explicit.
+- [ ] Repeat the command, require exit code 0; run `npm.cmd run typecheck` after the TS contracts.
+- [ ] Review the diff and create commit `feat: define article conversation contracts`.
 
-## Tarefa 2 — persistência e migração v4
+## Task 2 — persistence and v4 migration
 
-**Ficheiros:** `db/articles.rs`, `db/migrations/004_article_conversation.sql`, `db/mod.rs`; `tests/article_migration.rs` e `tests/article_repository.rs`.
+**Files:** `db/articles.rs`, `db/migrations/004_article_conversation.sql`, `db/mod.rs`; `tests/article_migration.rs` and `tests/article_repository.rs`.
 
-**Interfaces:** métodos `Database::create_article(input: ArticleCreate) -> Result<ArticleSnapshot>`, `article_snapshot(session_id: &str) -> Result<ArticleSnapshot>`, `apply_article(command: &ArticleCommand, change: ArticleMutation) -> Result<ArticleSnapshot>`; enum de mutações tipado no domínio, sem SQL ou transições fornecidas pelo frontend.
+**Interfaces:** methods `Database::create_article(input: ArticleCreate) -> Result<ArticleSnapshot>`, `article_snapshot(session_id: &str) -> Result<ArticleSnapshot>`, `apply_article(command: &ArticleCommand, change: ArticleMutation) -> Result<ArticleSnapshot>`; mutation enum typed in the domain, without SQL or transitions supplied by the frontend.
 
-- [ ] Testar v0/v1/v2/v3→v4, versão futura sem escrita e rollback de migração inválida; comparar conteúdo STAR/práticas antes e depois. Testar dois IDs de comando iguais, versão obsoleta, atualização proibida de fontes e eliminação restrita aos ficheiros exclusivos.
-- [ ] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test article_migration --test article_repository`; observar falhas iniciais.
-- [ ] Implementar migração transacional e tabelas com FKs/triggers; estender o helper de migrações e todos os seus chamadores. Operações síncronas em `spawn_blocking`, sem mutex através de `await`.
-- [ ] Repetir os testes e os testes de migração existentes; confirmar uma única sessão de artigo ativa e recibos idempotentes.
+- [ ] Test v0/v1/v2/v3→v4, a future version without writing and rollback of an invalid migration; compare STAR/practice content before and after. Test two identical command IDs, stale version, forbidden update of sources and deletion restricted to the exclusive files.
+- [ ] Run `cargo test --manifest-path src-tauri/Cargo.toml --test article_migration --test article_repository`; observe the initial failures.
+- [ ] Implement transactional migration and tables with FKs/triggers; extend the migrations helper and all its callers. Synchronous operations in `spawn_blocking`, without a mutex across `await`.
+- [ ] Repeat the tests and the existing migration tests; confirm a single active article session and idempotent receipts.
 - [ ] Commit `feat: persist article conversations and immutable sources`.
 
-## Tarefa 3 — diálogo e feedback na integração IA existente
+## Task 3 — dialogue and feedback in the existing AI integration
 
-**Ficheiros:** `ai/article.rs`, `ai/mod.rs`, `ai/transport.rs`; `tests/article_ai.rs`; exemplos do contrato.
+**Files:** `ai/article.rs`, `ai/mod.rs`, `ai/transport.rs`; `tests/article_ai.rs`; contract examples.
 
-**Interfaces:** `ArticleContext { article, turns, branch_id, source_version_ids }`; `ArticleAiTask::{Opening, Reply, Feedback}`; `build_article_body(settings: &AiSettingsView, task: ArticleAiTask, context: &ArticleContext) -> Result<serde_json::Value>`; `validate_article_reply(content: &str) -> Result<ArticleReply>` e `validate_article_report(content: &str, context: &ArticleContext) -> Result<ArticleReport>`.
+**Interfaces:** `ArticleContext { article, turns, branch_id, source_version_ids }`; `ArticleAiTask::{Opening, Reply, Feedback}`; `build_article_body(settings: &AiSettingsView, task: ArticleAiTask, context: &ArticleContext) -> Result<serde_json::Value>`; `validate_article_reply(content: &str) -> Result<ArticleReply>` and `validate_article_report(content: &str, context: &ArticleContext) -> Result<ArticleReport>`.
 
-- [ ] Testar artigos com instruções hostis delimitados como dados, papéis corretos no histórico, limites de bytes, abertura sem comentário, resposta com exatamente um campo de pergunta e relatórios que recusam citações inexistentes/do artigo atribuídas ao utilizador. Não prometer que testes estruturais provam resistência semântica a instruções hostis.
-- [ ] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test article_ai`; confirmar falha inicial.
-- [ ] Extrair apenas o envio HTTP comum para aceitar corpo já construído e identidade de conversa; manter o trait `AiTransport` existente compatível. Adicionar `ArticleTransport::complete(settings, conversation_id, task, context)` com o mesmo resultado normalizado e credencial obtida no núcleo. O adaptador concreto usa o helper comum, sem duplicar autenticação, limites, timeout ou política de redirects/retries.
-- [ ] Construir prompts separados de STAR, esquema `article-v1`, limite de saída 800 tokens para diálogo e 4 000 para relatório; usar `stream:false` existente. Identidade `x-opencode-session` estável por sessão de artigo, incluindo correções/retries. Fontes sempre persistidas antes do envio.
-- [ ] Simular transporte e testar HTTP no servidor local usado pelos testes existentes: 401, 429, 5xx, timeout, corpo inválido e consumo ausente; nenhuma chave real. Repetir testes novos e de transporte/consumo existentes.
+- [ ] Test articles with hostile instructions delimited as data, correct roles in the history, byte limits, opening without comment, answer with exactly one question field and reports that refuse nonexistent quotations/quotations from the article attributed to the user. Do not promise that structural tests prove semantic resistance to hostile instructions.
+- [ ] Run `cargo test --manifest-path src-tauri/Cargo.toml --test article_ai`; confirm the initial failure.
+- [ ] Extract only the common HTTP send to accept an already built body and conversation identity; keep the existing `AiTransport` trait compatible. Add `ArticleTransport::complete(settings, conversation_id, task, context)` with the same normalized result and credential obtained in the core. The concrete adapter uses the common helper, without duplicating authentication, limits, timeout or redirects/retries policy.
+- [ ] Build prompts separate from STAR, schema `article-v1`, output limit of 800 tokens for dialogue and 4,000 for the report; use the existing `stream:false`. `x-opencode-session` identity stable per article session, including corrections/retries. Sources always persisted before sending.
+- [ ] Simulate transport and test HTTP on the local server used by the existing tests: 401, 429, 5xx, timeout, invalid body and missing usage; no real key. Repeat the new tests and the existing transport/usage tests.
 - [ ] Commit `feat: add grounded article dialogue and final feedback`.
 
-## Tarefa 4 — orquestração, gravação e consentimento
+## Task 4 — orchestration, recording and consent
 
-**Ficheiros:** `service/article.rs`, `article_commands.rs`, `service.rs`, `lib.rs`, diagnóstico e `tests/article_service.rs`.
+**Files:** `service/article.rs`, `article_commands.rs`, `service.rs`, `lib.rs`, diagnostics and `tests/article_service.rs`.
 
-**Interfaces:** comandos `article_create(ArticleCreate)`, `article_authorize(ArticleConsent)`, `article_revoke(ArticleCommand)`, `article_start_recording(ArticleCommand)`, `article_stop_recording(ArticleCommand)`, `article_retry(ArticleCommand)`, `article_finish(ArticleCommand)`, `article_snapshot(session_id)` devolvem `ArticleSnapshot`; `article_list()` devolve resumos; `article_delete(ArticleCommand)` devolve `Result<()>`. Publicar evento `article_snapshot` após commit. Comandos assíncronos devolvem estado pendente; conclusão chega por evento.
+**Interfaces:** commands `article_create(ArticleCreate)`, `article_authorize(ArticleConsent)`, `article_revoke(ArticleCommand)`, `article_start_recording(ArticleCommand)`, `article_stop_recording(ArticleCommand)`, `article_retry(ArticleCommand)`, `article_finish(ArticleCommand)`, `article_snapshot(session_id)` return `ArticleSnapshot`; `article_list()` returns summaries; `article_delete(ArticleCommand)` returns `Result<()>`. Publish the `article_snapshot` event after commit. Asynchronous commands return a pending state; completion arrives by event.
 
-- [ ] Testar guardar antes de enviar, envio automático apenas depois de parar e transcrever, ausência de envio com transcrição vazia/falhada, clique duplo, sessão STAR ativa sem captura simultânea, falha de escrita sem rede e snapshot consultado sem efeitos externos.
-- [ ] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test article_service`; verificar falhas iniciais.
-- [ ] Integrar captura/normalização e worker com proprietário explícito `Article { session_id, turn_id }`; não atribuir eventos de artigos a answer slots STAR. Conservar campos e percursos existentes. A correlação inclui pedido, sessão, ramo, versão e geração.
-- [ ] Implementar transições/retry; revogação ou mudança de destino invalida aplicação pendente, conserva consumo conhecido e não finge retirar texto já transmitido. Ao terminar, invalidar pergunta em voo e gerar relatório uma vez sobre a projeção fixada; zero respostas conclui sem avaliação fabricada.
-- [ ] Testar revogação durante HTTP, mudança de destino antes do envio, terminar durante HTTP, ausência de retry no arranque e resultado tardio após eliminação. Repetir suite da tarefa e regressões de serviço STAR/práticas.
+- [ ] Test saving before sending, automatic sending only after stopping and transcribing, no sending with an empty/failed transcript, double click, active STAR session without simultaneous capture, write failure without network and snapshot queried without external effects.
+- [ ] Run `cargo test --manifest-path src-tauri/Cargo.toml --test article_service`; verify the initial failures.
+- [ ] Integrate capture/normalization and worker with the explicit owner `Article { session_id, turn_id }`; do not assign article events to STAR answer slots. Keep the existing fields and paths. The correlation includes request, session, branch, version and generation.
+- [ ] Implement transitions/retry; revocation or destination change invalidates the pending application, keeps known usage and does not pretend to withdraw text already transmitted. On finishing, invalidate the in-flight question and generate the report once over the pinned projection; zero answers concludes without a fabricated evaluation.
+- [ ] Test revocation during HTTP, destination change before sending, finishing during HTTP, absence of retry at startup and late result after deletion. Repeat the task suite and the STAR/practice service regressions.
 - [ ] Commit `feat: orchestrate uninterrupted article turns`.
 
-## Tarefa 5 — correções, ramos e recuperação
+## Task 5 — corrections, branches and recovery
 
-**Ficheiros:** `db/articles.rs`, `service/article.rs`, `article_commands.rs`, `artifacts.rs`; `tests/article_recovery.rs`.
+**Files:** `db/articles.rs`, `service/article.rs`, `article_commands.rs`, `artifacts.rs`; `tests/article_recovery.rs`.
 
-**Interfaces:** `article_correct(ArticleCorrection) -> Result<ArticleSnapshot>` cria ramo e deixa regeneração pendente de ação; `article_retry` da tarefa 4 regenera nesse ramo. `article_resume(ArticleCommand) -> Result<ArticleSnapshot>` recupera estado local sem HTTP. `project_article_branch(session_id: &str, branch_id: &str) -> Result<ArticleContext>` reconstrói fontes.
+**Interfaces:** `article_correct(ArticleCorrection) -> Result<ArticleSnapshot>` creates a branch and leaves regeneration pending on action; the `article_retry` of task 4 regenerates in that branch. `article_resume(ArticleCommand) -> Result<ArticleSnapshot>` recovers local state without HTTP. `project_article_branch(session_id: &str, branch_id: &str) -> Result<ArticleContext>` rebuilds sources.
 
-- [ ] Testar correção do primeiro turno depois de três respostas: ramo antigo intacto, contexto novo sem descendentes e relatório antigo conservado; testar correções sucessivas em ramos, texto manual após transcrição falhada e retry repetido.
-- [ ] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test article_recovery`; verificar falhas iniciais.
-- [ ] Implementar projeção ancestral, correção append-only, invalidação de geração e recibos; distinguir correção de reconhecimento de nova tentativa. Repetir uma resposta grava novo turno num ramo, nunca substitui o ficheiro original.
-- [ ] Reconciliar ficheiros e operações após reinício; captura interrompida é assinalada, não apresentada como gravação completa. Pedidos pendentes passam a recuperação explícita, sem alegar custo zero. Eliminação pode ser repetida e retoma a limpeza pendente.
-- [ ] Repetir testes e verificar crash simulado entre ficheiro/commit/pedido e durante eliminação.
+- [ ] Test correction of the first turn after three answers: old branch intact, new context without descendants and old report kept; test successive corrections in branches, manual text after a failed transcript and repeated retry.
+- [ ] Run `cargo test --manifest-path src-tauri/Cargo.toml --test article_recovery`; verify the initial failures.
+- [ ] Implement ancestral projection, append-only correction, generation invalidation and receipts; distinguish a recognition correction from a new attempt. Repeating an answer records a new turn in a branch and never replaces the original file.
+- [ ] Reconcile files and operations after restart; an interrupted capture is flagged, not presented as a complete recording. Pending requests become explicit recovery, without claiming zero cost. Deletion may be repeated and resumes the pending cleanup.
+- [ ] Repeat the tests and verify a simulated crash between file/commit/request and during deletion.
 - [ ] Commit `feat: recover and branch article conversations safely`.
 
-## Tarefa 6 — interface da conversa e histórico
+## Task 6 — conversation interface and history
 
-**Ficheiros:** cliente/contratos e componentes novos do mapa, `App.tsx`, navegação, estilos e testes `ArticleSetup.test.tsx`, `ArticleConversation.test.tsx`, `ArticleReport.test.tsx`.
+**Files:** client/contracts and the new components of the map, `App.tsx`, navigation, styles and tests `ArticleSetup.test.tsx`, `ArticleConversation.test.tsx`, `ArticleReport.test.tsx`.
 
-**Interfaces:** `ArticleClient` espelha comandos das tarefas 4–5 e `subscribe(handler: (snapshot: ArticleSnapshot) => void): Promise<() => void>`. Cliente falso injeta estados e resultados fora de ordem. Não acrescentar lógica autoritativa de transição no React.
+**Interfaces:** `ArticleClient` mirrors the commands of tasks 4–5 and `subscribe(handler: (snapshot: ArticleSnapshot) => void): Promise<() => void>`. Fake client injects states and results out of order. Do not add authoritative transition logic in React.
 
-- [ ] Testar artigo/limites, autorização não pré-selecionada, resposta sem editor obrigatório, zero correções entre turnos, comentário/pergunta em sequência, erro recuperável, botão de parar voz, sugestão de terminar na quinta resposta e bloqueio por limite antes de gravar.
-- [ ] Executar `npm.cmd test -- src/features/articles`; confirmar falhas iniciais.
-- [ ] Implementar página Artigos com preparação, conversa, transcrição consultável, ação de correção, retoma e lista de sessões. Mostrar ramos antigos em leitura; explicar que regenerar pode consumir API. Só autoplay de uma intervenção nova na sessão visível; histórico, retoma e remount não iniciam som.
-- [ ] Integrar guarda de navegação/fecho e proprietário de áudio: não permitir mudar de página durante captura/finalização; sair cancela autoplay pendente sem perder persistência. Relatório mostra quatro dimensões, citações reproduzíveis e até três melhorias, com insuficiência de evidência explícita.
-- [ ] Testar eventos duplicados/atrasados, indisponibilidade do microfone, revogação, ausência de relatório e teclado/foco nos erros; executar testes da tarefa, `npm.cmd run typecheck` e regressões App/navegação.
+- [ ] Test article/limits, non-pre-selected authorization, answer without a mandatory editor, zero corrections between turns, comment/question in sequence, recoverable error, stop voice button, suggestion to finish on the fifth answer and blocking by limit before recording.
+- [ ] Run `npm.cmd test -- src/features/articles`; confirm the initial failures.
+- [ ] Implement the Artigos page with setup, conversation, consultable transcript, correction action, resumption and session list. Show old branches read-only; explain that regenerating may consume API. Autoplay only of a new intervention in the visible session; history, resumption and remount do not start sound.
+- [ ] Integrate the navigation/shutdown guard and the audio owner: do not allow changing page during capture/finishing; leaving cancels pending autoplay without losing persistence. The report shows four dimensions, playable quotations and up to three improvements, with explicit insufficiency of evidence.
+- [ ] Test duplicated/late events, microphone unavailability, revocation, absence of report and keyboard/focus on errors; run the task tests, `npm.cmd run typecheck` and the App/navigation regressions.
 - [ ] Commit `feat: add article conversation interface`.
 
-## Tarefa 7 — voz incremental com cancelamento
+## Task 7 — incremental voice with cancellation
 
-**Ficheiros:** `audio-worker/src/audio_worker/{protocol,engines,__main__}.py`, testes `test_protocol.py`/`test_engines.py`, `src-tauri/src/worker/{protocol,mod}.rs`, `audio/{mod,playback}.rs`, `service/article.rs`, `contracts/worker-v1.examples.json`; `tests/article_voice.rs`.
+**Files:** `audio-worker/src/audio_worker/{protocol,engines,__main__}.py`, tests `test_protocol.py`/`test_engines.py`, `src-tauri/src/worker/{protocol,mod}.rs`, `audio/{mod,playback}.rs`, `service/article.rs`, `contracts/worker-v1.examples.json`; `tests/article_voice.rs`.
 
-**Interfaces:** acrescentar operação opt-in `synthesize_stream`; eventos `audio_chunk { requestId, index, audioPath, sampleRate, durationMs }` com índices desde zero e um resultado terminal com número de blocos. WAVs completos por bloco, nunca ficheiro em escrita. Capability `synthesisChunks` no health; ausência usa síntese completa existente.
+**Interfaces:** add the opt-in operation `synthesize_stream`; events `audio_chunk { requestId, index, audioPath, sampleRate, durationMs }` with indices from zero and a terminal result with the number of chunks. Complete WAVs per chunk, never a file being written. `synthesisChunks` capability in health; absence uses the existing complete synthesis.
 
-- [ ] Testar primeiro bloco entregue antes do resultado final, índices ordenados, terminal único, erros depois do primeiro bloco e pedidos `synthesize` antigos inalterados. Testar rejeição de paths fora da operação e blocos duplicados/fora de ordem.
-- [ ] Executar `.\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_protocol.py audio-worker/tests/test_engines.py -q` e `cargo test --manifest-path src-tauri/Cargo.toml --test article_voice`; verificar falhas iniciais.
-- [ ] Gerar blocos Kokoro em ficheiros temporários e publicar após rename. No Rodio, acrescentar fontes ao mesmo player em vez de usar `play()` que substitui a anterior. Uma geração identifica a fila; fim momentâneo da fila não significa fim do pedido.
-- [ ] Parar voz limpa fila e invalida geração; o supervisor descarta blocos tardios. Libertar worker após interrupção no limite de bloco, com mecanismo cooperativo de cancelamento e leitura de comandos independente da inferência; não matar o auxiliar nem descarregar modelos como via normal. Pedidos antigos continuam sequenciais.
-- [ ] Testar cancelamento enquanto fila está vazia, novo início de captura, perda/restauro de saída e fallback de capability. Falha parcial mostra texto e oferece repetir voz, sem nova chamada IA. Conservar manifesto final para audição posterior; nunca reutilizar sequência parcial como cache completa.
-- [ ] Repetir testes Python/Rust e testes de reprodução antigos; commit `perf: stream validated tutor speech in ordered chunks`.
+- [ ] Test first chunk delivered before the final result, ordered indices, single terminal, errors after the first chunk and old `synthesize` requests unchanged. Test rejection of paths outside the operation and duplicated/out-of-order chunks.
+- [ ] Run `.\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_protocol.py audio-worker/tests/test_engines.py -q` and `cargo test --manifest-path src-tauri/Cargo.toml --test article_voice`; verify the initial failures.
+- [ ] Generate Kokoro chunks in temporary files and publish after rename. In Rodio, append sources to the same player instead of using `play()` which replaces the previous one. A generation identifies the queue; a momentary end of the queue does not mean the end of the request.
+- [ ] Stop voice clears the queue and invalidates the generation; the supervisor discards late chunks. Release the worker after interruption at a chunk boundary, with a cooperative cancellation mechanism and command reading independent of inference; do not kill the helper or unload models as a normal route. Old requests remain sequential.
+- [ ] Test cancellation while the queue is empty, new capture start, loss/restore of output and capability fallback. Partial failure shows text and offers to repeat the voice, without a new AI call. Keep the final manifest for later listening; never reuse a partial sequence as a complete cache.
+- [ ] Repeat the Python/Rust tests and the old playback tests; commit `perf: stream validated tutor speech in ordered chunks`.
 
-## Tarefa 8 — medir e ajustar a transcrição
+## Task 8 — measure and adjust the transcription
 
-**Ficheiros:** novo `scripts/benchmark-audio.ps1`, `audio-worker/src/audio_worker/engines.py`, protocolos apenas se necessário; `docs/article-conversation/performance.md`; testes de motores e `tests/article_metrics.rs`; listas em `diagnostics.rs`.
+**Files:** new `scripts/benchmark-audio.ps1`, `audio-worker/src/audio_worker/engines.py`, protocols only if necessary; `docs/article-conversation/performance.md`; engine tests and `tests/article_metrics.rs`; lists in `diagnostics.rs`.
 
-**Interfaces:** benchmark recebe diretório de gravações indicado pelo utilizador e destino de resultados local; não varrer gravações pessoais. Mede modelos frios/carregados, duração da gravação, transcrição, primeiro bloco e síntese completa. Diagnósticos de execução usam operações fechadas `article_transcribe`, `article_reply`, `article_first_audio`, `article_feedback` com `duration_ms`, sem conteúdo/paths livres.
+**Interfaces:** the benchmark receives a recordings directory indicated by the user and a local results destination; do not scan personal recordings. It measures cold/loaded models, recording duration, transcription, first chunk and complete synthesis. Execution diagnostics use the closed operations `article_transcribe`, `article_reply`, `article_first_audio`, `article_feedback` with `duration_ms`, without content/free paths.
 
-- [ ] Testar métricas com relógio controlado, ausência de conteúdo nos logs e perfil de transcrição reproduzível. Executar `cargo test --manifest-path src-tauri/Cargo.toml --test article_metrics` e testes Python; confirmar falha inicial.
-- [ ] Implementar medições e comparar baseline `beam_size=5` com candidato `beam_size=1`, mantendo inglês, VAD, modelo small e CPU/int8. Não alterar o default antes da comparação de fidelidade. Dados de benchmark não são enviados nem versionados.
-- [ ] Nas mesmas gravações, executar cinco repetições carregadas por configuração e uma fria, apresentando valores individuais, mediana e pior tempo; não chamar p95 a uma amostra de cinco. Conferir texto com referência humana e termos técnicos.
-- [ ] Registar resultados reais e decisão: manter baseline se faltarem gravações/aceitação de fidelidade. Definir valores-alvo depois de medir; melhoria na voz deve ser avaliada no tempo até primeiro som e nas quebras entre blocos.
-- [ ] Repetir testes após qualquer ajuste; commit `perf: measure article turn latency and transcription tradeoffs`.
+- [ ] Test metrics with a controlled clock, absence of content in the logs and a reproducible transcription profile. Run `cargo test --manifest-path src-tauri/Cargo.toml --test article_metrics` and the Python tests; confirm the initial failure.
+- [ ] Implement measurements and compare the `beam_size=5` baseline with the `beam_size=1` candidate, keeping English, VAD, the small model and CPU/int8. Do not change the default before the fidelity comparison. Benchmark data are not sent and are not versioned.
+- [ ] On the same recordings, run five loaded repetitions per configuration and one cold, presenting individual values, median and worst time; do not call p95 a sample of five. Check the text against a human reference and technical terms.
+- [ ] Record real results and the decision: keep the baseline if recordings/fidelity acceptance are missing. Define target values after measuring; an improvement in the voice should be evaluated in the time to first sound and in the breaks between chunks.
+- [ ] Repeat the tests after any adjustment; commit `perf: measure article turn latency and transcription tradeoffs`.
 
-## Tarefa 9 — integração, documentação e aceitação
+## Task 9 — integration, documentation and acceptance
 
-**Ficheiros:** novos `docs/article-conversation/setup.md` e `validation.md`; atualizar README, AGENTS.md, `docs/ideia-e-objetivos.md`, `docs/tech-stack.md`, `docs/layout/validation.md` e `docs/diagnostics/validation.md`. Não alterar as pendências de aceitação das fases existentes.
+**Files:** new `docs/article-conversation/setup.md` and `validation.md`; update README, AGENTS.md, `docs/idea-and-goals.md`, `docs/tech-stack.md`, `docs/layout/validation.md` and `docs/diagnostics/validation.md`. Do not change the acceptance pending items of the existing phases.
 
-- [ ] Acrescentar cenário integrado com captura/worker/HTTP controlados: autorizar→cinco turnos→corrigir turno antigo→regenerar→concluir→reabrir; verificar artefactos, fontes, consumo e inexistência de chamadas ao reabrir.
-- [ ] Executar `.\scripts\verify.ps1` e exigir todas as verificações com saída 0; registar números observados, sem copiar contagens anteriores. Preparar Cargo no PATH como no script antes dos comandos individuais deste plano.
-- [ ] Executar `.\.venv\Scripts\python.exe -m pytest audio-worker/tests -q -m models` se os modelos locais estiverem disponíveis; ausência permanece pendência explícita. Executar `npm.cmd run tauri -- build --no-bundle` e smoke com dados temporários segundo os procedimentos existentes, sem tocar nas sessões pessoais.
-- [ ] Conferir documentação/links e `git diff --check`. Atualizar matriz visual para a nova página, sem afirmar validação visual antes de a fazer.
-- [ ] Realizar roteiro manual: artigo real, cinco respostas, discordância, aprofundamento, recuperação de erro de reconhecimento, interrupção de voz, falha de rede e retoma. Inferência real exige autorização para os pedidos pagos; documentar latência percebida, continuidade e utilidade semântica separadas dos resultados automáticos.
-- [ ] Commit `docs: record article conversation verification and remaining acceptance` apenas com resultados efetivamente observados. Entrega automática pode estar verificada enquanto a aceitação manual continua pendente.
+- [ ] Add an integrated scenario with controlled capture/worker/HTTP: authorize→five turns→correct an old turn→regenerate→finish→reopen; check artifacts, sources, usage and the absence of calls on reopening.
+- [ ] Run `.\scripts\verify.ps1` and require all checks with exit code 0; record the observed numbers, without copying previous counts. Prepare Cargo in the PATH as in the script before the individual commands of this plan.
+- [ ] Run `.\.venv\Scripts\python.exe -m pytest audio-worker/tests -q -m models` if the local models are available; absence remains an explicit pending item. Run `npm.cmd run tauri -- build --no-bundle` and the smoke test with temporary data according to the existing procedures, without touching personal sessions.
+- [ ] Check documentation/links and `git diff --check`. Update the visual matrix for the new page, without claiming visual validation before doing it.
+- [ ] Carry out the manual script: real article, five answers, disagreement, going deeper, recovery from a recognition error, voice interruption, network failure and resumption. Real inference requires authorization for the paid requests; document perceived latency, continuity and semantic usefulness separately from the automated results.
+- [ ] Commit `docs: record article conversation verification and remaining acceptance` with only the results actually observed. The automated delivery may be verified while manual acceptance remains pending.
 
-## Ordem e passagem à execução
+## Order and transition to execution
 
-Executar 1→2→3→4→5→6→7→8→9. A tarefa 7 altera um contrato partilhado e exige regressão dos modos antigos; evitar implementação paralela destes ficheiros. Recomenda-se execução direta para manter o contexto de estado, protocolo e versões, com commits por tarefa.
+Run 1→2→3→4→5→6→7→8→9. Task 7 changes a shared contract and requires regression of the old modes; avoid parallel implementation of these files. Direct execution is recommended to keep the context of state, protocol and versions, with commits per task.
 
-O plano foi confrontado com o desenho: consentimento, fontes, limites, recuperação, diálogo, feedback, voz e medições têm tarefas responsáveis. Nenhum dos comandos de testes/build acima foi executado nesta etapa documental; os resultados esperados são critérios futuros, não resultados obtidos.
+The plan was confronted with the design: consent, sources, limits, recovery, dialogue, feedback, voice and measurements have responsible tasks. None of the test/build commands above was executed in this documentary step; the expected results are future criteria, not results obtained.

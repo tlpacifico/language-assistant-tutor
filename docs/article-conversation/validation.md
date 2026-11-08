@@ -1,51 +1,51 @@
-# Conversa sobre um artigo — validação
+# Article conversation — validation
 
-Estado em 2026-11-05: **implementação e verificação automática concluídas; aceitação manual, áudio real, voz real e inferência paga por fazer.** Verificação automática não é aceitação manual: o modo **não** está aceite.
+Status on 2026-11-05: **implementation and automated verification complete; manual acceptance, real audio, real voice and paid inference still to do.** Automated verification is not manual acceptance: the mode is **not** accepted.
 
-## Verificação automática observada
+## Observed automated verification
 
-- `.\scripts\verify.ps1`: **8/8 checks, saída 0, 190,6 s** — TypeScript, **147 testes React** (20 ficheiros), build Vite, formatação e Clippy `-D warnings`, **354 testes Rust**, **56 testes Python** sem a marca `models`, `pip check` limpo.
-- `npm run tauri -- build --no-bundle`: saída 0 (release, 1 min 27 s).
-- Ensaio com dados temporários (`scripts/diagnostics-smoke.ps1` sobre um build isolado): janela viva, diagnóstico exportado, fecho com código 0. Não toca nas sessões pessoais.
-- Os testes Python reais com modelos (`-m models`) **não foram corridos nesta verificação**.
+- `.\scripts\verify.ps1`: **8/8 checks, exit 0, 190.6 s** — TypeScript, **147 React tests** (20 files), Vite build, formatting and Clippy `-D warnings`, **354 Rust tests**, **56 Python tests** without the `models` marker, clean `pip check`.
+- `npm run tauri -- build --no-bundle`: exit 0 (release, 1 min 27 s).
+- Rehearsal with temporary data (`scripts/diagnostics-smoke.ps1` on an isolated build): window alive, diagnostics exported, shutdown with exit code 0. It does not touch personal sessions.
+- The real Python tests with models (`-m models`) **were not run in this verification**.
 
-Nada disto usou microfone real, voz Kokoro real, credencial protegida real nem pedidos pagos: áudio, auxiliar e fornecedor são adaptadores controlados.
+None of this used a real microphone, real Kokoro voice, real protected credential or paid requests: audio, helper and provider are controlled adapters.
 
-## Matriz do desenho
+## Design matrix
 
-| Requisito do desenho | Evidência automática | Aceitação manual |
+| Design requirement | Automated evidence | Manual acceptance |
 |---|---|---|
-| Artigo colado, cópia fixa, limites sem cortar | `article_domain`, `article_repository`, `ArticleSetup.test` | pendente |
-| Autorização por sessão, nunca pré-selecionada; revogar/mudar destino bloqueia envios | `ArticleSetup.test`, `article_service` (revogação, destino alterado), `article_domain` | pendente |
-| Gravação só termina por ação do utilizador; áudio guardado antes de enviar | `article_service` (`audio_is_saved_first…`), `article_domain` | pendente (microfone real) |
-| Envio automático só com transcrição guardada; vazia/falhada/excessiva não se envia | `article_service`, `article_repository` | pendente |
-| Fontes imutáveis; versão enviada vs. revista distintas | `article_repository`, `article_migration` | — |
-| Artigo como dados não fiáveis; citações só do utilizador | `article_ai` | pendente (resistência semântica) |
-| Comentário + pergunta, sem correções entre turnos; sugerir terminar à 5.ª; limite | `article_ai`, `ArticleConversation.test`, `article_repository` | pendente (utilidade) |
-| Feedback: 4 dimensões, evidência insuficiente explícita, sem nota global | `article_ai`, `ArticleReport.test` | pendente (utilidade) |
-| Correção em ramo novo, ramo/relatório antigos intactos, regeneração explícita | `article_recovery`, `article_service` | pendente |
-| Resultados tardios, clique duplo, terminar/eliminar durante pedido | `article_service`, `article_repository`, `ArticleConversation.test` | — |
-| Recuperação local sem envios no arranque; eliminação retomável | `article_recovery`, `article_service` | pendente (fecho abrupto real) |
-| Isolamento do STAR (microfone/auxiliar) | `article_service` (`star_and_article…`) | pendente |
-| Voz incremental: ordem, cancelamento, falha parcial | `article_voice`, `article_service` (voz), `test_stream` | **pendente (audição real; Kokoro por blocos)** |
-| Diagnóstico sem conteúdo; operações fechadas | `article_service` (métricas), `diagnostics` | — |
-| Cenário integrado (autorizar → 5 turnos → corrigir → regenerar → concluir → reabrir) | `article_service::full_conversation_…` | — |
+| Pasted article, fixed copy, limits without cutting | `article_domain`, `article_repository`, `ArticleSetup.test` | pending |
+| Authorization per session, never pre-selected; revoking/changing the destination blocks sends | `ArticleSetup.test`, `article_service` (revocation, changed destination), `article_domain` | pending |
+| Recording ends only by user action; audio stored before sending | `article_service` (`audio_is_saved_first…`), `article_domain` | pending (real microphone) |
+| Automatic sending only with a stored transcript; empty/failed/excessive is not sent | `article_service`, `article_repository` | pending |
+| Immutable sources; sent vs. revised version distinct | `article_repository`, `article_migration` | — |
+| Article as untrusted data; quotes only from the user | `article_ai` | pending (semantic resistance) |
+| Comment + question, without corrections between turns; suggest ending on the 5th; limit | `article_ai`, `ArticleConversation.test`, `article_repository` | pending (usefulness) |
+| Feedback: 4 dimensions, explicit insufficient evidence, no overall score | `article_ai`, `ArticleReport.test` | pending (usefulness) |
+| Correction in a new branch, old branch/report intact, explicit regeneration | `article_recovery`, `article_service` | pending |
+| Late results, double click, ending/deleting during a request | `article_service`, `article_repository`, `ArticleConversation.test` | — |
+| Local recovery without sends at startup; resumable deletion | `article_recovery`, `article_service` | pending (real abrupt shutdown) |
+| STAR isolation (microphone/helper) | `article_service` (`star_and_article…`) | pending |
+| Incremental voice: order, cancellation, partial failure | `article_voice`, `article_service` (voice), `test_stream` | **pending (real listening; Kokoro in blocks)** |
+| Diagnostics without content; closed operations | `article_service` (metrics), `diagnostics` | — |
+| Integrated scenario (authorize → 5 turns → correct → regenerate → conclude → reopen) | `article_service::full_conversation_…` | — |
 
-## Desvios e limites conhecidos
+## Known deviations and limits
 
-- **Sem capability `synthesisChunks` no `health`**: acrescentar um campo a `HealthResult` partiria os literais existentes; o auxiliar é distribuído com a aplicação. Sem retorno automático à síntese completa se o auxiliar não conhecer `synthesize_stream`.
-- **Cancelamento da voz**: pede ao auxiliar que pare entre blocos; um bloco já em geração acaba e é descartado. A transcrição seguinte espera até 2 s que o auxiliar fique livre.
-- **Limite do artigo**: 30 000 bytes (a spec dizia 32 000) para caberem título, abertura, resposta e réplica em 48 000 bytes de contexto.
-- **Ramos antigos** não aparecem na interface (só o ramo ativo); estão guardados e reconstruíveis (`project_article_branch`).
-- **Repetir uma resposta como novo ramo** (regravar) não está implementado; só a correção de texto.
-- A página Artigos **não teve validação visual**.
-- Medições de desempenho e comparação `beam_size=5/1`: ver [desempenho](performance.md) — por fazer.
+- **No `synthesisChunks` capability in `health`**: adding a field to `HealthResult` would break the existing literals; the helper is distributed with the application. No automatic fallback to full synthesis if the helper does not know `synthesize_stream`.
+- **Voice cancellation**: it asks the helper to stop between blocks; a block already being generated finishes and is discarded. The following transcript waits up to 2 s for the helper to become free.
+- **Article limit**: 30,000 bytes (the spec said 32,000) so that title, opening, answer and reply fit in 48,000 bytes of context.
+- **Old branches** do not appear in the interface (only the active branch); they are stored and reconstructible (`project_article_branch`).
+- **Repeating an answer as a new branch** (recording again) is not implemented; only text correction.
+- The Articles page **had no visual validation**.
+- Performance measurements and the `beam_size=5/1` comparison: see [performance](performance.md) — to do.
 
-## Roteiro manual pendente
+## Pending manual script
 
-1. Conversa real sobre um artigo, com pelo menos cinco respostas, incluindo discordância e aprofundamento (continuidade, coesão do diálogo, espera percebida).
-2. Recuperação de um erro de reconhecimento (texto manual) e de uma interrupção da voz a meio.
-3. Falha de rede e repetição explícita; retoma depois de fechar a aplicação a meio de uma resposta.
-4. Utilidade e fidelidade do feedback, e custo real (os pedidos pagos exigem a sua autorização).
-5. Correção de uma resposta antiga e regeneração do relatório.
-6. Validação visual da página Artigos (desktop e mobile).
+1. Real conversation about an article, with at least five answers, including disagreement and elaboration (continuity, dialogue cohesion, perceived wait).
+2. Recovery from a recognition error (manual text) and from a voice interruption in the middle.
+3. Network failure and explicit repetition; resumption after closing the application in the middle of an answer.
+4. Usefulness and fidelity of the feedback, and real cost (paid requests require your authorization).
+5. Correction of an old answer and regeneration of the report.
+6. Visual validation of the Articles page (desktop and mobile).

@@ -1,110 +1,113 @@
-# Fase 2 — Entrevista guiada
+# Phase 2 — Guided interview
 
-Data: 2026-11-02  
-Estado: spec de referência; implementação executada e verificada automaticamente em 2026-11-02, com a validação manual do utilizador pendente.  
-Base: [plano das fases](../plans/2026-11-01-star-interview-tutor-phases.md), [desenho do MVP](2026-11-01-star-interview-tutor-design.md) e [stack técnica](../../tech-stack.md).
+Date: 2026-11-02  
+Status: reference spec; implementation executed and automatically verified on 2026-11-02, with the user's manual validation pending.  
+Base: [phase plan](../plans/2026-11-01-star-interview-tutor-phases.md), [MVP design](2026-11-01-star-interview-tutor-design.md) and [technical stack](../../tech-stack.md).
 
-Plano técnico: [Implementação da fase 2](../plans/2026-11-02-phase-2-guided-interview-implementation.md), com as tarefas 1 a 9 executadas e a tarefa 10 parcial. Evidência real em [docs/phase-2/validation.md](../../phase-2/validation.md).
+Technical plan: [Phase 2 implementation](../plans/2026-11-02-phase-2-guided-interview-implementation.md), with tasks 1 to 9 executed and task 10 partial. Real evidence in [docs/phase-2/validation.md](../../phase-2/validation.md).
 
-## 1. Intenção e ponto de partida
+## 1. Intent and starting point
 
-Transformar o treino de uma pergunta fixa numa entrevista local com várias
-perguntas: escolher categoria e quantidade, ouvir e responder, rever e confirmar
-cada texto, terminar e consultar o que ficou guardado.
+Turn the practice of one fixed question into a local interview with several
+questions: choose category and count, listen and answer, review and confirm
+each text, finish and consult what was stored.
 
-A fase 1 já implementa captura, reprodução, síntese, transcrição, revisão e
-recuperação de uma resposta em ficheiros JSON. A fase 2 reutiliza esses motores
-e introduz o banco editável, o estado da entrevista e SQLite. Não integra a API.
+Phase 1 already implements capture, playback, synthesis, transcription, review
+and recovery of one answer in JSON files. Phase 2 reuses those engines and
+introduces the editable bank, the interview state and SQLite. It does not
+integrate the API.
 
-O utilizador pediu para avançar para a spec da próxima fase. O registo de
-[validação da fase 1](../../phase-1/validation.md) ainda contém critérios manuais
-pendentes. A preparação desta spec não equivale a aceitar a fase 1 nem a provar
-esses critérios. Antes de implementar a fase 2, reconciliar esse registo com os
-testes reais do utilizador, incluindo a aceitabilidade da espera. Não repetir
-testes que já tenham evidência suficiente; registar a evidência que faltar.
+The user asked to move on to the next phase's spec. The
+[phase 1 validation](../../phase-1/validation.md) record still contains pending
+manual criteria. Preparing this spec is not the same as accepting phase 1 or
+proving those criteria. Before implementing phase 2, reconcile that record with
+the user's real tests, including the acceptability of the wait. Do not repeat
+tests that already have enough evidence; record the evidence that is missing.
 
-## 2. Âmbito
+## 2. Scope
 
-### Incluído
+### Included
 
-- Banco inicial de 20 perguntas em inglês, nas seis categorias do MVP.
-- Consulta, adição e edição de perguntas, categoria, competências e critérios.
-- Configuração da categoria e do número de perguntas principais: três por
-  defeito, uma ou outra quantidade disponível.
-- Seleção sem repetição e ordem fixadas no início, com cópia dos conteúdos.
-- Uma sessão em curso de cada vez, com progresso e retoma após reinício.
-- Captura manual, reprodução, transcrição local e revisão em cada pergunta.
-- Confirmação explícita de uma versão imutável do texto.
-- Histórico de sessões, perguntas, gravações e textos guardados.
-- SQLite para os dados das novas sessões; áudio em ficheiros locais.
-- Preservação e consulta dos dados anteriores da fase 1.
+- Initial bank of 20 questions in English, in the six categories of the MVP.
+- Consultation, addition and editing of questions, category, competencies and criteria.
+- Configuration of the category and of the number of main questions: three by
+  default, one or another available count.
+- Selection without repetition and order fixed at the start, with a copy of the contents.
+- One session in progress at a time, with progress and resuming after a restart.
+- Manual capture, playback, local transcription and review on each question.
+- Explicit confirmation of an immutable version of the text.
+- History of sessions, questions, recordings and stored texts.
+- SQLite for the data of the new sessions; audio in local files.
+- Preservation and consultation of the earlier phase 1 data.
 
-### Excluído
+### Excluded
 
-Seguimentos, feedback, classificações e chamadas à IA pertencem à fase 3.
-Histórias pessoais, reformulações, novas tentativas de respostas já confirmadas
-e comparação pertencem à fase 4. Eliminação de sessões, instalador autónomo e
-consolidação da distribuição pertencem à fase 5.
+Follow-ups, feedback, grades and AI calls belong to phase 3. Personal stories,
+rewrites, new attempts at answers already confirmed and comparison belong to
+phase 4. Deletion of sessions, standalone installer and consolidation of the
+distribution belong to phase 5.
 
-Não acrescentar contas, sincronização, pesquisa automática de histórias,
-transcrição em direto, gravação terminada por silêncio ou diagnóstico da fala.
-Não apresentar uma sessão terminada como uma entrevista avaliada.
+Do not add accounts, synchronization, automatic search for stories, live
+transcription, recording ended by silence or speech diagnosis. Do not present a
+finished session as an evaluated interview.
 
-## 3. Abordagem e decisões propostas
+## 3. Approach and proposed decisions
 
-A base escolhida pelo utilizador mantém-se: React/TypeScript, Rust/Tauri 2,
-SQLite, faster-whisper e Kokoro no auxiliar Python. A divisão aprovada em fases
-já determina a abordagem funcional; não é necessário escolher outra stack.
+The base chosen by the user remains: React/TypeScript, Rust/Tauri 2, SQLite,
+faster-whisper and Kokoro in the Python helper. The division into phases already
+approved determines the functional approach; there is no need to choose another
+stack.
 
-| Opção de evolução | Consequência | Proposta |
+| Evolution option | Consequence | Proposal |
 | --- | --- | --- |
-| Prolongar os JSON para todas as sessões | Evita SQLite agora, mas adia a entrega prevista e dispersa as transações da entrevista. | Descartada por contrariar o âmbito aprovado. |
-| Introduzir SQLite para sessões novas e conservar os artefactos da fase 1 | Permite transações sem converter ou reescrever gravações antigas. Exige uma consulta de dados anteriores separada. | Recomendada nesta spec. |
-| Converter automaticamente todos os dados antigos | Uniformiza o histórico, mas acrescenta migração de conteúdos incompletos antes de validar as sessões. | Adiada; não é necessária para este incremento. |
+| Extend the JSON to all sessions | Avoids SQLite now, but postpones the planned delivery and disperses the interview transactions. | Discarded for contradicting the approved scope. |
+| Introduce SQLite for new sessions and keep the phase 1 artifacts | Allows transactions without converting or rewriting old recordings. Requires a separate consultation of earlier data. | Recommended in this spec. |
+| Convert all the old data automatically | Uniformizes the history, but adds migration of incomplete content before validating the sessions. | Postponed; it is not needed for this increment. |
 
-As escolhas seguintes são propostas desta spec, sujeitas a revisão:
+The following choices are proposals of this spec, subject to review:
 
-- Escolher inicialmente «Todas as categorias»; permitir também uma categoria
-  individual, sem seleção múltipla neste incremento.
-- Sortear perguntas elegíveis sem repetição. Não otimizar diversidade ou
-  evitar perguntas de sessões anteriores nesta fase.
-- Separar «Guardar revisão», «Confirmar resposta» e «Próxima pergunta».
-  Confirmar fixa o texto; avançar é outra ação explícita.
-- Permitir sair e retomar a única sessão em curso; não introduzir abandono,
-  salto de perguntas ou várias entrevistas simultâneas nesta fase.
-- Manter respostas da fase 1 acessíveis numa consulta de «Treinos anteriores
-  à fase 2», sem as converter em entrevistas ou confirmar textos retroativamente.
+- Choose «Todas as categorias» initially; also allow a single category, without
+  multiple selection in this increment.
+- Draw eligible questions without repetition. Do not optimize diversity or
+  avoid questions from earlier sessions in this phase.
+- Separate «Guardar revisão», «Confirmar resposta» and «Próxima pergunta».
+  Confirming fixes the text; advancing is another explicit action.
+- Allow leaving and resuming the single session in progress; do not introduce
+  abandonment, skipping questions or several simultaneous interviews in this phase.
+- Keep the phase 1 answers accessible in a consultation of «Treinos anteriores à
+  fase 2», without converting them into interviews or confirming texts
+  retroactively.
 
-## 4. Banco de perguntas
+## 4. Question bank
 
-### Estrutura e edição
+### Structure and editing
 
-Cada pergunta tem identificador estável, texto em inglês, uma das seis
-categorias, uma ou mais competências e um ou mais critérios de conteúdo.
-Datas e versão permitem identificar alterações. Os critérios orientam a futura
-avaliação textual; nesta fase são apenas guardados e apresentados.
+Each question has a stable identifier, text in English, one of the six
+categories, one or more competencies and one or more content criteria. Dates
+and version identify changes. The criteria guide the future textual evaluation;
+in this phase they are only stored and presented.
 
-O formulário exige texto, categoria, pelo menos uma competência e um critério
-não vazios. Ignorar espaços exteriores na validação e persistência; não alterar
-o conteúdo interior. Não depender de deteção automática da língua para aceitar
-o texto: os campos indicam que a pergunta deve estar em inglês. A interface e
-as explicações são em português de Portugal.
+The form requires text, category, at least one competency and one criterion,
+all non-empty. Ignore outer spaces in validation and persistence; do not alter
+the inner content. Do not depend on automatic language detection to accept the
+text: the fields state that the question must be in English. The interface and
+the explanations are in European Portuguese.
 
-Permitir adicionar e editar. Eliminação, importação em lote, edição das seis
-categorias e gestão autónoma de um catálogo de competências ficam fora deste
-incremento. Competências e critérios são editados na própria pergunta.
+Allow adding and editing. Deletion, batch import, editing of the six categories
+and autonomous management of a catalog of competencies stay out of this
+increment. Competencies and criteria are edited in the question itself.
 
-Inserir o banco inicial uma única vez, com identificadores estáveis e versão
-de conteúdo. Reiniciar ou atualizar a aplicação não repõe perguntas editadas,
-não duplica registos e não volta a inserir o banco sobre alterações pessoais.
+Insert the initial bank a single time, with stable identifiers and content
+version. Restarting or updating the application does not restore edited
+questions, does not duplicate records and does not insert the bank again over
+personal changes.
 
-### Conteúdo inicial proposto
+### Proposed initial content
 
-Os critérios aceitam resultados qualitativos, negativos e aprendizagens.
-Nenhuma pergunta exige números ou um sucesso. Não fornecer respostas modelo
-ao transcritor.
+The criteria accept qualitative, negative and learning results. No question
+requires numbers or a success. Do not provide model answers to the transcriber.
 
-| # | Categoria | Pergunta em inglês | Competência | Critério específico |
+| # | Category | Question in English | Competency | Specific criterion |
 | --- | --- | --- | --- | --- |
 | 1 | Conflitos e colaboração | Tell me about a time you disagreed with a colleague. | Gestão de conflitos | Explicar a divergência, a ação própria e o desfecho. |
 | 2 | Conflitos e colaboração | Describe a time you helped a team work together more effectively. | Colaboração | Identificar o obstáculo e a contribuição individual. |
@@ -127,251 +130,258 @@ ao transcritor.
 | 19 | Adaptação a mudanças | Describe a time you had to learn a new tool or process quickly. | Aprendizagem | Explicar a necessidade, a estratégia e o resultado. |
 | 20 | Adaptação a mudanças | Tell me about a time you worked through a major change in your team. | Gestão da mudança | Descrever a mudança, a ação individual e a aprendizagem. |
 
-Guardar também critérios STAR comuns: contexto, responsabilidade individual,
-ações, resultado ou aprendizagem. A cópia da sessão inclui os critérios comuns
-e específicos efetivos, sem depender da versão futura do banco.
+Also store common STAR criteria: context, individual responsibility, actions,
+result or learning. The session copy includes the common and specific criteria
+in effect, without depending on the future version of the bank.
 
-## 5. Preparar e iniciar uma sessão
+## 5. Preparing and starting a session
 
-Mostrar categoria, quantidade pretendida e número de perguntas elegíveis.
-Aceitar apenas inteiros entre um e o total elegível. Se existirem menos de
-três, conservar a sugestão de três com aviso e exigir que o utilizador ajuste
-a quantidade; não reduzir o total nem repetir perguntas silenciosamente.
+Show the category, the intended count and the number of eligible questions.
+Accept only integers between one and the eligible total. If there are fewer than
+three, keep the suggestion of three with a warning and require the user to
+adjust the count; do not reduce the total or repeat questions silently.
 
-Ao iniciar, o núcleo valida novamente a disponibilidade, sorteia e guarda,
-numa transação, a sessão, a configuração, os identificadores de origem, a ordem
-e as cópias do texto, categoria, competências e critérios de cada pergunta.
-Só depois de persistir apresenta a primeira pergunta como iniciada.
+On start, the core validates the availability again, draws and stores, in one
+transaction, the session, the configuration, the source identifiers, the order
+and the copies of the text, category, competencies and criteria of each
+question. Only after persisting does it present the first question as started.
 
-Cliques repetidos no mesmo pedido não criam várias sessões. Se já existir uma
-sessão em curso, apresentar a opção de a retomar. Uma sessão concluída permite
-iniciar outra. Edições posteriores no banco afetam apenas sessões futuras.
+Repeated clicks on the same request do not create several sessions. If a
+session in progress already exists, present the option to resume it. A
+completed session allows starting another. Later edits in the bank affect only
+future sessions.
 
-## 6. Responder, rever e confirmar
+## 6. Answering, reviewing and confirming
 
-### Áudio e transcrição
+### Audio and transcription
 
-Mostrar «Pergunta 2 de 3» e o texto inglês fixado. Disponibilizar síntese e
-repetição com Kokoro; uma falha de síntese mantém o texto e permite responder.
-A cache distingue texto e configuração da voz, sem reutilizar áudio de outra
-pergunta. Reutilizar a captura e os formatos validados na fase 1.
+Show «Pergunta 2 de 3» and the fixed English text. Provide synthesis and
+repetition with Kokoro; a synthesis failure keeps the text and allows answering.
+The cache distinguishes text and voice configuration, without reusing audio
+from another question. Reuse the capture and the formats validated in phase 1.
 
-O utilizador inicia e termina a gravação. Iniciar captura interrompe a saída;
-nenhum áudio toca durante a captura. Guardar o original antes de conversões e
-transcrição. Preservar o derivado separadamente. Identificar gravações
-incompletas e permitir ouvi-las antes de decidir se é preciso gravar de novo.
+The user starts and ends the recording. Starting the capture interrupts the
+output; no audio plays during the capture. Store the original before
+conversions and transcription. Preserve the derivative separately. Identify
+incomplete recordings and allow listening to them before deciding whether a new
+recording is needed.
 
-Cada gravação tem identidade própria. Antes da confirmação, «Gravar novamente»
-cria outro registo para a mesma pergunta, preservando os anteriores, sem os
-contar como perguntas extra. A gravação nova só substitui a seleção corrente
-depois de finalizada e guardada; uma falha de captura mantém a anterior.
-As gravações anteriores continuam consultáveis. A confirmação usa apenas a
-gravação selecionada e a revisão que lhe pertence.
+Each recording has its own identity. Before confirmation, «Gravar novamente»
+creates another record for the same question, preserving the earlier ones,
+without counting them as extra questions. The new recording only replaces the
+current selection after being finalized and stored; a capture failure keeps the
+earlier one. The earlier recordings remain consultable. The confirmation uses
+only the selected recording and the review that belongs to it.
 
-Falha de transcrição permite repetir sobre o ficheiro existente. Cada resultado
-automático é imutável e identificado. Reprocessar não substitui revisões
-guardadas nem muda automaticamente o resultado de origem de uma revisão.
+A transcription failure allows repeating over the existing file. Each automatic
+result is immutable and identified. Reprocessing does not replace stored
+revisions nor change automatically the source result of a revision.
 
-### Revisão e confirmação
+### Review and confirmation
 
-Apresentar o texto automático apenas de leitura e uma cópia editável. Guardar
-a revisão mantém o texto editável; não confirma nem avança. A confirmação
-cria um registo separado com o texto exato revisto, data e referências à
-pergunta, gravação, transcrição e revisão de origem.
+Present the automatic text as read-only and an editable copy. Saving the review
+keeps the editable text; it does not confirm or advance. The confirmation
+creates a separate record with the exact revised text, date and references to
+the question, recording, transcription and source review.
 
-«Confirmar resposta» informa que o texto ficará fixo. O núcleo recebe a versão
-esperada e confirma exatamente a versão que o utilizador viu. Persistir revisão
-e confirmação de forma atómica; uma escrita falhada ou versão desatualizada
-não confirma nem avança. Enquanto o pedido estiver pendente, impedir edição e
-troca de gravação. Repetir o pedido não cria outra confirmação.
+«Confirmar resposta» states that the text will become fixed. The core receives
+the expected version and confirms exactly the version the user saw. Persist
+review and confirmation atomically; a failed write or an outdated version does
+not confirm or advance. While the request is pending, prevent editing and
+changing the recording. Repeating the request does not create another
+confirmation.
 
-Texto vazio ou apenas com espaços não pode ser confirmado. Quando não houver
-fala reconhecida, permitir nova gravação ou introdução explícita de uma revisão
-fiel ao áudio existente; registar que o texto foi introduzido manualmente e
-preservar o resultado `no_speech`. Não aceitar resposta sem um original
-finalizado nem apresentar silêncio como problema de pronúncia.
+Empty text or text with only spaces cannot be confirmed. When there is no
+recognized speech, allow a new recording or an explicit introduction of a
+review faithful to the existing audio; record that the text was introduced
+manually and preserve the `no_speech` result. Do not accept an answer without a
+finalized original nor present silence as a pronunciation problem.
 
-Depois de confirmar, a resposta fica apenas de leitura. Não disponibilizar
-desfazer confirmação, nova captura ou retranscrição dessa resposta nesta fase.
-As futuras novas tentativas serão independentes.
+After confirming, the answer becomes read-only. Do not provide undo of the
+confirmation, new capture or retranscription of that answer in this phase. The
+future new attempts will be independent.
 
-### Avanço e final
+### Advancing and finishing
 
-«Próxima pergunta» só fica disponível com a resposta atual confirmada. Rust
-valida a sessão, a posição e a versão esperadas; repetir o comando não salta
-perguntas. Não permitir avançar uma pergunta sem resposta confirmada.
+«Próxima pergunta» is only available with the current answer confirmed. Rust
+validates the expected session, position and version; repeating the command
+does not skip questions. Do not allow advancing a question without a confirmed
+answer.
 
-Na última pergunta, a ação chama-se «Terminar sessão». Só conclui quando todas
-as perguntas previstas têm resposta confirmada. Mostrar um resumo consultável,
-sem avaliação, nota ou feedback pendente. Guardar que a sessão foi realizada
-no modo local da fase 2: não criar dispensas fictícias de seguimento nem pedidos
-de IA para estas sessões quando a fase 3 for instalada.
+On the last question, the action is called «Terminar sessão». It only concludes
+when all the planned questions have a confirmed answer. Show a consultable
+summary, without evaluation, grade or pending feedback. Store that the session
+was carried out in the phase 2 local mode: do not create fictitious follow-up
+dismissals nor AI requests for these sessions when phase 3 is installed.
 
-## 7. Navegação, histórico e retoma
+## 7. Navigation, history and resuming
 
-A interface disponibiliza preparação/retoma, banco de perguntas, entrevista e
-histórico. Os detalhes visuais ficam para o plano técnico.
+The interface provides preparation/resuming, question bank, interview and
+history. The visual details are left for the technical plan.
 
-Listar sessões com data, categoria, quantidade, progresso e estado em curso ou
-concluída. Abrir uma sessão permite ler as perguntas fixadas, ouvir originais,
-consultar resultados automáticos, revisão guardada e texto confirmado em áreas
-distintas. Respostas confirmadas permanecem de leitura. Numa sessão em curso,
-a ação de retoma conduz à etapa persistida, incluindo uma resposta confirmada
-que ainda aguarda avanço explícito.
+List sessions with date, category, count, progress and state in progress or
+completed. Opening a session allows reading the fixed questions, listening to
+originals, consulting automatic results, the stored review and the confirmed
+text in distinct areas. Confirmed answers remain for reading. In a session in
+progress, the resume action leads to the persisted step, including a confirmed
+answer that still awaits explicit advancing.
 
-Não mudar de sessão ou de página durante captura/finalização. Durante um
-trabalho de modelo é possível consultar conteúdos guardados; essa navegação
-não muda a identidade do trabalho nem inicia outro. Voltar à entrevista mostra
-o estado real do núcleo.
+Do not change session or page during capture/finalization. During model work it
+is possible to consult stored contents; that navigation does not change the
+identity of the work nor start another one. Returning to the interview shows the
+real state of the core.
 
-Ao sair do editor ou fechar normalmente, resolver alterações com
-guardar/descartar/cancelar. Só navegar ou fechar se a versão mais recente estiver
-guardada ou tiver sido explicitamente descartada. Se houver edição durante uma
-escrita, a versão nova continua por guardar. Falhas mantêm o editor e o texto.
-No fecho com captura ativa, tentar finalizar e guardar antes de sair, conforme
-o contrato da fase 1. Não prometer salvar áudio não finalizado numa falha abrupta.
+When leaving the editor or closing normally, resolve changes with
+save/discard/cancel. Only navigate or close if the latest version is stored or
+was explicitly discarded. If there is an edit during a write, the new version
+remains unsaved. Failures keep the editor and the text. On shutdown with an
+active capture, try to finalize and store before leaving, according to the phase
+1 contract. Do not promise to save unfinalized audio on an abrupt failure.
 
-Ao reiniciar, recuperar a única sessão em curso e a última etapa guardada.
-Trabalhos interrompidos passam a estado recuperável; não ficam em processamento
-para sempre e não retomam a captura automaticamente. Uma sessão concluída abre
-no histórico, sem nova gravação ou avanço automático.
+On restart, recover the single session in progress and the last stored step.
+Interrupted work becomes a recoverable state; it does not stay processing
+forever and does not resume the capture automatically. A completed session opens
+in the history, without new recording or automatic advancing.
 
-## 8. Persistência e compatibilidade
+## 8. Persistence and compatibility
 
-### Dados das novas sessões
+### Data of the new sessions
 
-SQLite é a autoridade para banco, cópias das perguntas, sessões, posição,
-gravações, transcrições, revisões, confirmações e operações. Os ficheiros de
-áudio ficam na pasta de dados da aplicação, separados dos modelos e do código.
-Não manter JSON e SQLite como duas autoridades das mesmas sessões novas.
+SQLite is the authority for the bank, the copies of the questions, sessions,
+position, recordings, transcripts, revisions, confirmations and operations. The
+audio files stay in the application data folder, separate from the models and
+the code. Do not keep JSON and SQLite as two authorities of the same new
+sessions.
 
-O modelo lógico distingue:
+The logical model distinguishes:
 
-| Registo | Conteúdo e invariantes |
+| Record | Content and invariants |
 | --- | --- |
-| Pergunta do banco | Conteúdo atual, categoria, competências, critérios e versão. |
-| Sessão | Configuração, modo local, estado, posição, datas e versão de concorrência. |
-| Pergunta da sessão | Posição única e cópia completa dos conteúdos à data de início. |
-| Gravação | Pergunta da sessão, ficheiros, metadados, integridade e seleção corrente. |
-| Transcrição automática | Gravação de origem, texto original, estado, modelo/configuração e tempos. |
-| Revisão | Texto guardado, versão, origem automática ou manual explícita. |
-| Confirmação | No máximo uma por pergunta da sessão; texto e referências imutáveis. |
-| Operação | Identidade, alvo, geração, estado, erro e tempos. |
+| Bank question | Current content, category, competencies, criteria and version. |
+| Session | Configuration, local mode, state, position, dates and concurrency version. |
+| Session question | Unique position and complete copy of the contents at the start date. |
+| Recording | Session question, files, metadata, integrity and current selection. |
+| Automatic transcript | Source recording, original text, state, model/configuration and times. |
+| Revision | Stored text, version, automatic or explicitly manual origin. |
+| Confirmation | At most one per session question; immutable text and references. |
+| Operation | Identity, target, generation, state, error and times. |
 
-Guardar os metadados já produzidos na fase 1 sem perder informação. Pormenores
-de tabelas e normalização ficam para o plano técnico; não criar já tabelas
-vazias para histórias, feedback ou custos.
+Store the metadata already produced in phase 1 without losing information.
+Details of tables and normalization are left for the technical plan; do not
+create empty tables yet for stories, feedback or costs.
 
-Criar sessão com perguntas, confirmar resposta e avançar são transações.
-As restrições do núcleo e da base de dados impedem confirmações duplicadas,
-posições repetidas e mais de uma sessão em curso.
+Creating a session with questions, confirming an answer and advancing are
+transactions. The core and database restrictions prevent duplicate
+confirmations, repeated positions and more than one session in progress.
 
-SQLite e ficheiros não partilham uma transação. Finalizar o áudio antes de
-publicar a referência; se a publicação falhar, conservar o ficheiro com
-identidade recuperável e permitir repetir sem gravar de novo. No arranque,
-reconciliar publicações interrompidas, sem duplicar registos nem apagar áudios
-órfãos automaticamente. Ficheiros em falta ou inválidos produzem aviso por
-artefacto; não impedem ler os restantes textos.
+SQLite and files do not share a transaction. Finalize the audio before
+publishing the reference; if the publication fails, keep the file with a
+recoverable identity and allow repeating without recording again. On startup,
+reconcile interrupted publications, without duplicating records or deleting
+orphan audio automatically. Missing or invalid files produce a warning per
+artifact; they do not prevent reading the remaining texts.
 
-Versionar o esquema e executar migrações transacionais. Uma falha não recria
-nem limpa a base existente; mostrar erro recuperável e preservar os dados.
-Uma base de versão futura não é aberta para escrita por uma versão antiga.
+Version the schema and run transactional migrations. A failure does not
+recreate or clean the existing database; show a recoverable error and preserve
+the data. A database of a future version is not opened for writing by an older
+version.
 
-### Dados da fase 1
+### Phase 1 data
 
-Conservar a árvore `phase1/`, a configuração pessoal, a cache e os modelos.
-Disponibilizar uma listagem de treinos anteriores a partir dos manifestos
-existentes, reutilizando a leitura de originais, transcrições e revisão.
-A consulta é apenas de leitura e não depende só de `last-attempt.json`.
+Keep the `phase1/` tree, the personal configuration, the cache and the models.
+Provide a listing of earlier practice sessions from the existing manifests,
+reusing the reading of originals, transcripts and review. The
+consultation is read-only and does not depend only on `last-attempt.json`.
 
-Não fabricar categorias, critérios, sessões concluídas ou confirmações para
-dados antigos. Identificar itens inválidos individualmente e continuar a listar
-os válidos. Não os duplicar em SQLite, mover ou apagar neste incremento.
+Do not fabricate categories, criteria, completed sessions or confirmations for
+old data. Identify invalid items individually and continue listing the valid
+ones. Do not duplicate them in SQLite, move or delete them in this increment.
 
-## 9. Operações e recuperação
+## 9. Operations and recovery
 
-Rust mantém a autoridade sobre sessão e versões; React apresenta o estado.
-Não bloquear a interface durante áudio, modelos ou acesso demorado aos dados.
-Manter um único trabalho local de modelo e uma única captura de cada vez.
+Rust keeps the authority over session and versions; React presents the state.
+Do not block the interface during audio, models or slow data access. Keep a
+single local model work and a single capture at a time.
 
-Todo o resultado e evento de áudio é associado à sessão, pergunta, gravação e
-operação que o originou, incluindo geração do dispositivo/auxiliar quando
-necessário. Um evento antigo, mesmo sem áudio finalizado, não pode cancelar
-uma captura nova nem remover a sua ação de terminar.
+Every result and audio event is associated with the session, question,
+recording and operation that originated it, including generation of the
+device/helper when needed. An old event, even without finalized audio, cannot
+cancel a new capture nor remove its finish action.
 
-| Falha | Recuperação exigida |
+| Failure | Required recovery |
 | --- | --- |
-| Pedido repetido ou incompatível | Devolver estado atual ou erro de ocupação sem bloqueio e sem duplicar efeitos. |
-| Microfone interrompido | Recuperar o que puder ser finalizado, avisar sobre incompletude e permitir nova captura. |
-| Transcrição falhada ou auxiliar bloqueado | Preservar áudio/revisão; libertar operação e permitir repetir. |
-| Síntese indisponível | Manter a pergunta legível e permitir responder sem voz sintetizada. |
-| Escrita de revisão ou confirmação falhada | Preservar texto, não confirmar e não avançar. |
-| Avanço falhado | Manter confirmação e posição persistida, permitindo repetir com segurança. |
-| Reinício após confirmação | Recuperar a confirmação sem a duplicar; manter o avanço ainda pendente. |
-| Resultado tardio ou de versão antiga | Não modificar seleção atual, confirmação ou progresso. |
-| Áudio em falta | Mostrar indisponibilidade desse áudio e conservar textos e histórico. |
-| SQLite indisponível | Não iniciar nem confirmar sessões como se estivessem guardadas; permitir repetir a abertura. |
+| Repeated or incompatible request | Return the current state or a busy error without blocking and without duplicating effects. |
+| Interrupted microphone | Recover what can be finalized, warn about incompleteness and allow a new capture. |
+| Failed transcription or blocked helper | Preserve audio/review; free the operation and allow repeating. |
+| Synthesis unavailable | Keep the question readable and allow answering without synthesized voice. |
+| Failed write of revision or confirmation | Preserve the text, do not confirm and do not advance. |
+| Failed advancing | Keep the confirmation and the persisted position, allowing a safe repeat. |
+| Restart after confirmation | Recover the confirmation without duplicating it; keep the advancing still pending. |
+| Late result or result of an old version | Do not modify the current selection, confirmation or progress. |
+| Missing audio | Show the unavailability of that audio and keep texts and history. |
+| SQLite unavailable | Do not start or confirm sessions as if they were stored; allow repeating the opening. |
 
-Reutilizar os prazos e limites de áudio existentes, salvo alteração justificada
-no plano. Não truncar áudio ou texto silenciosamente. Não existem pedidos de
-rede, chaves ou custos de IA nesta fase; não apresentar consumo zero como uma
-medição de um fornecedor que não foi chamado.
+Reuse the existing audio deadlines and limits, unless a justified change is made
+in the plan. Do not truncate audio or text silently. There are no network
+requests, API keys or AI costs in this phase; do not present zero usage as a
+measurement of a provider that was not called.
 
-## 10. Verificação e critérios de aceitação
+## 10. Verification and acceptance criteria
 
-O plano técnico deve testar as transições e persistência no núcleo, a navegação
-e as proteções de edição na interface e a integração com os adaptadores locais.
-Usar dados temporários e falhas controladas para testar interrupções entre
-publicação de áudio, confirmação e avanço. Preservar a regressão da fase 1.
+The technical plan must test the transitions and persistence in the core, the
+navigation and the editing protections in the interface and the integration
+with the local adapters. Use temporary data and controlled failures to test
+interruptions between audio publication, confirmation and advancing. Preserve
+the phase 1 regression.
 
-Os critérios seguintes continuam a ser os de aceitação. Em 2026-11-02 a
-implementação e a verificação automática foram registadas em
+The following criteria remain the acceptance criteria. On 2026-11-02 the
+implementation and the automated verification were recorded in
 [docs/phase-2/validation.md](../../phase-2/validation.md): F2-01, F2-02, F2-04,
-F2-06, F2-07, F2-08, F2-09, F2-12, F2-13 e F2-15 têm evidência automatizada;
-F2-03, F2-05, F2-10, F2-11, F2-14 e F2-16 têm evidência parcial e dependem da
-validação manual. As caixas abaixo só são marcadas quando o critério estiver
-demonstrado, incluindo a validação manual.
+F2-06, F2-07, F2-08, F2-09, F2-12, F2-13 and F2-15 have automated evidence;
+F2-03, F2-05, F2-10, F2-11, F2-14 and F2-16 have partial evidence and depend on
+the manual validation. The boxes below are only marked when the criterion is
+demonstrated, including the manual validation.
 
-- [ ] F2-01: Banco inicial contém 20 perguntas nas seis categorias; repetir o arranque não duplica nem repõe edições.
-- [ ] F2-02: Adicionar e editar texto, categoria, competências e critérios persiste após reinício, com validação dos campos obrigatórios.
-- [ ] F2-03: Quantidade inicial três; sessões com uma, três e outra quantidade elegível; insuficiência explícita, sem redução ou repetição silenciosa.
-- [ ] F2-04: Seleção e ordem sem repetição persistem; editar o banco não altera nenhuma cópia de sessão existente.
-- [ ] F2-05: O utilizador completa três perguntas com voz, captura manual e progresso correto; falha de síntese permite responder pelo texto.
-- [ ] F2-06: Áudio original, derivado, resultados automáticos, revisão e confirmação permanecem distintos e rastreáveis.
-- [ ] F2-07: Guardar não confirma; confirmar fixa exatamente o texto visto; falha, versão antiga ou pedido repetido não cria confirmação indevida.
-- [ ] F2-08: Não é possível avançar sem confirmar, saltar por duplo clique ou terminar antes de todas as confirmações; repetir avanço é seguro.
-- [ ] F2-09: Nova captura antes da confirmação preserva anteriores; falha da nova captura não perde a seleção válida. Resposta confirmada não é reaberta.
-- [ ] F2-10: Fecho e navegação com alterações resolvem guardar/descartar/cancelar e não perdem edição feita durante uma escrita.
-- [ ] F2-11: Reiniciar durante transcrição, após guardar revisão, após confirmar e após avançar recupera a etapa persistida, sem duplicações.
-- [ ] F2-12: Falhas de escrita/publicação permitem recuperar sem nova gravação; referências em falta não apagam textos nem bloqueiam outros itens.
-- [ ] F2-13: Pedidos repetidos não bloqueiam o serviço; eventos e resultados antigos não afetam gravações novas ou confirmações.
-- [ ] F2-14: Histórico permite consultar sessões e ouvir originais; treinos da fase 1 continuam consultáveis sem alteração dos seus ficheiros.
-- [ ] F2-15: Migração falhada preserva a base; versão futura não é escrita; apenas uma sessão permanece em curso.
-- [ ] F2-16: Com modelos preparados, a sessão completa funciona offline, sem chamadas à IA, dispensas fictícias ou feedback inventado.
+- [ ] F2-01: Initial bank contains 20 questions in the six categories; repeating the startup does not duplicate nor restore edits.
+- [ ] F2-02: Adding and editing text, category, competencies and criteria persists after a restart, with validation of the required fields.
+- [ ] F2-03: Initial count three; sessions with one, three and another eligible count; explicit insufficiency, without silent reduction or repetition.
+- [ ] F2-04: Selection and order without repetition persist; editing the bank does not change any existing session copy.
+- [ ] F2-05: The user completes three questions with voice, manual capture and correct progress; a synthesis failure allows answering from the text.
+- [ ] F2-06: Original audio, derivative, automatic results, review and confirmation remain distinct and traceable.
+- [ ] F2-07: Saving does not confirm; confirming fixes exactly the text seen; a failure, an old version or a repeated request does not create an undue confirmation.
+- [ ] F2-08: It is not possible to advance without confirming, skip by double click or finish before all the confirmations; repeating the advancing is safe.
+- [ ] F2-09: A new capture before the confirmation preserves earlier ones; a failure of the new capture does not lose the valid selection. A confirmed answer is not reopened.
+- [ ] F2-10: Shutdown and navigation with changes resolve save/discard/cancel and do not lose an edit made during a write.
+- [ ] F2-11: Restarting during transcription, after saving a review, after confirming and after advancing recovers the persisted step, without duplications.
+- [ ] F2-12: Write/publication failures allow recovery without a new recording; missing references do not delete texts nor block other items.
+- [ ] F2-13: Repeated requests do not block the service; old events and results do not affect new recordings or confirmations.
+- [ ] F2-14: History allows consulting sessions and listening to originals; phase 1 practices remain consultable without alteration of their files.
+- [ ] F2-15: A failed migration preserves the database; a future version is not written; only one session remains in progress.
+- [ ] F2-16: With the models prepared, the complete session works offline, without AI calls, fictitious dismissals or invented feedback.
 
-### Validação manual desta fase
+### Manual validation of this phase
 
-No Windows do utilizador, completar uma sessão de três perguntas com respostas
-reais, incluindo termos técnicos. Ouvir perguntas e respostas, corrigir e
-confirmar textos, sair e retomar a meio e consultar o histórico após terminar.
-Completar também uma sessão de uma pergunta e verificar a insuficiência numa
-categoria. Editar uma pergunta após iniciar a sessão e confirmar que a cópia
-permanece igual. Repetir o percurso offline.
+On the user's Windows, complete a session of three questions with real answers,
+including technical terms. Listen to questions and answers, correct and confirm
+texts, leave and resume in the middle and consult the history after finishing.
+Also complete a session of one question and verify the insufficiency in a
+category. Edit a question after starting the session and confirm that the copy
+remains the same. Repeat the offline journey.
 
-Registar duração dos áudios, carregamento, síntese, transcrição, experiência
-de espera e eventuais falhas. Documentar comandos realmente executados e
-resultados em `docs/phase-2/` durante a implementação, sem inventar resultados
-antecipados. Os testes automáticos não substituem esta experiência.
+Record the duration of the audio files, loading, synthesis, transcription,
+waiting experience and any failures. Document commands really executed and
+results in `docs/phase-2/` during the implementation, without inventing
+anticipated results. The automated tests do not replace this experience.
 
-## 11. O que fica para o plano técnico
+## 11. What is left for the technical plan
 
-- Biblioteca Rust de SQLite, versão, acesso sem bloquear a interface e migrações.
-- Esquema físico, índices, restrições, identificadores e controlo de concorrência.
-- Organização de módulos, contratos Tauri e adaptação do serviço de áudio à sessão.
-- Estrutura de ficheiros e reconciliação de publicações interrompidas.
-- Componentes, navegação e mensagens, respeitando o fluxo desta spec.
-- Testes de transações, concorrência, reinício e compatibilidade com os artefactos antigos.
+- Rust library for SQLite, version, access without blocking the interface and migrations.
+- Physical schema, indexes, restrictions, identifiers and concurrency control.
+- Organization of modules, Tauri contracts and adaptation of the audio service to the session.
+- File structure and reconciliation of interrupted publications.
+- Components, navigation and messages, respecting the flow of this spec.
+- Tests of transactions, concurrency, restart and compatibility with the old artifacts.
 
-Não instalar dependências nem iniciar implementação ao criar esta spec. A
-aprovação do documento permite preparar o plano técnico apenas da fase 2;
-não autoriza começar as fases seguintes.
+Do not install dependencies nor start implementation when creating this spec.
+Approval of the document allows preparing the technical plan of phase 2 only; it
+does not authorize starting the following phases.

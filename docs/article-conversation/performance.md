@@ -1,40 +1,40 @@
-# Desempenho da conversa sobre artigos
+# Article conversation performance
 
-Estado em 2026-11-05: **instrumentação e ferramenta de medição prontas; medições reais por fazer.** Nenhum valor abaixo foi medido com gravações reais; o que existe é o que o código passou a fazer e como o medir.
+Status on 2026-11-05: **instrumentation and measurement tool ready; real measurements still to do.** None of the values below was measured with real recordings; what exists is what the code now does and how to measure it.
 
-## O que é medido em cada turno
+## What is measured in each turn
 
-O serviço regista, em operações fechadas do diagnóstico local (ver [diagnóstico](../diagnostics/validation.md)), só a duração e um código estável — nunca texto, título, caminhos nem áudio:
+The service records, in closed local diagnostics operations (see [diagnostics](../diagnostics/validation.md)), only the duration and a stable code — never text, title, paths or audio:
 
-| Operação | O que mede |
+| Operation | What it measures |
 |---|---|
-| `article_transcribe` | do pedido ao auxiliar até ao resultado da transcrição |
-| `article_reply` | do pedido ao fornecedor até à resposta do tutor ser aplicada (abertura e respostas) |
-| `article_first_audio` | do início da síntese até ao primeiro bloco entregue ao player |
-| `article_feedback` | do pedido do relatório até ao resultado |
+| `article_transcribe` | from the request to the helper until the transcript result |
+| `article_reply` | from the request to the provider until the tutor's reply is applied (opening and answers) |
+| `article_first_audio` | from the start of the synthesis until the first block delivered to the player |
+| `article_feedback` | from the report request until the result |
 
-O teste `turn_metrics_use_closed_operations_with_durations_and_no_content` (em `src-tauri/tests/article_service.rs`) verifica que só estas operações aparecem, com duração, e que o conteúdo nunca chega ao registo.
+The test `turn_metrics_use_closed_operations_with_durations_and_no_content` (in `src-tauri/tests/article_service.rs`) checks that only these operations appear, with duration, and that the content never reaches the record.
 
-## Medir a transcrição e a voz
+## Measure the transcript and the voice
 
 ```powershell
 .\scripts\benchmark-audio.ps1 -Recordings D:\Gravacoes\medicao
 ```
 
-- A pasta é indicada explicitamente (só os `*.wav` do nível superior); o script recusa as sessões pessoais da aplicação.
-- Compara `beam_size=5` (atual) com `beam_size=1` (candidato), mantendo inglês, VAD, modelo `small` e CPU/int8.
-- Por configuração e gravação: uma passagem fria (modelo novo) e cinco carregadas. Mostra cada valor, a mediana e o pior tempo. **Não se calcula p95** com cinco amostras.
-- Com `-VoiceText` mede também o primeiro bloco de voz e a síntese completa.
-- Os resultados só têm durações, ficam numa pasta local e não são enviados nem versionados.
+- The folder is indicated explicitly (only the top-level `*.wav`); the script refuses the application's personal sessions.
+- It compares `beam_size=5` (current) with `beam_size=1` (candidate), keeping English, VAD, the `small` model and CPU/int8.
+- Per configuration and recording: one cold pass (new model) and five warm ones. It shows each value, the median and the worst time. **p95 is not calculated** with five samples.
+- With `-VoiceText` it also measures the first voice block and the full synthesis.
+- The results only have durations, stay in a local folder and are not sent or versioned.
 
-A fidelidade do texto compara-se à mão, com referência humana e termos técnicos, fora do script.
+Text fidelity is compared by hand, with a human reference and technical terms, outside the script.
 
-## Decisão
+## Decision
 
-**Manter o baseline (`beam_size=5`).** O parâmetro `beamSize` é opcional no pedido `transcribe` (aceita 1 ou 5) e o default do motor não foi alterado: faltam gravações reais e a comparação de fidelidade que a condicionam. Os valores-alvo só se definem depois de medir.
+**Keep the baseline (`beam_size=5`).** The `beamSize` parameter is optional in the `transcribe` request (accepts 1 or 5) and the engine default was not changed: real recordings and the fidelity comparison that condition it are missing. Target values are only defined after measuring.
 
-## Por fazer (exige gravações e modelos reais)
+## To do (requires real recordings and models)
 
-- Correr o script com gravações curtas, longas e com termos técnicos; registar aqui os valores individuais, a mediana e o pior tempo.
-- Comparar o texto de `beam_size=1` com o de `beam_size=5` e com a referência humana antes de qualquer mudança de default.
-- Avaliar a voz pelo tempo até ao primeiro som e pelas quebras entre blocos (audição).
+- Run the script with short, long and technical-term recordings; record the individual values, the median and the worst time here.
+- Compare the `beam_size=1` text with the `beam_size=5` text and with the human reference before any default change.
+- Assess the voice by the time to the first sound and by the breaks between blocks (listening).

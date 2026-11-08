@@ -1,89 +1,89 @@
-# Conversa sobre um artigo — desenho proposto
+# Article conversation — proposed design
 
-Data: 2026-11-04. A direção funcional e o envio automático depois de terminar cada resposta foram aceites pelo utilizador. Desenho aprovado explicitamente em 2026-11-04 («aprovo»). O [plano técnico](../plans/2026-11-04-article-conversation.md) concretiza a implementação, ainda não iniciada. Não inicia a fase 5 nem altera a aceitação das fases anteriores.
+Date: 2026-11-04. The functional direction and the automatic sending after finishing each answer were accepted by the user. Design explicitly approved on 2026-11-04 («aprovo»). The [technical plan](../plans/2026-11-04-article-conversation.md) makes the implementation concrete, not yet started. It does not start phase 5 nor change the acceptance of the previous phases.
 
-## Objetivo e decisões
+## Goal and decisions
 
-Praticar a capacidade de conversar em inglês sobre um artigo, mantendo coesão, coerência e desenvolvimento das ideias. O tutor acompanha o raciocínio sem interromper a fala para corrigir. As pausas de processamento devem ser reduzidas; não se promete conversa simultânea nem latência nula.
+Practice the ability to converse in English about an article, keeping cohesion, coherence and development of ideas. The tutor follows the reasoning without interrupting the speech to correct. Processing pauses should be reduced; simultaneous conversation and zero latency are not promised.
 
-A leitura do artigo é preparação, com leitura em voz alta opcional e sem classificação de pronúncia. O foco é a conversa. Interface e explicações em português de Portugal; perguntas, comentários e respostas de treino em inglês.
+Reading the article is preparation, with optional reading aloud and without pronunciation scoring. The focus is the conversation. Interface and explanations in European Portuguese; questions, comments and practice answers in English.
 
-## Abordagens consideradas
+## Approaches considered
 
-- Revisão obrigatória da transcrição em cada turno: conserva o percurso atual, mas introduz a pausa que o utilizador pretende evitar.
-- Conversa por turnos, com envio autorizado no início e feedback final: direção escolhida. O utilizador termina a gravação e a aplicação transcreve e envia sem confirmação intermédia.
-- Conversa simultânea com deteção automática do fim da fala: maior complexidade, risco de interromper pausas naturais e mudança das regras de gravação. Fica fora deste desenho.
+- Mandatory review of the transcript in each turn: keeps the current path, but introduces the pause the user wants to avoid.
+- Turn-based conversation, with sending authorized at the start and final feedback: chosen direction. The user ends the recording and the application transcribes and sends without intermediate confirmation.
+- Simultaneous conversation with automatic speech end detection: greater complexity, risk of interrupting natural pauses and change of the recording rules. It is outside this design.
 
-Mantêm-se React/TypeScript, Rust/Tauri, SQLite, faster-whisper, Kokoro e OpenCode Go. Não se introduz fornecedor nem motor novo.
+React/TypeScript, Rust/Tauri, SQLite, faster-whisper, Kokoro and OpenCode Go are kept. No new provider or engine is introduced.
 
-## Percurso
+## Path
 
-1. Colar texto de um artigo em inglês, com título opcional. A primeira versão não importa URLs nem PDF. Guardar uma cópia fixa para a sessão.
-2. Ler o artigo ao próprio ritmo. A audição de trechos pelo Kokoro pode reutilizar o mecanismo de voz; não é requisito para começar a conversa.
-3. Autorizar explicitamente, por sessão, o envio do artigo e das transcrições ao destino configurado. Explicar que terminar a gravação desencadeia o envio e que o áudio permanece local. Sem autorização, não começar a conversa externa.
-4. O tutor faz uma pergunta aberta sobre o artigo. O utilizador começa e termina a resposta manualmente.
-5. Guardar áudio e transcrição antes do pedido externo. Fixar uma versão de envio, marcada como transcrição enviada automaticamente, nunca como texto revisto pelo utilizador.
-6. O tutor produz um comentário breve ligado à resposta e uma pergunta de aprofundamento. Guardar e validar o texto antes da voz. Reproduzir automaticamente com opção de parar; a gravação seguinte começa apenas por ação do utilizador.
-7. Repetir até o utilizador escolher terminar; gerar feedback final sobre os turnos disponíveis. Proposta de ritmo: sugerir encerrar após cinco respostas, sem cortar fala nem impor esse número.
+1. Paste the text of an article in English, with optional title. The first version does not import URLs or PDF. Store a fixed copy for the session.
+2. Read the article at one's own pace. Listening to excerpts through Kokoro can reuse the voice mechanism; it is not a requirement to start the conversation.
+3. Explicitly authorize, per session, the sending of the article and of the transcripts to the configured destination. Explain that ending the recording triggers the sending and that the audio remains local. Without authorization, do not start the external conversation.
+4. The tutor asks an open question about the article. The user starts and ends the answer manually.
+5. Store audio and transcript before the external request. Fix a send version, marked as a transcript sent automatically, never as text reviewed by the user.
+6. The tutor produces a brief comment linked to the answer and a deepening question. Store and validate the text before the voice. Play automatically with the option to stop; the following recording starts only by user action.
+7. Repeat until the user chooses to finish; generate final feedback about the available turns. Proposed pace: suggest ending after five answers, without cutting speech nor imposing that number.
 
-Não há correções gramaticais entre turnos. O tutor pode pedir esclarecimento quando não compreende uma ideia. Não deve concordar automaticamente: distingue factos do artigo, opinião do utilizador e informação não sustentada pelo texto.
+There are no grammar corrections between turns. The tutor can ask for clarification when it does not understand an idea. It must not agree automatically: it distinguishes facts from the article, the user's opinion and information not supported by the text.
 
-## Conversa e feedback
+## Conversation and feedback
 
-Cada intervenção acompanha a resposta anterior e o contexto acumulado. Proposta: comentário de uma ou duas frases e uma pergunta, evitando listas de questões e exposições longas. A progressão pode passar por compreensão, resumo, opinião, exemplos e aplicação à experiência pessoal, sem guião rígido.
+Each intervention follows the previous answer and the accumulated context. Proposal: a comment of one or two sentences and a question, avoiding lists of questions and long expositions. Progression can go through comprehension, summary, opinion, examples and application to personal experience, without a rigid script.
 
-O feedback final avalia separadamente:
+The final feedback evaluates separately:
 
-- Coerência: pertinência, continuidade da ideia central e contradições.
-- Coesão: relações entre frases, conectores e referências compreensíveis.
-- Desenvolvimento: razões, exemplos e sustentação das opiniões.
-- Interação: resposta ao comentário do tutor e capacidade de aprofundamento.
+- Coherence: relevance, continuity of the central idea and contradictions.
+- Cohesion: relations between sentences, connectors and comprehensible references.
+- Development: reasons, examples and support of opinions.
+- Interaction: response to the tutor's comment and ability to deepen.
 
-Cada observação cita turnos e trechos reais. Escolher duas ou três melhorias prioritárias de inglês; distinguir correção de sugestão de estilo. Não aplicar STAR a este modo, não usar notas do artigo como se tivessem sido ditas e não atribuir uma classificação global de proficiência. Uma sessão curta pode ter evidência insuficiente.
+Each observation quotes real turns and excerpts. Choose two or three priority English improvements; distinguish correction from style suggestion. Do not apply STAR to this mode, do not use notes from the article as if they had been said and do not assign a global proficiency rating. A short session may have insufficient evidence.
 
-Não avaliar pronúncia, ritmo, hesitações ou fluência acústica a partir da transcrição. Pausas naturais não constituem erros. Repetir uma resposta é uma nova tentativa, conservando a original e os comentários anteriores.
+Do not evaluate pronunciation, rhythm, hesitations or acoustic fluency from the transcript. Natural pauses are not errors. Repeating an answer is a new attempt, preserving the original and the previous comments.
 
-## Consentimento, versões e recuperação
+## Consent, versions and recovery
 
-Este é um modo distinto da entrevista STAR. A revisão e confirmação obrigatórias dos modos existentes mantêm-se. O consentimento existente sobre o destino continua necessário, acrescido da autorização de envio automático nesta sessão. Alterar o destino ou revogar a autorização impede novos envios até nova autorização explícita.
+This is a mode distinct from the STAR interview. The mandatory review and confirmation of the existing modes remain. The existing consent about the destination remains necessary, added to the authorization for automatic sending in this session. Changing the destination or revoking the authorization prevents new sends until a new explicit authorization.
 
-O utilizador pode consultar a transcrição e escolher «Corrigir transcrição». Guardar uma nova versão sem apagar áudio, transcrição automática, versão enviada ou resposta do tutor. Corrigir reconhecimento não equivale a melhorar retroativamente o inglês efetivamente dito.
+The user can consult the transcript and choose «Corrigir transcrição». Store a new version without deleting audio, automatic transcript, sent version or tutor response. Correcting recognition is not equivalent to retroactively improving the English actually said.
 
-Proposta para recuperação simples: suspender o avanço, invalidar pedidos pendentes da versão antiga e permitir regenerar a intervenção do tutor a partir da correção. Se já existirem turnos posteriores, conservar a sequência antiga como ramo histórico e retomar a partir do turno corrigido; nunca reatribuir respostas posteriores ao novo contexto. O relatório identifica o ramo utilizado e mantém as fontes. Regeneração é uma ação explícita que pode consumir API novamente.
+Proposal for simple recovery: suspend progress, invalidate pending requests of the old version and allow regenerating the tutor intervention from the correction. If later turns already exist, keep the old sequence as a historical branch and resume from the corrected turn; never reassign later answers to the new context. The report identifies the branch used and keeps the sources. Regeneration is an explicit action that can consume API again.
 
-Transcrição vazia ou falhada não é enviada: permitir repetir a transcrição ou introduzir uma revisão manual. Falha de rede conserva dados e permite repetir o pedido explicitamente. Falha de voz permite ler e continuar ou repetir apenas a síntese. Retomar uma sessão não repete pedidos nem reproduz voz automaticamente.
+An empty or failed transcript is not sent: allow repeating the transcription or entering a manual review. A network failure keeps data and allows repeating the request explicitly. A voice failure allows reading and continuing or repeating only the synthesis. Resuming a session does not repeat requests nor play voice automatically.
 
-Resultados associam-se à sessão, ao ramo, ao turno, à versão e à operação; resultados atrasados não avançam a conversa. Encerrar durante um pedido impede uma pergunta tardia; o relatório usa apenas turnos persistidos e a versão de contexto fixada para essa operação. O núcleo controla o estado, não a LLM.
+Results associate with the session, the branch, the turn, the version and the operation; late results do not advance the conversation. Closing during a request prevents a late question; the report uses only persisted turns and the context version fixed for that operation. The core controls the state, not the LLM.
 
-O artigo é conteúdo não fiável, nunca uma fonte de instruções para o sistema. Definir limites explícitos de artigo e contexto no plano, com validação antes do envio, sem truncamento silencioso. Ao atingir o limite de conversa, propor encerrar e gerar relatório antes de aceitar outro turno. Guardar o contexto exato de cada pedido para rastreabilidade local, fora dos logs.
+The article is untrusted content, never a source of instructions for the system. Define explicit article and context limits in the plan, with validation before sending, without silent truncation. On reaching the conversation limit, propose ending and generate the report before accepting another turn. Store the exact context of each request for local traceability, outside the logs.
 
-Guardar chave no armazenamento protegido, consumo conhecido e custo desconhecido quando não fornecido. O diagnóstico continua sem texto livre, áudio ou conteúdo de entrevistas; novas operações exigem atualizar as listas fechadas. Eliminar a sessão elimina também artigo e artefactos exclusivos associados.
+Store the key in protected storage, known usage and unknown cost when not provided. Diagnostics remain without free text, audio or interview content; new operations require updating the closed lists. Deleting the session also deletes the article and exclusive associated artifacts.
 
-## Desempenho
+## Performance
 
-Base existente: modelos residentes com preload, Whisper small em CPU/int8 com inglês fixo e VAD, cache de voz e execução sequencial de trabalhos locais. O auxiliar atualmente entrega a voz depois de juntar todos os blocos.
+Existing base: resident models with preload, Whisper small on CPU/int8 with fixed English and VAD, voice cache and sequential execution of local jobs. The helper currently delivers the voice after joining all blocks.
 
-Prioridades propostas para o plano:
+Proposed priorities for the plan:
 
-1. Medir separadamente parar→transcrição, envio→texto validado e texto→primeiro som, distinguindo modelos frios e carregados. Usar gravações reais curtas e longas, com termos técnicos; registar fidelidade, duração e memória, sem conteúdo nos diagnósticos.
-2. Comparar parâmetros de descodificação do Whisper, incluindo beam_size, nas mesmas gravações. Só adotar uma configuração mais rápida se a perda de fidelidade for aceitável na validação manual.
-3. Entregar e reproduzir blocos de voz incrementalmente após validar o texto do tutor, mantendo a ordem, cancelamento e tratamento de falha parcial. Não falar texto de uma resposta IA ainda não validada.
-4. Usar intervenções curtas para reduzir geração e tempo de audição. Preparação antecipada de voz só para texto já conhecido; não adivinhar a pergunta seguinte enquanto o utilizador responde.
+1. Measure separately stop→transcription, send→validated text and text→first sound, distinguishing cold and loaded models. Use real short and long recordings, with technical terms; record fidelity, duration and memory, without content in the diagnostics.
+2. Compare Whisper decoding parameters, including beam_size, on the same recordings. Only adopt a faster configuration if the loss of fidelity is acceptable in manual validation.
+3. Deliver and play voice blocks incrementally after validating the tutor text, keeping the order, cancellation and partial failure handling. Do not speak text of an AI answer not yet validated.
+4. Use short interventions to reduce generation and listening time. Early voice preparation only for already known text; do not guess the next question while the user answers.
 
-O áudio de fundo não pode atrasar a transcrição seguinte. Concorrência, GPU e transcrição durante a gravação ficam para medição e decisão posterior, não são requisitos desta primeira versão. Valores-alvo de latência serão fixados após a medição de base; não há ganhos medidos nesta proposta.
+Background audio cannot delay the following transcription. Concurrency, GPU and transcription during recording are left for measurement and later decision, they are not requirements of this first version. Target latency values will be fixed after the baseline measurement; there are no measured gains in this proposal.
 
-## Verificação e âmbito
+## Verification and scope
 
-O plano deve cobrir consentimento por sessão e revogação, imutabilidade de fontes, isolamento dos modos, ramificação por correção, idempotência, resultados atrasados, retoma, falhas de transcrição/rede/voz, limites de contexto, eliminação e consumo desconhecido. Testar que o artigo não pode alterar instruções do tutor e que o feedback cita o utilizador em vez de atribuir-lhe o conteúdo do artigo.
+The plan must cover per-session consent and revocation, source immutability, mode isolation, branching by correction, idempotency, late results, resumption, transcription/network/voice failures, context limits, deletion and unknown usage. Test that the article cannot change the tutor instructions and that the feedback quotes the user instead of attributing the article content to them.
 
-A aceitação manual exige uma conversa real sobre um artigo com pelo menos cinco respostas, incluindo discordância e aprofundamento; avaliar continuidade, coesão do diálogo, utilidade do feedback, fidelidade da transcrição e espera percebida. Inferência real e voz real não são substituídas por testes automáticos.
+Manual acceptance requires a real conversation about an article with at least five answers, including disagreement and deepening; evaluate continuity, dialogue cohesion, feedback usefulness, transcript fidelity and perceived wait. Real inference and real voice are not replaced by automatic tests.
 
-Este desenho não inclui importação de documentos, avaliação de pronúncia, vocabulário com repetição espaçada, debate com múltiplas personagens ou alteração automática das entrevistas existentes. O plano posterior define esquema, comandos, limites concretos e sequência de implementação apenas deste âmbito.
+This design does not include document import, pronunciation evaluation, spaced repetition vocabulary, debate with multiple characters or automatic change of the existing interviews. The later plan defines schema, commands, concrete limits and implementation sequence only of this scope.
 
-## Referências locais
+## Local references
 
-- [Objetivos atuais](../../ideia-e-objetivos.md)
-- [Stack e áudio](../../tech-stack.md)
-- [Avaliação atual por pergunta](../../ai-coaching/validation.md)
-- [Diagnóstico local](../../diagnostics/validation.md)
-- [Integração OpenCode Go](../../opencode-go/validation.md)
+- [Current goals](../../idea-and-goals.md)
+- [Stack and audio](../../tech-stack.md)
+- [Current per-question evaluation](../../ai-coaching/validation.md)
+- [Local diagnostics](../../diagnostics/validation.md)
+- [OpenCode Go integration](../../opencode-go/validation.md)

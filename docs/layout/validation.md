@@ -1,54 +1,54 @@
-# Layout do tutor — 2026-11-04
+# Tutor layout — 2026-11-04
 
-Alteração posterior no mesmo dia: a entrevista passou a incluir o painel «Avaliação e correções da IA», usando as classes e componentes existentes. A revisão de transcrição esclarece a sua finalidade opcional. Ver [validação funcional](../ai-coaching/validation.md); a matriz visual abaixo refere-se ao layout anterior a este painel e não constitui validação visual desta extensão.
+Later change on the same day: the interview now includes the «Avaliação e correções da IA» panel, using the existing classes and components. The transcript review clarifies its optional purpose. See [functional validation](../ai-coaching/validation.md); the visual matrix below refers to the layout before this panel and does not constitute visual validation of this extension.
 
-O layout foi adaptado a partir do [HTML fornecido](../Melhorar-layout-do-tutor/index.html), seguindo o [handoff](../Melhorar-layout-do-tutor/DESIGN-HANDOFF.md) e o [manifesto](../Melhorar-layout-do-tutor/DESIGN-MANIFEST.json). A implementação mantém React/TypeScript, os contratos Tauri e a persistência existentes. Um subagente tratou das coleções (banco, histórias e histórico); a estrutura, preparação, entrevista e integração foram executadas no agente principal.
+The layout was adapted from the [supplied HTML](../tutor-layout/index.html), following the [handoff](../tutor-layout/DESIGN-HANDOFF.md) and the [manifest](../tutor-layout/DESIGN-MANIFEST.json). The implementation keeps React/TypeScript, the Tauri contracts and the existing persistence. A subagent handled the collections (bank, stories and history); the structure, preparation, interview and integration were executed in the main agent.
 
-## Sistema visual
+## Visual system
 
-| Elemento | Valor |
+| Element | Value |
 | --- | --- |
-| Fundo | `#F2F5F3` |
-| Superfícies | `#FFFFFF`, `#F7FAF8` |
-| Texto / secundário | `#14231D`, `#586B62` |
-| Bordas | `#DCE5DF`, `#C6D4CC` |
-| Acento / suave | `#0E6B52`, `#E4F1EB` |
-| Painel de sessão | `#0F3D30` |
-| Títulos / texto | Newsreader / Public Sans |
-| Navegação / conteúdo | 264 px / máximo de 1060 px |
-| Raios | 14 px nos cartões, 10 px nos controlos, 18 px no painel da sessão |
-| Transições | 180 ms nos controlos, 350 ms no progresso; respeita movimento reduzido |
+| Background | `#F2F5F3` |
+| Surfaces | `#FFFFFF`, `#F7FAF8` |
+| Text / secondary | `#14231D`, `#586B62` |
+| Borders | `#DCE5DF`, `#C6D4CC` |
+| Accent / soft | `#0E6B52`, `#E4F1EB` |
+| Session panel | `#0F3D30` |
+| Headings / text | Newsreader / Public Sans |
+| Navigation / content | 264 px / maximum of 1060 px |
+| Radii | 14 px on cards, 10 px on controls, 18 px on the session panel |
+| Transitions | 180 ms on controls, 350 ms on progress; respects reduced motion |
 
-As fontes variáveis WOFF2 e licenças OFL estão em `public/fonts`, sem pedidos externos durante a utilização. Os dois ficheiros somam 158 832 bytes (155,1 KiB), substituindo sete TTF que somavam 544,6 KiB. `fonts.css` é importado diretamente pela aplicação. O tema claro segue a referência independentemente do tema do Windows. `tokens.css` é a única origem dos tokens; as folhas declaram a ordem `tokens, legacy, layout, collections` através de CSS layers, que torna a precedência independente da ordem dos imports. A base tipográfica é de 16 px; raios, cores de texto sobre acento/painel e durações têm tokens próprios. Abaixo de 1024 px, a navegação passa para o topo com deslocamento horizontal próprio; abaixo de 900 px, os módulos passam a uma coluna. As dimensões pequenas são verificações de adaptação do frontend; a janela desktop mantém o mínimo de 800 × 600 definido no Tauri.
+The WOFF2 variable fonts and OFL licenses are in `public/fonts`, without external requests during use. The two files total 158,832 bytes (155.1 KiB), replacing seven TTF files that totaled 544.6 KiB. `fonts.css` is imported directly by the application. The light theme follows the reference regardless of the Windows theme. `tokens.css` is the single source of the tokens; the sheets declare the order `tokens, legacy, layout, collections` through CSS layers, which makes precedence independent of the import order. The typographic base is 16 px; radii, text colors over accent/panel and durations have their own tokens. Below 1024 px, the navigation moves to the top with its own horizontal offset; below 900 px, the modules go to a single column. The small dimensions are frontend adaptation checks; the desktop window keeps the minimum of 800 × 600 defined in Tauri.
 
-## Adaptação aos comportamentos reais
+## Adaptation to the real behaviors
 
-- Preparação: painel para retomar a sessão com posição e contagem reais; na ausência de sessão, formulário com modo local/IA, categoria e quantidade. O painel completo do ambiente e a base de dados ficam nesta vista. Nas outras páginas, «Áudio e recuperação» mantém Verificar disponibilidade e Reiniciar áudio local acessíveis sem navegar nem perder revisões por guardar, incluindo quando a navegação está bloqueada. O núcleo conserva as suas restrições: não reinicia o auxiliar durante transcrição/síntese nem interrompe a gravação nativa em curso.
-- Banco e histórias: toolbars, etiquetas e cartões; preservados os filtros, editores e validações existentes. A pesquisa livre adicional e os chips de competências do protótipo não foram introduzidos: o banco continua a filtrar por categoria e as histórias por competência.
-- Entrevista: pergunta, gravação, tomadas, transcrição automática, revisão e confirmação mantêm identidades e ações separadas. A coluna lateral mostra progresso real e orientação STAR. Esta substitui o «Roteiro da sessão» do protótipo porque `InterviewSnapshot` expõe a pergunta corrente, não a lista das perguntas fixadas da sessão. Não se inventa uma lista nem se acrescenta uma leitura de sessão para esta alteração de layout. Não se introduziram os atalhos de saltar perguntas, notas livres ou gravação simulada do protótipo.
-- Histórico: datas e resumos em linhas, com consulta, retoma e treino posterior existentes.
-- Configuração: usa o destino, modelo, tarifário, chave protegida e consentimento reais; não transporta as opções fictícias de fornecedor/voz/idioma do HTML.
-- Prática, comparação, feedback e decisões de navegação usam o mesmo sistema visual. A Prática tem o seu próprio item atual na navegação; o Histórico não fica marcado como página atual durante uma prática. O conteúdo recebe foco ao mudar de página, mas não no arranque nem quando a navegação é cancelada. Não foram alterados os comandos Rust, os dados SQLite ou os motores de áudio.
+- Preparation: panel to resume the session with the real position and count; when there is no session, a form with local/AI mode, category and quantity. The complete environment panel and the database are in this view. On the other pages, «Áudio e recuperação» keeps Verificar disponibilidade and Reiniciar áudio local accessible without navigating or losing unsaved revisions, including when the navigation is blocked. The core keeps its restrictions: it does not restart the helper during transcription/synthesis and does not interrupt the native recording in progress.
+- Bank and stories: toolbars, labels and cards; the existing filters, editors and validations are preserved. The additional free search and the prototype's skill chips were not introduced: the bank still filters by category and the stories by skill.
+- Interview: question, recording, takes, automatic transcript, review and confirmation keep separate identities and actions. The side column shows real progress and STAR guidance. This replaces the prototype's «Roteiro da sessão» because `InterviewSnapshot` exposes the current question, not the list of the session's fixed questions. No list is invented and no session read is added for this layout change. The prototype's shortcuts to skip questions, the free notes or the simulated recording were not introduced.
+- History: dates and summaries in rows, with the existing consultation, resume and later practice.
+- Settings: uses the real destination, model, rate card, protected key and consent; it does not carry over the fictitious provider/voice/language options of the HTML.
+- Practice, comparison, feedback and navigation decisions use the same visual system. The Prática page has its own current item in the navigation; Histórico is not marked as the current page during a practice. The content receives focus when changing page, but not at startup nor when the navigation is canceled. The Rust commands, the SQLite data and the audio engines were not changed.
 
-O texto foi adaptado para português de Portugal e corrigido onde a referência descrevia armazenamento no navegador ou comportamentos que a aplicação não oferece. Não se apresentam estatísticas de demonstração como dados reais.
+The text was adapted to European Portuguese and corrected where the reference described browser storage or behaviors that the application does not offer. Demonstration statistics are not presented as real data.
 
-## Verificação executada
+## Verification performed
 
-| Comando / método | Resultado |
+| Command / method | Result |
 | --- | --- |
-| `npm test` | 12 ficheiros, **106 testes aprovados** |
-| `npm run build` | TypeScript e Vite com saída 0 |
-| `git diff --check` | Sem erros de whitespace |
-| Chromium por Playwright, com IPC Tauri controlado | **72 verificações**, sem overflow horizontal nem erros JavaScript |
+| `npm test` | 12 files, **106 tests passed** |
+| `npm run build` | TypeScript and Vite with exit 0 |
+| `git diff --check` | No whitespace errors |
+| Chromium through Playwright, with controlled Tauri IPC | **72 checks**, with no horizontal overflow and no JavaScript errors |
 
-Os testes de integração foram atualizados para o título por vista, para a disponibilidade na preparação e para o progresso semântico. Três testes de regressão em `src/features/layout/Layout.test.tsx` cobrem a recuperação com navegação bloqueada, o foco após navegação e a recuperação numa Prática sem perder a revisão por guardar. Mantêm-se as verificações de gravação, confirmação, recuperação, subscrição única e decisões sobre alterações por guardar.
+The integration tests were updated for the per-view title, for availability in the preparation and for semantic progress. Three regression tests in `src/features/layout/Layout.test.tsx` cover recovery with the navigation blocked, focus after navigation and recovery in a Prática without losing the unsaved review. The checks for recording, confirmation, recovery, single subscription and decisions about unsaved changes are kept.
 
-A matriz visual cobre **as sete páginas da aplicação** (Preparação, Banco de perguntas, Histórias, Entrevista, Histórico, Configuração IA e Prática), mais o formulário de nova sessão: oito estados em **360×800, 390×844, 430×932, 600×960, 820×1180, 1024×768, 1366×768, 1440×900 e 1920×1080**. A Prática usa prosa longa e uma referência de 240 caracteres sem espaços. O ensaio verifica também os 16 px entre campos de revisão da entrevista/prática e entre duas transcrições/revisões do histórico e a igualdade dos estilos de base/botões ao inverter as folhas CSS, com preferência do sistema por tema escuro. Ver [resultados da matriz](responsive-results.json).
+The visual matrix covers **the seven pages of the application** (Preparação, Banco de perguntas, Histórias, Entrevista, Histórico, Configuração IA and Prática), plus the new session form: eight states at **360×800, 390×844, 430×932, 600×960, 820×1180, 1024×768, 1366×768, 1440×900 and 1920×1080**. The Prática page uses long prose and a reference of 240 characters without spaces. The rehearsal also checks the 16 px between review fields of the interview/practice and between two transcripts/revisions of the history, and the equality of the base/button styles when inverting the CSS sheets, with the system preference for a dark theme. See [matrix results](responsive-results.json).
 
-O ensaio é reproduzível através de [scripts/layout-matrix.py](../../scripts/layout-matrix.py), com IPC Tauri controlado e dados sintéticos derivados de `contracts/interview-v2.example.json`. Comandos a partir da raiz, em Windows:
+The rehearsal is reproducible through [scripts/layout-matrix.py](../../scripts/layout-matrix.py), with controlled Tauri IPC and synthetic data derived from `contracts/interview-v2.example.json`. Commands from the root, on Windows:
 
 ```powershell
-# Preparação opcional isolada do verificador visual (não altera a .venv de áudio)
+# Optional preparation isolated from the visual checker (does not change the audio .venv)
 py -3.13 -m venv tmp/layout-venv
 .\tmp\layout-venv\Scripts\python.exe -m pip install playwright==1.57.0
 .\tmp\layout-venv\Scripts\python.exe -m playwright install chromium
@@ -61,21 +61,21 @@ npm.cmd run dev -- --host 127.0.0.1
 .\tmp\layout-venv\Scripts\python.exe scripts/layout-matrix.py
 ```
 
-O comando efetivamente executado nesta máquina foi `python scripts/layout-matrix.py`, com Python 3.13 e Playwright 1.57.0 já disponíveis. O script guarda capturas e `results.json` em `tmp/layout-matrix` e termina com erro se houver overflow, erro JavaScript, espaçamento insuficiente ou divergência na ordem das folhas. Aceita `--url` e `--output` para mudar o servidor/destino. Não efetua chamadas pagas, gravações ou alterações à base de dados pessoal.
+The command actually executed on this machine was `python scripts/layout-matrix.py`, with Python 3.13 and Playwright 1.57.0 already available. The script stores screenshots and `results.json` in `tmp/layout-matrix` and exits with an error if there is overflow, a JavaScript error, insufficient spacing or a divergence in the sheet order. It accepts `--url` and `--output` to change the server/destination. It does not make paid calls, recordings or changes to the personal database.
 
-Foi feita inspeção de capturas desktop e mobile e comparação com o HTML exportado a 1440×900. Capturas da implementação:
+Desktop and mobile screenshots were inspected and compared with the HTML exported at 1440×900. Screenshots of the implementation:
 
 - [Preparação desktop](screenshots/preparacao-desktop.png)
 - [Preparação mobile](screenshots/preparacao-mobile.png)
 - [Nova sessão](screenshots/nova-sessao-desktop.png)
 - [Entrevista desktop](screenshots/entrevista-desktop.png)
-- [Prática desktop com conteúdo longo](screenshots/pratica-desktop.png)
-- [Prática mobile com conteúdo longo](screenshots/pratica-mobile.png)
+- [Prática desktop with long content](screenshots/pratica-desktop.png)
+- [Prática mobile with long content](screenshots/pratica-mobile.png)
 
-## Limites da validação
+## Limits of the validation
 
-Esta verificação estabelece a apresentação no browser e a ausência de regressões detetadas pelos testes React. Não substitui a utilização na janela Tauri com áudio real, credencial protegida e API paga. Não foi gerado um instalador nem repetida a bateria Rust/Python, cujos ficheiros não mudaram. As aceitações manuais das fases 1 a 4 continuam pendentes; a fase 5 não foi iniciada.
+This verification establishes the presentation in the browser and the absence of regressions detected by the React tests. It does not replace use in the Tauri window with real audio, a protected credential and a paid API. No installer was generated and the Rust/Python suite was not repeated, since those files did not change. The manual acceptances of phases 1 to 4 remain pending; phase 5 has not been started.
 
-## Página Artigos (2026-11-05)
+## Artigos page (2026-11-05)
 
-Foi acrescentada a página **Artigos** ao menu e à navegação (bloqueada durante a gravação ou transcrição de um artigo). Os testes React cobrem a presença no menu e o bloqueio da navegação. **Não foi feita validação visual** (capturas desktop/mobile, contraste, foco) desta página: a matriz de sete páginas não foi repetida e fica pendente.
+The **Artigos** page was added to the menu and to the navigation (blocked during the recording or transcription of an article). The React tests cover the presence in the menu and the navigation block. **No visual validation was done** (desktop/mobile screenshots, contrast, focus) of this page: the seven-page matrix was not repeated and remains pending.

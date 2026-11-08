@@ -1,35 +1,35 @@
-# Aplicar o layout do tutor
+# Applying the tutor layout
 
-**Objetivo:** transportar o desenho fornecido em `docs/Melhorar-layout-do-tutor` para a aplicação React existente.
+**Goal:** transfer the design provided in `docs/tutor-layout` into the existing React application.
 
-**Arquitetura:** manter os clientes Tauri, hooks, regras e persistência. Extrair os tokens do HTML de referência para CSS local e reorganizar a apresentação em navegação lateral, cabeçalho por vista, painel de sessão e módulos de conteúdo. Adaptar os exemplos estáticos a dados reais; não transportar o armazenamento no browser nem as simulações de áudio do protótipo.
+**Architecture:** keep the Tauri clients, hooks, rules and persistence. Extract the tokens from the reference HTML into local CSS and reorganize the presentation into side navigation, per-view header, session panel and content modules. Adapt the static examples to real data; do not transfer the in-browser storage or the prototype's audio simulations.
 
-**Stack:** React, TypeScript e CSS; sem novas dependências de execução.
+**Stack:** React, TypeScript and CSS; no new runtime dependencies.
 
-**Referência:** [handoff](../../Melhorar-layout-do-tutor/DESIGN-HANDOFF.md) e [HTML](../../Melhorar-layout-do-tutor/index.html).
+**Reference:** [handoff](../../tutor-layout/DESIGN-HANDOFF.md) and [HTML](../../tutor-layout/index.html).
 
-## Restrições
+## Constraints
 
-- Interface em português de Portugal; perguntas e respostas de treino em inglês.
-- Preservar confirmação imutável, versões, consentimento, recuperação e bloqueios de navegação/gravação.
-- Disponibilidade, progresso e consumo provêm dos contratos existentes; não inventar estatísticas.
-- Fontes locais para funcionamento offline; manter fallback serifado/sans-serif.
-- Não iniciar a fase 5 nem declarar aceitação manual das fases anteriores.
+- Interface in European Portuguese; practice questions and answers in English.
+- Preserve immutable confirmation, revisions, consent, recovery and navigation/recording blocks.
+- Availability, progress and usage come from the existing contracts; do not invent statistics.
+- Local fonts for offline operation; keep the serif/sans-serif fallback.
+- Do not start phase 5 and do not declare manual acceptance of the earlier phases.
 
-## Tarefas
+## Tasks
 
-- [x] Estrutura e tokens: `src/App.tsx`, `src/features/layout/*` e CSS. Navegação lateral de 264 px, área central com máximo de 1060 px, adaptação a 1023/899/639 px e foco visível.
-- [x] Preparação e entrevista: adaptar `SessionSetup.tsx` e `Interview.tsx`; painel verde com progresso real, formulário de nova sessão, ambiente e base de dados. Preservar os handlers e estados existentes.
-- [x] Banco, histórias e histórico: subagente com propriedade exclusiva dos três componentes e CSS próprio. Aplicar cabeçalhos, listas e filtros do desenho sem alterar contratos.
-- [x] Integração: configuração IA, prática, comparação e avisos partilham os tokens. Conferir bloqueios, textos extensos, estado vazio, erros e estados de carregamento.
-- [x] Verificar: testes React existentes, typecheck/build e comparação visual no browser nas nove dimensões do manifesto. Documentar comandos/resultados reais e limites da validação.
+- [x] Structure and tokens: `src/App.tsx`, `src/features/layout/*` and CSS. Side navigation of 264 px, central area with a maximum of 1060 px, adaptation at 1023/899/639 px and visible focus.
+- [x] Setup and interview: adapt `SessionSetup.tsx` and `Interview.tsx`; green panel with real progress, new session form, environment and database. Preserve the existing handlers and states.
+- [x] Question bank, stories and history: subagent with exclusive ownership of the three components and its own CSS. Apply the design's headers, lists and filters without changing contracts.
+- [x] Integration: AI configuration, practice, comparison and warnings share the tokens. Check blocks, long texts, empty state, errors and loading states.
+- [x] Verify: existing React tests, typecheck/build and visual comparison in the browser across the nine dimensions of the manifest. Document real commands/results and the limits of the validation.
 
-## Foco da verificação
+## Verification focus
 
-Navegação com revisão pendente; captura em curso; ausência/falha da base de dados; listas e textos longos em ecrãs estreitos; ausência de sessão e disponibilidade desconhecida. Os testes existentes cobrem as regras; os screenshots verificam geometria e overflow. Adicionar testes apenas para comportamento novo que não esteja coberto.
+Navigation with pending review; capture in progress; missing/failed database; lists and long texts on narrow screens; absence of session and unknown availability. The existing tests cover the rules; the screenshots verify geometry and overflow. Add tests only for new behavior that is not covered.
 
-## Resultado
+## Result
 
-Ver [validação do layout](../../layout/validation.md): 106 testes React, build com saída 0 e 72 verificações no browser sem overflow horizontal nem erros JavaScript. A aceitação manual na aplicação desktop permanece pendente.
+See [layout validation](../../layout/validation.md): 106 React tests, build with exit code 0 and 72 checks in the browser without horizontal overflow or JavaScript errors. Manual acceptance in the desktop application remains pending.
 
-Revisão antes de commit: recuperação áudio compacta fora da preparação, margem de campos limitada aos formulários, foco na mudança de página, tokens únicos/camadas CSS, fontes WOFF2 e matriz reproduzível com Prática e texto longo.
+Review before commit: compact audio recovery outside the setup, field margin limited to the forms, focus on page change, single tokens/CSS layers, WOFF2 fonts and reproducible matrix with Practice and long text.

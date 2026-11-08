@@ -1,14 +1,14 @@
 # audio-worker
 
-Auxiliar local da fase 1: um processo Python 3.11 persistente que serve
-transcrição (faster-whisper, modelo `small`, CPU/int8) e síntese (Kokoro-82M,
-inglês americano, voz `af_heart`, WAV PCM16 mono a 24 kHz) por linhas JSON em
+Phase 1 local helper: a persistent Python 3.11 process that serves
+transcription (faster-whisper, `small` model, CPU/int8) and speech synthesis (Kokoro-82M,
+American English, `af_heart` voice, mono PCM16 WAV at 24 kHz) over JSON lines on
 `stdin`/`stdout`.
 
-## Instalação (Windows)
+## Installation (Windows)
 
-O PyTorch CPU tem de ser instalado primeiro, a partir do índice oficial, para
-não trazer as rodas CUDA:
+CPU PyTorch must be installed first, from the official index, so that it does
+not bring the CUDA wheels:
 
 ```powershell
 py -3.11 -m venv .venv
@@ -19,11 +19,11 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-Versões fixadas: `faster-whisper==1.2.1`, `kokoro==0.9.4`, `misaki[en]==0.9.4`.
-O conjunto resolvido (incluindo `torch==2.15.0+cpu`, `ctranslate2`, `spacy`,
-`transformers`, `soundfile`, `espeakng-loader` e `pytest`) está registado em
-`requirements.lock.txt`, gerado com `pip freeze --exclude-editable` depois de
-`pip check` limpo. Para reconstruir o ambiente a partir do lock:
+Pinned versions: `faster-whisper==1.2.1`, `kokoro==0.9.4`, `misaki[en]==0.9.4`.
+The resolved set (including `torch==2.15.0+cpu`, `ctranslate2`, `spacy`,
+`transformers`, `soundfile`, `espeakng-loader` and `pytest`) is recorded in
+`requirements.lock.txt`, generated with `pip freeze --exclude-editable` after a
+clean `pip check`. To rebuild the environment from the lock:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
@@ -31,62 +31,62 @@ O conjunto resolvido (incluindo `torch==2.15.0+cpu`, `ctranslate2`, `spacy`,
 .\.venv\Scripts\python.exe -m pip install -e "audio-worker[test]"
 ```
 
-### Recursos linguísticos
+### Language resources
 
-- **spaCy inglês (`en_core_web_sm`)**: exigido pelo `misaki.en.G2P`. Não é uma
-  dependência pip do `requirements.in` porque é um recurso de dados;
-  `misaki` tenta instalá-lo sozinho (`spacy.cli.download`) na primeira
-  construção do `G2P`. Como isso é um download implícito durante a prática, o
-  worker verifica o recurso antes de construir o pipeline e o
-  `audio-worker-prepare` instala-o explicitamente
+- **English spaCy (`en_core_web_sm`)**: required by `misaki.en.G2P`. It is not a
+  pip dependency of `requirements.in` because it is a data resource;
+  `misaki` tries to install it on its own (`spacy.cli.download`) on the first
+  build of the `G2P`. Since that is an implicit download during practice, the
+  worker checks the resource before building the pipeline and
+  `audio-worker-prepare` installs it explicitly
   (`.\.venv\Scripts\python.exe -m spacy download en_core_web_sm`).
-- **eSpeak-NG**: o `misaki[en]` usa o fallback `misaki.espeak.EspeakFallback`
-  para palavras fora do dicionário. No Windows **não** é preciso instalar o
-  eSpeak-NG no sistema: o pacote `espeakng-loader` traz `espeak-ng.dll` e
-  `espeak-ng-data` dentro do wheel. Validado nesta máquina com
+- **eSpeak-NG**: `misaki[en]` uses the `misaki.espeak.EspeakFallback` fallback
+  for words outside the dictionary. On Windows it is **not** necessary to install
+  eSpeak-NG on the system: the `espeakng-loader` package brings `espeak-ng.dll` and
+  `espeak-ng-data` inside the wheel. Validated on this machine with
   `EspeakFallback(british=False)("difficult")` → `dˈɪfɪkᵊlt`.
 
-## Preparação offline dos modelos
+## Offline model preparation
 
-O único comando que acede à rede. Descarrega `Systran/faster-whisper-small`, a
-configuração/pesos `hexgrad/Kokoro-82M` e `voices/af_heart.pt`, instala o
-recurso inglês do spaCy, valida o eSpeak-NG incluído, escreve o manifesto e faz
-uma síntese fixa para revelar dependências tardias:
+The only command that accesses the network. It downloads `Systran/faster-whisper-small`, the
+`hexgrad/Kokoro-82M` configuration/weights and `voices/af_heart.pt`, installs the
+English spaCy resource, validates the bundled eSpeak-NG, writes the manifest and performs
+a fixed synthesis to reveal late dependencies:
 
 ```powershell
 .\.venv\Scripts\python.exe -m audio_worker.prepare --models-dir "D:\Modelos de Voz\language-assistant-tutor"
 ```
 
-O manifesto (`models.json`, por omissão em `<models-dir>/models.json`) usa
-caminhos absolutos com espaços e contém `whisperDir`, `whisperModel`,
-`kokoroConfig`, `kokoroWeights`, `kokoroVoice`, `revisions` e o inventário
-`resources` (`spacyModel`, `spacyModelVersion`, `espeakLibrary`, `espeakData`,
-`espeakFallback`). Os pesos ficam fora do repositório (`models/` é ignorado).
+The manifest (`models.json`, by default in `<models-dir>/models.json`) uses
+absolute paths with spaces and contains `whisperDir`, `whisperModel`,
+`kokoroConfig`, `kokoroWeights`, `kokoroVoice`, `revisions` and the
+`resources` inventory (`spacyModel`, `spacyModelVersion`, `espeakLibrary`, `espeakData`,
+`espeakFallback`). The weights stay outside the repository (`models/` is ignored).
 
-## Serviço
+## Service
 
 ```powershell
 .\.venv\Scripts\python.exe -u -m audio_worker --models-manifest "D:\Modelos de Voz\language-assistant-tutor\models.json"
 ```
 
-- Uma mensagem JSON por linha, `protocolVersion: 1`, `id`, `op`; operações
-  `health`, `transcribe`, `synthesize` e `shutdown`.
-- `stdout` transporta apenas protocolo; o que as bibliotecas escrevem é enviado
-  para `stderr`, que a app drena continuamente.
-- `HF_HUB_OFFLINE=1` e `TRANSFORMERS_OFFLINE=1` são aplicados antes de qualquer
-  import de motor, por isso a prática nunca descarrega nada.
-- `health` verifica ficheiros, voz, dependências e recursos ingleses sem
-  carregar modelos. `shutdown` responde `{"stopped": true}` e o processo sai.
-- Os exemplos verificados das mensagens estão em
+- One JSON message per line, `protocolVersion: 1`, `id`, `op`; operations
+  `health`, `transcribe`, `synthesize` and `shutdown`.
+- `stdout` carries only protocol; whatever the libraries write is sent
+  to `stderr`, which the app drains continuously.
+- `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` are applied before any
+  engine import, so practice never downloads anything.
+- `health` checks files, voice, dependencies and English resources without
+  loading models. `shutdown` answers `{"stopped": true}` and the process exits.
+- The verified message examples are in
   [`contracts/worker-v1.examples.json`](../contracts/worker-v1.examples.json).
 
-## Testes
+## Tests
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_protocol.py audio-worker/tests/test_engines.py -q
 .\.venv\Scripts\python.exe -m pytest audio-worker/tests -q -m models
 ```
 
-Os testes unitários não precisam de pesos. `test_offline_models.py` está marcado
-com o marcador `models` e só corre depois de `audio-worker-prepare`; sem pesos
-produz um *skip* explícito, nunca um sucesso falso.
+The unit tests do not need weights. `test_offline_models.py` is marked
+with the `models` marker and only runs after `audio-worker-prepare`; without weights
+it produces an explicit *skip*, never a false success.

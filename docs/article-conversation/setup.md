@@ -1,34 +1,34 @@
-# Conversa sobre um artigo — preparação e utilização
+# Article conversation — setup and use
 
-Modo novo, distinto da entrevista STAR, aprovado em 2026-11-04 ([desenho](../superpowers/specs/2026-11-04-article-conversation-design.md), [plano](../superpowers/plans/2026-11-04-article-conversation.md)). Reutiliza o microfone, os modelos locais, a credencial e o destino OpenCode Go já configurados em «Configuração IA»; não acrescenta dependências.
+New mode, distinct from the STAR interview, approved on 2026-11-04 ([design](../superpowers/specs/2026-11-04-article-conversation-design.md), [plan](../superpowers/plans/2026-11-04-article-conversation.md)). It reuses the microphone, the local models, the credential and the OpenCode Go destination already configured in «Configuração IA»; it adds no dependencies.
 
-## Utilização
+## Use
 
-1. **Configuração IA**: guarde a chave e confirme o destino (`/inference/go/openai/v1`). Sem chave, a autorização é recusada.
-2. **Artigos → Nova conversa**: cole o texto em inglês (até 12 000 caracteres e 30 000 bytes; título opcional). Nada é cortado: acima do limite o botão fica desativado.
-3. **Autorização por sessão** (nunca vem selecionada): autoriza o envio automático do artigo e da transcrição de cada resposta ao destino mostrado. O áudio permanece neste computador. Alterar o destino ou revogar impede novos envios até nova autorização.
-4. O tutor faz uma pergunta aberta (a voz toca sozinha só nas intervenções novas; «Parar voz» interrompe). **Gravar resposta** e **Parar gravação** são ações suas: a gravação nunca termina sozinha.
-5. Ao parar, o áudio e o turno ficam guardados e a transcrição segue para o tutor **sem passo de confirmação** (diferente da entrevista STAR; a versão enviada fica marcada «transcrição enviada automaticamente»). Transcrição vazia, falhada ou acima de 8 000 caracteres não é enviada: pede texto manual (versão distinta, «revista»).
-6. O tutor responde com um comentário curto e uma pergunta. Sem correções gramaticais entre turnos. À quinta resposta sugere terminar; aos 20 turnos (ou sem margem de contexto) a gravação fica bloqueada e só se pode terminar.
-7. **Terminar e ver feedback**: coerência, coesão, desenvolvimento e interação, com citações das suas respostas, «evidência insuficiente» quando não há texto e até três melhorias. Sem respostas, conclui sem relatório. Sem classificação global e sem avaliar pronúncia.
-8. **Corrigir esta resposta** (só depois de concluída): cria um ramo novo; o ramo antigo, as versões e o relatório anterior ficam guardados. O relatório novo só é pedido ao carregar em **Repetir** e pode consumir a API.
+1. **Configuração IA**: store the key and confirm the destination (`/inference/go/openai/v1`). Without a key, the authorization is refused.
+2. **Artigos → Nova conversa**: paste the English text (up to 12,000 characters and 30,000 bytes; optional title). Nothing is cut: above the limit the button is disabled.
+3. **Authorization per session** (never pre-selected): authorizes the automatic sending of the article and of the transcript of each answer to the destination shown. The audio stays on this computer. Changing the destination or revoking prevents new sends until a new authorization.
+4. The tutor asks an open question (the voice plays by itself only on new interventions; «Parar voz» interrupts). **Gravar resposta** and **Parar gravação** are your actions: the recording never ends by itself.
+5. On stopping, the audio and the turn are stored and the transcript goes to the tutor **without a confirmation step** (unlike the STAR interview; the version sent is marked «transcrição enviada automaticamente»). A transcript that is empty, failed or above 8,000 characters is not sent: it asks for manual text (a distinct, «revista» version).
+6. The tutor replies with a short comment and a question. No grammar corrections between turns. On the fifth answer it suggests ending; at 20 turns (or without context margin) recording becomes blocked and only ending is possible.
+7. **Terminar e ver feedback**: coherence, cohesion, development and interaction, with quotes from your answers, «evidência insuficiente» when there is no text and up to three improvements. Without answers, it concludes without a report. No overall score and no assessment of pronunciation.
+8. **Corrigir esta resposta** (only after it is completed): creates a new branch; the old branch, the versions and the previous report are kept. The new report is only requested when **Repetir** is pressed and may consume the API.
 
-## Onde ficam os dados
+## Where the data stays
 
-- SQLite (esquema v5): tabelas `article_*`, com fontes, turnos e versões imutáveis, recibos por pedido, ramos e relatórios.
-- Áudio e voz temporária: `articles\<sessionId>\<turnId>\original.wav` (e `normalized.wav`) e `articles\<sessionId>\voice-<id>\chunk-NNNN.wav`, ao lado da base de dados. Eliminar a conversa remove a pasta.
-- Só o texto necessário segue para o fornecedor; a chave fica no armazenamento protegido e nunca nos logs.
+- SQLite (schema v5): `article_*` tables, with sources, turns and immutable versions, receipts per request, branches and reports.
+- Audio and temporary voice: `articles\<sessionId>\<turnId>\original.wav` (and `normalized.wav`) and `articles\<sessionId>\voice-<id>\chunk-NNNN.wav`, next to the database. Deleting the conversation removes the folder.
+- Only the necessary text goes to the provider; the key stays in protected storage and never in the logs.
 
-## Recuperação
+## Recovery
 
-- Ao abrir a aplicação, a recuperação é **local e sem envios**: pedidos pendentes passam a «interrompidos» (consumo desconhecido), uma gravação a meio fica assinalada e uma transcrição por acabar pede revisão. Repetir é uma ação sua.
-- **Retomar** na lista faz a mesma recuperação para uma conversa; abrir, retomar ou voltar à página nunca inicia envios, gravação nem som.
+- When the application opens, the recovery is **local and without sends**: pending requests become «interrompidos» (unknown usage), a recording in the middle is flagged and an unfinished transcript asks for review. Repeating is your action.
+- **Retomar** in the list performs the same recovery for a conversation; opening, resuming or returning to the page never starts sends, recording or sound.
 
-## Comandos de desenvolvimento
+## Development commands
 
 ```powershell
-.\scripts\verify.ps1                                   # todas as verificações automáticas
-.\scripts\benchmark-audio.ps1 -Recordings <pasta>      # medição (ver performance.md)
+.\scripts\verify.ps1                                   # all automated checks
+.\scripts\benchmark-audio.ps1 -Recordings <folder>     # measurement (see performance.md)
 ```
 
-Ver [validação](validation.md) e [desempenho](performance.md).
+See [validation](validation.md) and [performance](performance.md).

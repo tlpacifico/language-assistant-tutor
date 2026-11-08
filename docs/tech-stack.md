@@ -1,148 +1,148 @@
-# Stack técnica
+# Technical stack
 
-## Decisão principal
+## Main decision
 
-A aplicação será construída com **Rust + React + TypeScript + Tauri 2**, começando por Windows. Os modelos de áudio continuam num processo Python auxiliar.
+The application will be built with **Rust + React + TypeScript + Tauri 2**, starting with Windows. The audio models remain in a helper Python process.
 
-O objetivo desta divisão é manter uma interface web, concentrar a lógica e os dados em Rust e utilizar os motores de áudio já escolhidos. Não se assume que a utilização de Rust, por si só, acelere a inferência desses modelos.
+The purpose of this division is to keep a web interface, concentrate the logic and the data in Rust and use the audio engines already chosen. It is not assumed that using Rust, by itself, speeds up the inference of those models.
 
-## Componentes
+## Components
 
-| Componente | Tecnologia | Execução e responsabilidade |
+| Component | Technology | Execution and responsibility |
 | --- | --- | --- |
-| Interface | React + TypeScript | Local; perguntas, revisão de transcrições, feedback e histórico. |
-| Ferramenta da interface | Vite | Desenvolvimento e compilação dos recursos web. |
-| Aplicação desktop | Tauri 2 | Integração da interface com o sistema e distribuição. |
-| Núcleo da aplicação | Rust | Sessões, regras, persistência, ficheiros e comunicação externa. |
-| Transcrição | faster-whisper | Local, num processo Python auxiliar. |
-| Síntese de voz | Kokoro-82M | Local, no processo Python auxiliar. |
-| Seguimentos e avaliação | DeepSeek Flash via OpenCode | Nuvem; recebe texto confirmado e critérios. |
-| Dados estruturados | SQLite (`rusqlite`, SQLite incluído) | Local; banco de perguntas, cópias das sessões, respostas, revisões e confirmações das fases novas. |
-| Gravações e derivados | Ficheiros de áudio | Pasta de dados local gerida pela aplicação. |
-| Chave da API | Armazenamento protegido do sistema operativo | Acesso pelo núcleo, fora do conteúdo do SQLite e do frontend. |
+| Interface | React + TypeScript | Local; questions, transcript review, feedback and history. |
+| Interface tooling | Vite | Development and compilation of the web assets. |
+| Desktop application | Tauri 2 | Integration of the interface with the system and distribution. |
+| Application core | Rust | Sessions, rules, persistence, files and external communication. |
+| Transcription | faster-whisper | Local, in a helper Python process. |
+| Speech synthesis | Kokoro-82M | Local, in the helper Python process. |
+| Follow-ups and evaluation | DeepSeek Flash via OpenCode | Cloud; receives confirmed text and criteria. |
+| Structured data | SQLite (`rusqlite`, bundled SQLite) | Local; question bank, session copies, answers, revisions and confirmations of the new phases. |
+| Recordings and derivatives | Audio files | Local data folder managed by the application. |
+| API key | Operating system protected storage | Access by the core, outside the SQLite content and the frontend. |
 
-## Responsabilidades e comunicação
+## Responsibilities and communication
 
-### React e TypeScript
+### React and TypeScript
 
-Apresentam a experiência do utilizador e comunicam com Rust através dos comandos e eventos do Tauri. A interface não contém a chave do fornecedor nem é a autoridade sobre o estado persistente da entrevista.
+They present the user experience and communicate with Rust through Tauri commands and events. The interface does not contain the provider API key and is not the authority over the persistent interview state.
 
-### Rust e Tauri
+### Rust and Tauri
 
-Controlam a quantidade de perguntas, o limite de seguimentos, as transições da sessão, as versões das respostas, o acesso ao SQLite e a gestão dos ficheiros.
+They control the number of questions, the follow-up limit, session transitions, answer versions, SQLite access and file management.
 
-Rust chama a API do OpenCode e valida os resultados estruturados antes de os aplicar. Cada resultado fica associado ao pedido, à sessão e à versão de texto que o originaram.
+Rust calls the OpenCode API and validates the structured results before applying them. Each result stays associated with the request, the session and the text version that originated it.
 
-O núcleo gere também a captura local de áudio e o ciclo de vida do processo Python. A biblioteca concreta de gravação e reprodução será escolhida no plano técnico da fase 1.
+The core also manages local audio capture and the lifecycle of the Python process. The concrete recording and playback library will be chosen in the phase 1 technical plan.
 
-### Processo Python de áudio
+### Python audio process
 
-Executa transcrição e síntese, recebendo pedidos de Rust por mensagens JSON delimitadas por linha através de entrada/saída padrão. Cada pedido tem identificador, operação e parâmetros; a resposta inclui resultado ou erro. O diagnóstico segue por stderr.
+It performs transcription and synthesis, receiving requests from Rust as line-delimited JSON messages through standard input/output. Each request has an identifier, an operation and parameters; the response includes a result or an error. Diagnostics go over stderr.
 
-Os áudios são ficheiros locais referenciados nos pedidos. Os modelos ficam carregados entre operações quando possível. O MVP processa os trabalhos locais de áudio sequencialmente.
+The audio files are local files referenced in the requests. The models stay loaded between operations when possible. The MVP processes local audio jobs sequentially.
 
-O Tauri permite distribuir executáveis auxiliares. O objetivo do pacote final é não exigir que o utilizador configure Python manualmente. O empacotamento das dependências precisa de validação em Windows.
+Tauri allows shipping helper executables. The goal of the final package is not to require the user to set up Python manually. Packaging the dependencies needs validation on Windows.
 
-## Fluxo de dados
+## Data flow
 
-1. A aplicação captura e guarda a gravação localmente.
-2. O processo Python transcreve o áudio com faster-whisper.
-3. O utilizador revê e confirma o texto na interface.
-4. Rust envia o texto necessário e os critérios ao OpenCode.
-5. Rust valida e guarda o seguimento, feedback ou reformulação.
-6. Quando é preciso falar um texto, o processo Python gera áudio com Kokoro e a aplicação reproduz o ficheiro local.
+1. The application captures and stores the recording locally.
+2. The Python process transcribes the audio with faster-whisper.
+3. The user reviews and confirms the text in the interface.
+4. Rust sends the necessary text and the criteria to OpenCode.
+5. Rust validates and stores the follow-up, feedback or rewrite.
+6. When a text has to be spoken, the Python process generates audio with Kokoro and the application plays the local file.
 
-Nem os ficheiros de áudio nem o banco completo de histórias são enviados automaticamente ao fornecedor. Transcrição automática, texto confirmado, sugestões e novas tentativas são registos distintos.
+Neither the audio files nor the complete bank of stories is sent automatically to the provider. Automatic transcript, confirmed text, suggestions and new attempts are distinct records.
 
-## Modelos e formatos locais
+## Local models and formats
 
-- Motor de transcrição: faster-whisper.
-- Referência inicial para experimentar: modelo Whisper small multilingue em CPU/int8, ajustável após medição no computador do utilizador.
-- Formato entregue à transcrição: WAV PCM de 16 bits, mono, 16 kHz, convertido localmente quando necessário.
-- Síntese: Kokoro-82M com uma voz inglesa e velocidade ajustável.
-- Guardar a gravação original separadamente de conversões e áudios sintetizados.
-- Preparar pesos e dependências com progresso visível ou seleção de ficheiros existentes, conforme o motor.
-- Carregamento antecipado desde 2026-11-04: ao abrir uma entrevista, a aplicação pede `preload` ao auxiliar e os modelos ficam residentes no processo (≈10 s a quente, ≈14 s a frio, pico de ~1,7 GiB nesta máquina). Os botões de áudio esperam enquanto a disponibilidade está em `loading`, em vez de receberem um pedido recusado por o auxiliar estar ocupado; o arranque da aplicação continua sem carregar pesos.
+- Transcription engine: faster-whisper.
+- Initial reference to try: multilingual Whisper small model on CPU/int8, adjustable after measurement on the user's computer.
+- Format handed to transcription: 16-bit PCM WAV, mono, 16 kHz, converted locally when necessary.
+- Synthesis: Kokoro-82M with an English voice and adjustable speed.
+- Store the original recording separately from conversions and synthesized audio.
+- Prepare weights and dependencies with visible progress or selection of existing files, depending on the engine.
+- Preloading since 2026-11-04: when an interview is opened, the application requests `preload` from the helper and the models stay resident in the process (≈10 s warm, ≈14 s cold, peak of ~1.7 GiB on this machine). The audio buttons wait while availability is `loading`, instead of receiving a request refused because the helper is busy; application startup still does not load weights.
 
-Os modelos podem necessitar de rede na preparação inicial. Depois de disponíveis, transcrição e síntese funcionam localmente. A avaliação textual continua a depender da ligação à API.
+The models may need network access during the initial setup. Once available, transcription and synthesis work locally. Text evaluation still depends on the connection to the API.
 
-## Fornecedor de IA textual
+## Text AI provider
 
-Configuração de referência atualizada por autorização do utilizador em 2026-11-04:
+Reference configuration updated with the user's authorization on 2026-11-04:
 
-| Parâmetro | Valor |
+| Parameter | Value |
 | --- | --- |
-| Fornecedor | OpenCode Go, API de inferência associada à subscrição. |
-| Modelo | `deepseek-v4.1-flash` |
+| Provider | OpenCode Go, the inference API associated with the subscription. |
+| Model | `deepseek-v4.1-flash` |
 | Endpoint | `https://opencode.ai/inference/go/openai/v1/chat/completions` |
-| Catálogo | `https://opencode.ai/inference/go/v1/models` |
+| Catalog | `https://opencode.ai/inference/go/v1/models` |
 
-O tutor chama a API diretamente. Não depende de instalar o agente/CLI OpenCode. O modelo e a URL base ficam configuráveis; o MVP não depende das condições de acesso dos modelos gratuitos.
+The tutor calls the API directly. It does not depend on installing the OpenCode agent/CLI. The model and the base URL remain configurable; the MVP does not depend on the access conditions of the free models.
 
-O cliente usa `User-Agent` próprio e `x-opencode-session` estável por entrevista ou prática, como a integração do Marlo Expenses. Não copia a sua chave nem identidade. A configuração antiga de referência é adaptada uma vez, preservando credencial e histórico e exigindo nova autorização para o destino Go. Ver [desenho](superpowers/specs/2026-11-04-opencode-go-design.md) e [validação](opencode-go/validation.md).
+The client uses its own `User-Agent` and an `x-opencode-session` stable per interview or practice, like the Marlo Expenses integration. It does not copy its key or identity. The old reference configuration is adapted once, preserving the credential and the history and requiring new authorization for the Go destination. See [design](superpowers/specs/2026-11-04-opencode-go-design.md) and [validation](opencode-go/validation.md).
 
-O default Go não tem tarifário fixo: utilização incluída e mensalidade não são cobranças adicionais por pedido. O custo e consumo devolvidos pela API prevalecem; zero explícito é conhecido, ausência de custo continua desconhecida. Os tarifários anteriores permanecem nos snapshots históricos. Um tarifário manual continua possível e deve registar data/fonte.
+The Go default has no fixed rate card: included usage and the monthly fee are not additional charges per request. The cost and usage returned by the API prevail; an explicit zero is a known value, the absence of a cost remains unknown. The previous rate cards remain in the historical snapshots. A manual rate card is still possible and must record date/source.
 
-O registo de consumo inclui pedidos de seguimento, relatório, reformulação e avaliação de novas tentativas. Se o fornecedor não devolver consumo, apresentar como desconhecido. A estimativa não substitui a faturação do fornecedor.
+The usage record includes follow-up, report, rewrite and new-attempt evaluation requests. If the provider does not return usage, present it as unknown. The estimate does not replace the provider's billing.
 
-## Persistência e recuperação
+## Persistence and recovery
 
-A fase 3 foi antecipada por autorização do utilizador. Acrescenta `reqwest` 0.13.5
-(HTTP JSON/Rustls, sem redirects/retries automáticos) e `keyring` 3.6.3
-(`windows-native`, sem alternativa em texto simples). O esquema SQLite v2
-introduz `answer_slots`, configuração pública/consentimento, etapas IA,
-pedidos/tentativas e relatórios imutáveis. As sessões `local_v2` mantêm o percurso
-existente; só sessões novas explicitamente `ai_v3` têm seguimentos e feedback.
-Ver [preparação da fase 3](phase-3/setup.md) para contratos e limites concretos.
+Phase 3 was brought forward by user authorization. It adds `reqwest` 0.13.5
+(HTTP JSON/Rustls, without automatic redirects/retries) and `keyring` 3.6.3
+(`windows-native`, without a plain-text fallback). The SQLite schema v2
+introduces `answer_slots`, public configuration/consent, AI steps,
+requests/attempts and immutable reports. The `local_v2` sessions keep the
+existing path; only new sessions explicitly marked `ai_v3` have follow-ups and feedback.
+See [phase 3 setup](phase-3/setup.md) for concrete contracts and limits.
 
-- SQLite é a autoridade dos dados das sessões novas da fase 2 (banco de perguntas, cópias fixas das perguntas, posição e estado da sessão, gravações, transcrições automáticas, revisões append-only, confirmações imutáveis, operações e recibos de comandos). A ligação é feita em Rust com `rusqlite` e a funcionalidade `bundled`, que compila o SQLite incluído na biblioteca e não exige SQLite instalado no sistema. Uma única `Connection` protegida por `Arc<Mutex<…>>`; as operações síncronas correm em `spawn_blocking`, fora da thread da interface, e o guard nunca atravessa um `await`. Não há ORM, pool nem acesso SQL a partir do frontend.
-- Os ficheiros JSON da fase 1 (`phase1/attempts/…`) deixam de ser escritos pela aplicação nova e são conservados apenas para leitura e consulta dos treinos anteriores. Não há duas autoridades para as mesmas sessões: os dados novos vivem exclusivamente em `tutor.sqlite3` e nos ficheiros de áudio.
-- O esquema é versionado (`PRAGMA user_version`) e migrado numa transação; uma versão futura é recusada sem escrita e uma falha não apaga nem recria a base. As restrições e triggers impedem reescrever transcrições, revisões e confirmações, e um índice parcial garante no máximo uma sessão em curso.
-- A pasta de dados da aplicação guarda gravações e derivados; o caminho concreto é resolvido pelo sistema operativo.
-- Guardar áudio e texto antes de chamadas externas.
-- Não aplicar respostas atrasadas a outra versão nem duplicar transições ao repetir pedidos.
-- Preservar o estado guardado ao reiniciar. Gravações ainda não finalizadas podem ter de ser refeitas.
-- Não bloquear a interface com inferência, conversão de áudio ou rede.
-- Eliminar ficheiros exclusivos ao eliminar uma sessão, preservando os modelos partilhados.
+- SQLite is the authority for the data of the new phase 2 sessions (question bank, fixed copies of the questions, session position and state, recordings, automatic transcripts, append-only revisions, immutable confirmations, operations and command receipts). The connection is made in Rust with `rusqlite` and the `bundled` feature, which compiles the SQLite bundled in the library and does not require SQLite installed on the system. A single `Connection` protected by `Arc<Mutex<…>>`; the synchronous operations run in `spawn_blocking`, outside the interface thread, and the guard never crosses an `await`. There is no ORM, no pool and no SQL access from the frontend.
+- The phase 1 JSON files (`phase1/attempts/…`) are no longer written by the new application and are kept only for reading and querying the previous practice sessions. There are no two authorities for the same sessions: the new data lives exclusively in `tutor.sqlite3` and in the audio files.
+- The schema is versioned (`PRAGMA user_version`) and migrated in a transaction; a future version is refused without writing and a failure neither deletes nor recreates the database. The constraints and triggers prevent rewriting transcripts, revisions and confirmations, and a partial index guarantees at most one session in progress.
+- The application data folder stores recordings and derivatives; the concrete path is resolved by the operating system.
+- Store audio and text before external calls.
+- Do not apply late responses to another version and do not duplicate transitions when repeating requests.
+- Preserve the stored state on restart. Recordings not yet finalized may have to be redone.
+- Do not block the interface with inference, audio conversion or network.
+- Delete the files exclusive to a session when deleting it, preserving the shared models.
 
-## Diagnóstico local
+## Local diagnostics
 
-Acrescentado em 2026-11-04 para apoiar a utilização real. Usa apenas Rust/std,
-Serde e UUID já existentes, sem fornecedor de telemetria. Eventos JSONL em
-`app_data_dir()/diagnostics`, preservados entre versões, com fila limitada e
-escritor separado. Não guarda mensagens livres, credenciais ou conteúdos das
-entrevistas. O painel «Diagnóstico local» identifica versão/commit/data de build
-e exporta JSON para uma pasta indicada pelo utilizador. A identidade Tauri
-`dev.thacio.languageassistanttutor` permanece estável. Ver
-[desenho](superpowers/specs/2026-11-04-local-diagnostics-design.md),
-[plano](superpowers/plans/2026-11-04-local-diagnostics.md) e
-[validação](diagnostics/validation.md).
+Added on 2026-11-04 to support real use. It uses only Rust/std,
+Serde and UUID, already existing, without a telemetry provider. JSONL events in
+`app_data_dir()/diagnostics`, preserved between versions, with a bounded queue and a
+separate writer. It does not store free messages, credentials or interview
+content. The «Diagnóstico local» panel identifies version/commit/build date
+and exports JSON to a folder indicated by the user. The Tauri identity
+`dev.thacio.languageassistanttutor` remains stable. See
+[design](superpowers/specs/2026-11-04-local-diagnostics-design.md),
+[plan](superpowers/plans/2026-11-04-local-diagnostics.md) and
+[validation](diagnostics/validation.md).
 
-## Escolhas ainda por fechar
+## Choices still to be closed
 
-- Integração concreta com o armazenamento protegido de credenciais.
-- Versões finais das dependências, modelo de transcrição e voz do Kokoro.
-- Forma de empacotar o processo Python, os seus componentes nativos e os instaladores.
-- Limites de duração/texto e prazos dos pedidos, sem truncamento silencioso.
+- Concrete integration with the protected credential storage.
+- Final versions of the dependencies, transcription model and Kokoro voice.
+- How to package the Python process, its native components and the installers.
+- Duration/text limits and request timeouts, without silent truncation.
 
-As escolhas de áudio da fase 1 estão implementadas e verificadas: CPAL, Rodio, Hound, Rubato, atomicwrites e Python 3.11 com a voz `af_heart` (detalhe em [docs/phase-1/setup.md](phase-1/setup.md)). O acesso a SQLite foi decidido na fase 2 (`rusqlite` com `bundled`) e compila no build release desta máquina. Credenciais, empacotamento final e limites finais permanecem para as fases correspondentes.
+The phase 1 audio choices are implemented and verified: CPAL, Rodio, Hound, Rubato, atomicwrites and Python 3.11 with the `af_heart` voice (detail in [docs/phase-1/setup.md](phase-1/setup.md)). SQLite access was decided in phase 2 (`rusqlite` with `bundled`) and compiles in the release build of this machine. Credentials, final packaging and final limits remain for the corresponding phases.
 
-A [spec da fase 1](superpowers/specs/2026-11-01-phase-1-local-audio-design.md) define o comportamento da primeira integração de áudio e a persistência mínima em ficheiros, anterior à introdução de SQLite na fase 2.
+The [phase 1 spec](superpowers/specs/2026-11-01-phase-1-local-audio-design.md) defines the behavior of the first audio integration and the minimal file persistence, prior to the introduction of SQLite in phase 2.
 
-O [plano técnico da fase 2](superpowers/plans/2026-11-02-phase-2-guided-interview-implementation.md) concretizou `rusqlite 0.41.1` com `bundled`, uma única ligação protegida e o frontend sem acesso SQL direto, com transações, migrações e reconciliação com os ficheiros de áudio. A decisão está registada em [docs/phase-2/validation.md](phase-2/validation.md), secção 6.
+The [phase 2 technical plan](superpowers/plans/2026-11-02-phase-2-guided-interview-implementation.md) implemented `rusqlite 0.41.1` with `bundled`, a single protected connection and the frontend without direct SQL access, with transactions, migrations and reconciliation with the audio files. The decision is recorded in [docs/phase-2/validation.md](phase-2/validation.md), section 6.
 
-## Referências
+## References
 
-- [Tauri: introdução](https://v2.tauri.app/start/).
-- [Tauri: WebViews utilizadas](https://v2.tauri.app/reference/webview-versions/).
-- [Tauri: executáveis auxiliares](https://v2.tauri.app/develop/sidecar/).
+- [Tauri: introduction](https://v2.tauri.app/start/).
+- [Tauri: WebViews used](https://v2.tauri.app/reference/webview-versions/).
+- [Tauri: helper executables](https://v2.tauri.app/develop/sidecar/).
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
 - [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M).
-- [OpenCode: modelos e preços](https://opencode.ai/v2/docs/console/models/).
-- [OpenCode: API de inferência](https://opencode.ai/v2/docs/console/api/inference/).
+- [OpenCode: models and pricing](https://opencode.ai/v2/docs/console/models/).
+- [OpenCode: inference API](https://opencode.ai/v2/docs/console/api/inference/).
 
-Consultar também a [ideia e os objetivos](ideia-e-objetivos.md), o [plano das fases](superpowers/plans/2026-11-01-star-interview-tutor-phases.md) e o [desenho aprovado](superpowers/specs/2026-11-01-star-interview-tutor-design.md).
+See also the [idea and goals](idea-and-goals.md), the [phase plan](superpowers/plans/2026-11-01-star-interview-tutor-phases.md) and the [approved design](superpowers/specs/2026-11-01-star-interview-tutor-design.md).
 
-## Conversa sobre artigos (2026-11-04)
+## Article conversation (2026-11-04)
 
-Modo próprio no mesmo núcleo: domínio `article/` (estados, limites, ramos), esquema SQLite v5 (`article_*`), prompts e validação em `ai/article.rs` sobre o envio HTTP comum (OpenCode Go), orquestração em `service/article.rs` com captura, transcrição e voz próprias (sem answer slots STAR) e página React `Artigos`. A voz do tutor usa a operação opt-in `synthesize_stream` do auxiliar (blocos WAV completos, `audio_chunk`, `cancel` cooperativo) e uma fila no mesmo player Rodio. Sem novas dependências. Ver [preparação](article-conversation/setup.md), [validação](article-conversation/validation.md) e [desempenho](article-conversation/performance.md).
+A separate mode in the same core: `article/` domain (states, limits, branches), SQLite schema v5 (`article_*`), prompts and validation in `ai/article.rs` on top of the common HTTP send (OpenCode Go), orchestration in `service/article.rs` with its own capture, transcription and voice (no STAR answer slots) and React page `Artigos`. The tutor voice uses the opt-in `synthesize_stream` operation of the helper (complete WAV blocks, `audio_chunk`, cooperative `cancel`) and a queue in the same Rodio player. No new dependencies. See [setup](article-conversation/setup.md), [validation](article-conversation/validation.md) and [performance](article-conversation/performance.md).

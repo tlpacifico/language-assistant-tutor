@@ -1,137 +1,137 @@
-# Fase 1 — Áudio local Implementation Plan
+# Phase 1 — Local Audio Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Entregar uma aplicação Windows que lê uma pergunta fixa, grava uma resposta, a transcreve localmente e guarda uma revisão sem perder o original.
+**Goal:** Deliver a Windows application that reads a fixed question, records an answer, transcribes it locally and saves a revision without losing the original.
 
-**Architecture:** React/TypeScript apresenta o treino e comunica com comandos Tauri. Rust controla operações, captura/reprodução e ficheiros; um processo Python persistente executa faster-whisper e Kokoro por JSON em entrada/saída padrão. A fase usa JSON local, sem SQLite, serviços externos ou instalador final.
+**Architecture:** React/TypeScript presents the practice session and communicates with Tauri commands. Rust controls operations, capture/playback and files; a persistent Python process runs faster-whisper and Kokoro over JSON on standard input/output. The phase uses local JSON, without SQLite, external services or a final installer.
 
-**Tech Stack:** Tauri 2, Rust, React, TypeScript, Vite, CPAL, Rodio, Hound, Rubato, atomicwrites, Python 3.11, faster-whisper e Kokoro-82M.
+**Tech Stack:** Tauri 2, Rust, React, TypeScript, Vite, CPAL, Rodio, Hound, Rubato, atomicwrites, Python 3.11, faster-whisper and Kokoro-82M.
 
-**Spec:** [Spec da fase 1](../specs/2026-11-01-phase-1-local-audio-design.md). Ler também o [AGENTS.md](../../../AGENTS.md) e respeitar o [plano das fases](2026-11-01-star-interview-tutor-phases.md).
+**Spec:** [Phase 1 spec](../specs/2026-11-01-phase-1-local-audio-design.md). Also read [AGENTS.md](../../../AGENTS.md) and respect the [phase plan](2026-11-01-star-interview-tutor-phases.md).
 
-**Estado:** implementação da fase 1 executada da tarefa 1 à 8. Verificação automática verde (`.\scripts\verify.ps1`, 8/8 checks; teste real `-m models` com `2 passed`) e modelos preparados fora do repositório. A fase **não** está aceite: a validação manual com gravações reais, audição da voz, remoção do microfone e aceitabilidade da espera continua pendente em [docs/phase-1/validation.md](../../phase-1/validation.md). Não regista aprovação da fase nem inicia a fase 2.
+**Status:** phase 1 implementation executed from task 1 to 8. Automated verification green (`.\scripts\verify.ps1`, 8/8 checks; real `-m models` test with `2 passed`) and models prepared outside the repository. The phase is **not** accepted: manual validation with real recordings, listening to the voice, microphone removal and acceptability of the wait remain pending in [docs/phase-1/validation.md](../../phase-1/validation.md). It does not record approval of the phase nor start phase 2.
 
 ## Global Constraints
 
-- “Aplicação desktop executável em desenvolvimento no Windows.”
-- “Interface e mensagens | Português de Portugal.”
-- Pergunta exata: `Tell me about a time you solved a difficult problem at work.`
-- “Inglês; transcrever, sem traduzir ou melhorar a resposta.”
-- “faster-whisper, modelo `small` multilingue, CPU/int8, língua definida como inglês.”
-- “Um trabalho de transcrição ou síntese de cada vez.”
-- “Uma resposta ativa na interface; cada nova gravação tem identificador e ficheiros próprios.”
-- “A captura não depende de o processo Python estar pronto.”
-- “Normalizar um derivado para WAV PCM de 16 bits, mono, 16 kHz quando necessário para a transcrição.”
-- “O áudio finalizado é guardado e pode ser reproduzido, mesmo quando a transcrição falha.”
-- “Nesta fase, guardar uma revisão não equivale a confirmar uma resposta para avaliação.”
-- Sem OpenCode, credenciais, SQLite, classificação de pronúncia, sessões de entrevista ou funcionalidades das fases seguintes.
-- Resultados simulados são exclusivos dos testes. A aplicação normal usa os motores reais e informa indisponibilidade.
+- “Desktop application executable in development on Windows.”
+- “Interface and messages | European Portuguese.”
+- Exact question: `Tell me about a time you solved a difficult problem at work.`
+- “English; transcribe, without translating or improving the answer.”
+- “faster-whisper, `small` multilingual model, CPU/int8, language set to English.”
+- “One transcription or synthesis job at a time.”
+- “One active answer in the interface; each new recording has its own identifier and files.”
+- “Capture does not depend on the Python process being ready.”
+- “Normalize a derivative to 16-bit PCM WAV, mono, 16 kHz when necessary for transcription.”
+- “The finalized audio is saved and can be played back, even when transcription fails.”
+- “In this phase, saving a revision is not the same as confirming an answer for evaluation.”
+- No OpenCode, credentials, SQLite, pronunciation scoring, interview sessions or features of the following phases.
+- Simulated results are exclusive to the tests. The normal application uses the real engines and reports unavailability.
 
 ## Review Focus
 
-1. Falha de escrita ou disco cheio: conservar a última resposta válida e a revisão anterior, sem mostrar sucesso falso. Testes da tarefa 2.
-2. Dispositivo removido, formato inesperado ou consumidor lento: não bloquear o callback nem descartar áudio silenciosamente. Testes da tarefa 3.
-3. Modelos, voz ou recursos linguísticos incompletos: indicar o componente em falta sem download durante a prática. Testes da tarefa 4.
-4. Processo bloqueado, stdout inesperado ou resultado atrasado: libertar a operação, preservar artefactos e não aplicar resultados de outra geração. Testes das tarefas 5 e 6.
-5. Revisão por guardar ao gravar outra resposta ou fechar: guardar, descartar ou cancelar explicitamente, preservando a edição se a escrita falhar. Testes da tarefa 7.
+1. Write failure or full disk: keep the last valid answer and the previous review, without showing false success. Task 2 tests.
+2. Device removed, unexpected format or slow consumer: do not block the callback nor discard audio silently. Task 3 tests.
+3. Incomplete models, voice or language resources: indicate the missing component without downloading during practice. Task 4 tests.
+4. Blocked process, unexpected stdout or delayed result: release the operation, preserve artifacts and do not apply results from another generation. Tasks 5 and 6 tests.
+5. Unsaved review when recording another answer or closing: save, discard or cancel explicitly, preserving the edit if the write fails. Task 7 tests.
 
-## 1. Ambiente e decisões técnicas
+## 1. Environment and technical decisions
 
-### Ambiente observado nesta sessão
+### Environment observed in this session
 
-- A pasta contém documentação e `.gitignore`, sem uma aplicação implementada. Na verificação final, o repositório Git já se encontrava inicializado, com ficheiros preparados no staging; preservar esse estado preexistente.
-- Node `24.11.1`, npm `11.6.2`; Python 3.11, 3.10 e 3.13 enumerados pelo launcher `py`.
-- Rust/Cargo não encontrados no PATH nem no caminho habitual verificado. Visual Studio 2022 Community com ferramentas C++ foi encontrado; verificar Windows SDK e WebView2 na execução.
-- Não foi instalado software, transferido qualquer peso de modelo ou executado um build para elaborar este plano.
+- The folder contains documentation and `.gitignore`, without an implemented application. In the final verification, the Git repository was already initialized, with files prepared in the staging; preserve that preexisting state.
+- Node `24.11.1`, npm `11.6.2`; Python 3.11, 3.10 and 3.13 enumerated by the `py` launcher.
+- Rust/Cargo not found in the PATH nor in the usual path checked. Visual Studio 2022 Community with C++ tools was found; check the Windows SDK and WebView2 during execution.
+- No software was installed, no model weight was downloaded and no build was executed to prepare this plan.
 
-### Versões de referência
+### Reference versions
 
-Valores consultados nos registos oficiais em 2026-11-01, a fixar nos manifestos e lockfiles ao executar:
+Values consulted in the official registries on 2026-11-01, to be pinned in the manifests and lockfiles during execution:
 
-| Componente | Referência |
+| Component | Reference |
 | --- | --- |
-| Rust | `1.99.1`, toolchain MSVC `x86_64-pc-windows-msvc`; componentes rustfmt e clippy. |
-| Node | Manter o `24.11.1` disponível; usar `npm.cmd` nos comandos PowerShell. |
+| Rust | `1.99.1`, MSVC toolchain `x86_64-pc-windows-msvc`; rustfmt and clippy components. |
+| Node | Keep `24.11.1` available; use `npm.cmd` in the PowerShell commands. |
 | React / React DOM | `19.3.1`. |
 | Vite / TypeScript / Vitest | `8.3.5` / `7.0.2` / `5.0.5`. |
-| Tauri Rust / API e CLI npm | `2.12.5` / `2.12.4`; manter a família 2. |
+| Tauri Rust / API and npm CLI | `2.12.5` / `2.12.4`; keep the 2 family. |
 | CPAL / Rodio / Hound / Rubato | `0.18.2` / `0.23.0` / `3.5.1` / `5.0.1`. |
-| atomicwrites | `0.4.4`, para substituição atómica de JSON também em Windows. |
-| Python | Usar `py -3.11`, criando `.venv`; não usar o Python 3.13 predefinido. |
-| faster-whisper / Kokoro / Misaki | `1.2.1` / `0.9.4` / `0.9.4`, com extras ingleses de Misaki. |
+| atomicwrites | `0.4.4`, for atomic replacement of JSON also on Windows. |
+| Python | Use `py -3.11`, creating `.venv`; do not use the default Python 3.13. |
+| faster-whisper / Kokoro / Misaki | `1.2.1` / `0.9.4` / `0.9.4`, with English extras of Misaki. |
 
-O Kokoro/Misaki publicado requer Python anterior a 3.13. Resolver as dependências transitivas compatíveis, incluindo PyTorch CPU, spaCy, Transformers, SoundFile e testes, na tarefa 4. Guardar `package-lock.json`, `Cargo.lock` e `audio-worker/requirements.lock.txt` após resolução e verificação; a consulta de versões não comprova compatibilidade do conjunto.
+The published Kokoro/Misaki requires Python earlier than 3.13. Resolve the compatible transitive dependencies, including PyTorch CPU, spaCy, Transformers, SoundFile and tests, in task 4. Save `package-lock.json`, `Cargo.lock` and `audio-worker/requirements.lock.txt` after resolution and verification; consulting versions does not prove compatibility of the set.
 
-Usar `serde`/`serde_json`, `uuid`, `tokio`, `sha2` e `tempfile` como suporte Rust; Vitest, Testing Library e jsdom para testes da interface. Não acrescentar servidor HTTP, framework de estado global ou gerador de contratos nesta fase.
+Use `serde`/`serde_json`, `uuid`, `tokio`, `sha2` and `tempfile` as Rust support; Vitest, Testing Library and jsdom for interface tests. Do not add an HTTP server, a global state framework or a contract generator in this phase.
 
-### Decisões fechadas para a fase
+### Decisions closed for the phase
 
-- Identificador Tauri: `dev.thacio.languageassistanttutor`.
-- Captura e reprodução nativas em Rust: CPAL para entrada, Rodio para saída; uma thread de áudio possui os streams e recebe mensagens. Não guardar streams potencialmente não transferíveis num mutex partilhado entre comandos.
-- Original WAV PCM16 à taxa e número de canais efetivos da entrada; aceitar I16, U16 e F32, convertendo amostras para PCM16 sem alterar a taxa. Outros formatos devolvem erro explícito, sem panic.
-- Hound lê/escreve WAV; Rubato reamostra, com downmix antes da conversão para 16 kHz. Compensar o atraso do filtro e finalizar o último bloco sem cortar a resposta.
-- Não definir limite de tempo de resposta nesta fase. Escrever o áudio em streaming com memória limitada; erros de capacidade, escrita ou buffer produzem interrupção explícita e tentativa de recuperar o ficheiro parcial.
-- Kokoro em CPU, inglês americano `lang_code='a'`, voz `af_heart`, velocidade `1.0`; saída WAV PCM16 mono a 24 kHz.
-- Executar Python por caminho absoluto configurado, `-u -m audio_worker`, com diretório de trabalho explícito. Em desenvolvimento usa a `.venv`; não depender do diretório de onde a app foi aberta.
-- Prazos: handshake 10 s; carregamento de cada modelo 180 s; transcrição `max(120 s, 5 × duração do áudio)` após carregar; síntese 120 s após carregar; encerramento 3 s. Um progresso não renova indefinidamente um prazo. Um timeout encerra o auxiliar e invalida a sua geração.
-- Persistência em `app_data_dir()/phase1`; modelos em diretório separado indicado pela configuração. Não escrever pesos ou gravações no código-fonte.
+- Tauri identifier: `dev.thacio.languageassistanttutor`.
+- Native capture and playback in Rust: CPAL for input, Rodio for output; one audio thread owns the streams and receives messages. Do not store potentially non-transferable streams in a mutex shared between commands.
+- Original WAV PCM16 at the effective rate and number of channels of the input; accept I16, U16 and F32, converting samples to PCM16 without changing the rate. Other formats return an explicit error, without panic.
+- Hound reads/writes WAV; Rubato resamples, with downmix before the conversion to 16 kHz. Compensate the filter delay and finish the last block without cutting the answer.
+- Do not set an answer time limit in this phase. Write the audio in streaming with limited memory; capacity, write or buffer errors produce an explicit interruption and an attempt to recover the partial file.
+- Kokoro on CPU, American English `lang_code='a'`, voice `af_heart`, speed `1.0`; WAV PCM16 mono output at 24 kHz.
+- Run Python by a configured absolute path, `-u -m audio_worker`, with an explicit working directory. In development use the `.venv`; do not depend on the directory from which the app was opened.
+- Deadlines: handshake 10 s; loading of each model 180 s; transcription `max(120 s, 5 × audio duration)` after loading; synthesis 120 s after loading; shutdown 3 s. A progress does not renew a deadline indefinitely. A timeout shuts down the helper and invalidates its generation.
+- Persistence in `app_data_dir()/phase1`; models in a separate directory indicated by the configuration. Do not write weights or recordings into the source code.
 
-## 2. Estrutura dos ficheiros a criar
+## 2. Structure of the files to create
 
-| Ficheiros | Responsabilidade |
+| Files | Responsibility |
 | --- | --- |
-| `package.json`, `package-lock.json`, `tsconfig.json`, `vite.config.ts`, `index.html` | Base React/Vite, testes e comandos npm. |
-| `.gitignore` existente; `rust-toolchain.toml`, `README.md` novos | Preservar/rever exclusões; fixar toolchain e instruções reais. |
-| `src/main.tsx`, `src/App.tsx` | Arranque e montagem da experiência. |
-| `src/features/practice/{Practice.tsx,usePractice.ts,practice.css}` | Interface da fase 1 e estado da revisão local. |
-| `src/lib/{contracts.ts,tauri.ts}` | Tipos do frontend e adaptador de comandos/eventos. |
-| `src/test/setup.ts`, `src/features/practice/Practice.test.tsx` | Ambiente de testes e comportamento observável. |
-| `src-tauri/{Cargo.toml,Cargo.lock,build.rs,tauri.conf.json,capabilities/default.json}` | Base Tauri, permissões e janela. |
-| `src-tauri/src/{main.rs,lib.rs,domain.rs}` | Arranque e contratos/regras independentes do hardware. |
-| `src-tauri/src/storage.rs` | Artefactos, JSON atómico e recuperação. |
-| `src-tauri/src/audio/{mod.rs,capture.rs,playback.rs,normalize.rs}` | Porta de áudio, adaptadores nativos e conversão. |
-| `src-tauri/src/worker/{mod.rs,protocol.rs}` | Supervisão do auxiliar e protocolo JSON. |
-| `src-tauri/src/{service.rs,commands.rs}` | Coordenação do fluxo e comandos Tauri finos. |
-| `src-tauri/tests/{domain.rs,storage.rs,audio.rs,worker.rs,service.rs}` | Testes de regras e integração com adaptadores controlados. |
-| `src-tauri/tests/fixtures/worker_stub.py` | Auxiliar de teste com falha, atraso e respostas conhecidas. |
-| `audio-worker/{pyproject.toml,requirements.in,requirements.lock.txt}` | Dependências Python e lock verificado. |
-| `audio-worker/src/audio_worker/{__init__.py,__main__.py,protocol.py,engines.py,prepare.py}` | Protocolo, motores locais e preparação explícita. |
-| `audio-worker/tests/{test_protocol.py,test_engines.py,test_offline_models.py}` | Contrato, carregamento e testes reais opcionais. |
-| `contracts/worker-v1.examples.json`, `contracts/app-v1.example.json` | Exemplos partilhados e verificados nas três linguagens. |
-| `config/audio.example.json`, `scripts/verify.ps1` | Configuração documentada e execução dos checks. |
-| `docs/phase-1/{setup.md,validation.md}` | Preparação Windows e resultados reais de aceitação. |
+| `package.json`, `package-lock.json`, `tsconfig.json`, `vite.config.ts`, `index.html` | React/Vite base, tests and npm commands. |
+| existing `.gitignore`; new `rust-toolchain.toml`, `README.md` | Preserve/review exclusions; pin toolchain and real instructions. |
+| `src/main.tsx`, `src/App.tsx` | Startup and mounting of the experience. |
+| `src/features/practice/{Practice.tsx,usePractice.ts,practice.css}` | Phase 1 interface and local review state. |
+| `src/lib/{contracts.ts,tauri.ts}` | Frontend types and command/event adapter. |
+| `src/test/setup.ts`, `src/features/practice/Practice.test.tsx` | Test environment and observable behavior. |
+| `src-tauri/{Cargo.toml,Cargo.lock,build.rs,tauri.conf.json,capabilities/default.json}` | Tauri base, permissions and window. |
+| `src-tauri/src/{main.rs,lib.rs,domain.rs}` | Startup and contracts/rules independent of the hardware. |
+| `src-tauri/src/storage.rs` | Artifacts, atomic JSON and recovery. |
+| `src-tauri/src/audio/{mod.rs,capture.rs,playback.rs,normalize.rs}` | Audio port, native adapters and conversion. |
+| `src-tauri/src/worker/{mod.rs,protocol.rs}` | Helper supervision and JSON protocol. |
+| `src-tauri/src/{service.rs,commands.rs}` | Flow coordination and thin Tauri commands. |
+| `src-tauri/tests/{domain.rs,storage.rs,audio.rs,worker.rs,service.rs}` | Rule tests and integration with controlled adapters. |
+| `src-tauri/tests/fixtures/worker_stub.py` | Test helper with failure, delay and known responses. |
+| `audio-worker/{pyproject.toml,requirements.in,requirements.lock.txt}` | Python dependencies and verified lock. |
+| `audio-worker/src/audio_worker/{__init__.py,__main__.py,protocol.py,engines.py,prepare.py}` | Protocol, local engines and explicit preparation. |
+| `audio-worker/tests/{test_protocol.py,test_engines.py,test_offline_models.py}` | Contract, loading and optional real tests. |
+| `contracts/worker-v1.examples.json`, `contracts/app-v1.example.json` | Examples shared and verified in the three languages. |
+| `config/audio.example.json`, `scripts/verify.ps1` | Documented configuration and execution of the checks. |
+| `docs/phase-1/{setup.md,validation.md}` | Windows preparation and real acceptance results. |
 
-Os testes Rust de cada módulo podem permanecer no ficheiro de teste indicado; a produção não precisa de um módulo por teste. Ícones/configurações padrão gerados pelo Tauri integram a base da tarefa 1. Não gerar o projeto por cima da documentação existente.
+The Rust tests of each module may remain in the indicated test file; production does not need one module per test. Default icons/configurations generated by Tauri are part of the base of task 1. Do not generate the project over the existing documentation.
 
-## 3. Contratos partilhados
+## 3. Shared contracts
 
-### Tipos do domínio
+### Domain types
 
-Definir em `src-tauri/src/domain.rs`; duplicar apenas os tipos serializados em `src/lib/contracts.ts`, verificados contra os exemplos. JSON usa camelCase; enums usam snake_case. Identificadores são UUID em texto, datas UTC RFC3339 e durações inteiras em milissegundos.
+Define them in `src-tauri/src/domain.rs`; duplicate only the serialized types in `src/lib/contracts.ts`, verified against the examples. JSON uses camelCase; enums use snake_case. Identifiers are UUIDs as text, UTC RFC3339 dates and integer durations in milliseconds.
 
-| Tipo | Campos e valores obrigatórios |
+| Type | Mandatory fields and values |
 | --- | --- |
-| `AppError` | `code: String`, `message: String`, `retryable: bool`; códigos estáveis, mensagens em português. |
+| `AppError` | `code: String`, `message: String`, `retryable: bool`; stable codes, messages in Portuguese. |
 | `ComponentState` | `status: ready \| missing \| loading \| error`, `message: Option<String>`. |
 | `Availability` | `microphone`, `playback`, `transcription`, `synthesis`: `ComponentState`. |
 | `CaptureMeta` | `sampleRate: u32`, `channels: u16`, `durationMs: u64`, `bytes: u64`, `incomplete: bool`. |
 | `Transcript` | `id`, `status: completed \| no_speech`, `text`, `segments: Vec<Segment>`, `model`, `language`, `createdAt`, `loadMs`, `processingMs`. |
-| `Segment` | `startMs`, `endMs`, `text`; manter o conteúdo devolvido pelo motor. |
+| `Segment` | `startMs`, `endMs`, `text`; keep the content returned by the engine. |
 | `Review` | `sourceTranscriptId`, `text`, `savedAt`. |
-| `Attempt` | `id`, `question`, `createdAt`, `capture: CaptureMeta`, `originalFile`, `normalizedFile: Option<String>`, `transcripts: Vec<Transcript>`, `review: Option<Review>`, `lastOperation: Option<OperationRecord>`. Ficheiros são referências relativas. |
+| `Attempt` | `id`, `question`, `createdAt`, `capture: CaptureMeta`, `originalFile`, `normalizedFile: Option<String>`, `transcripts: Vec<Transcript>`, `review: Option<Review>`, `lastOperation: Option<OperationRecord>`. Files are relative references. |
 | `OperationRecord` | `id`, `kind: transcribe \| synthesize`, `state: running \| completed \| failed \| interrupted \| no_speech`, `error: Option<AppError>`. |
-| `OperationState` | Enum Rust `Running`, `Completed`, `Failed`, `Interrupted`, `NoSpeech`, serializado com os valores da linha anterior. |
+| `OperationState` | Rust enum `Running`, `Completed`, `Failed`, `Interrupted`, `NoSpeech`, serialized with the values of the previous line. |
 | `ModelJob` | `id`, `attemptId: Option<String>`, `kind`, `stage: loading \| processing`. |
-| `PlaybackTarget` | `question \| response`; só resolve ficheiros já pertencentes à app. |
+| `PlaybackTarget` | `question \| response`; it only resolves files already belonging to the app. |
 | `AppSnapshot` | `revision: u64`, `question`, `availability: Availability`, `attempt: Option<Attempt>`, `recordingId: Option<String>`, `modelJob: Option<ModelJob>`, `playback: Option<PlaybackTarget>`, `lastError: Option<AppError>`. |
-| `RestoreResult` | `attempt: Option<Attempt>`, `warnings: Vec<AppError>`; permite recuperar texto/revisão mesmo se faltar um áudio ou derivado. |
+| `RestoreResult` | `attempt: Option<Attempt>`, `warnings: Vec<AppError>`; it allows recovering text/review even if an audio or derivative is missing. |
 
-Erros mínimos: `BUSY`, `DEVICE_UNAVAILABLE`, `DEVICE_FORMAT_UNSUPPORTED`, `AUDIO_TIMEOUT`, `CAPTURE_INTERRUPTED`, `STORAGE_WRITE_FAILED`, `ARTIFACT_MISSING`, `INVALID_AUDIO`, `MODEL_MISSING`, `WORKER_UNAVAILABLE`, `WORKER_PROTOCOL`, `WORKER_TIMEOUT`, `STALE_SOURCE`. Ausência de fala é um resultado `no_speech`, não um erro de pronúncia.
+Minimum errors: `BUSY`, `DEVICE_UNAVAILABLE`, `DEVICE_FORMAT_UNSUPPORTED`, `AUDIO_TIMEOUT`, `CAPTURE_INTERRUPTED`, `STORAGE_WRITE_FAILED`, `ARTIFACT_MISSING`, `INVALID_AUDIO`, `MODEL_MISSING`, `WORKER_UNAVAILABLE`, `WORKER_PROTOCOL`, `WORKER_TIMEOUT`, `STALE_SOURCE`. Absence of speech is a `no_speech` result, not a pronunciation error.
 
-`AppState` e `Action` ficam também em `domain.rs`. `AppState::can_start_recording(&self) -> Result<(), AppError>` verifica ocupação, mas não exige modelos prontos; `AppState::accepts_result(&self, request_id: &str, generation: u64) -> bool` protege resultados. A geração do auxiliar é interna e não vai para a interface.
+`AppState` and `Action` also stay in `domain.rs`. `AppState::can_start_recording(&self) -> Result<(), AppError>` checks occupation, but does not require models to be ready; `AppState::accepts_result(&self, request_id: &str, generation: u64) -> bool` protects results. The helper generation is internal and does not go to the interface.
 
-### Persistência
+### Persistence
 
 ```text
 phase1/
@@ -139,48 +139,48 @@ phase1/
   attempts/<attempt-id>/
     original.wav
     normalized.wav
-    attempt.json                           # metadados/captura/operação; não duplica textos
-    transcripts/<transcript-id>.json        # Transcript original imutável
-    review.json                            # Review guardada, substituição atómica
+    attempt.json                           # metadata/capture/operation; does not duplicate texts
+    transcripts/<transcript-id>.json        # immutable original Transcript
+    review.json                            # stored Review, atomic replacement
   question-cache/<sha256>.wav
 ```
 
-O tipo interno `AttemptManifest` contém os campos de `Attempt` exceto `transcripts` e `review`, acompanhado de `schemaVersion: 1`. A resposta completa é reconstruída a partir desse manifesto, dos JSON de transcrição e de `review.json`; não manter duas cópias autoritativas do mesmo texto. Resultados de transcrição usam o ID do pedido e são ordenados por data e ID. Um resultado persistido com o ID de uma operação marcada como `running` permite recuperar essa operação como `completed` ou `no_speech`, segundo o resultado; sem resultado, passa a `interrupted`.
+The internal type `AttemptManifest` contains the fields of `Attempt` except `transcripts` and `review`, accompanied by `schemaVersion: 1`. The complete answer is rebuilt from that manifest, from the transcription JSON files and from `review.json`; do not keep two authoritative copies of the same text. Transcription results use the request ID and are sorted by date and ID. A result persisted with the ID of an operation marked as `running` allows that operation to be recovered as `completed` or `no_speech`, according to the result; without a result, it becomes `interrupted`.
 
-Gravar metadados antes de atualizar `last-attempt.json`; só então publicar a nova resposta ativa. Se a atualização do apontador falhar, preservar a anterior e manter a nova gravação disponível para repetir a publicação. Nunca usar remove-then-rename para substituir JSON em Windows.
+Write metadata before updating `last-attempt.json`; only then publish the new active answer. If the pointer update fails, preserve the previous one and keep the new recording available to repeat the publication. Never use remove-then-rename to replace JSON on Windows.
 
-`AttemptStore` em `storage.rs`: `new(root: PathBuf) -> Self`, `allocate() -> Result<RecordingTarget, AppError>`, `publish(capture: CapturedAudio) -> Result<Attempt, AppError>`, `restore_last() -> Result<RestoreResult, AppError>`, `append_transcript(attempt_id: &str, transcript: Transcript) -> Result<Attempt, AppError>`, `save_review(attempt_id: &str, source_id: &str, text: &str) -> Result<Review, AppError>`, `set_operation(attempt_id: &str, operation: OperationRecord) -> Result<(), AppError>`, `set_normalized(attempt_id: &str, reference: &str) -> Result<Attempt, AppError>` (ruling R8: extensão pública usada pelo serviço para registar `normalized.wav` depois da conversão). Publicação e escrita mantêm referências antigas em caso de falha; `restore_last` recupera artefactos válidos e devolve avisos se um componente faltar. Um manifesto/apontador ilegível dá erro recuperável, sem eliminar ficheiros nem impedir nova captura.
+`AttemptStore` in `storage.rs`: `new(root: PathBuf) -> Self`, `allocate() -> Result<RecordingTarget, AppError>`, `publish(capture: CapturedAudio) -> Result<Attempt, AppError>`, `restore_last() -> Result<RestoreResult, AppError>`, `append_transcript(attempt_id: &str, transcript: Transcript) -> Result<Attempt, AppError>`, `save_review(attempt_id: &str, source_id: &str, text: &str) -> Result<Review, AppError>`, `set_operation(attempt_id: &str, operation: OperationRecord) -> Result<(), AppError>`, `set_normalized(attempt_id: &str, reference: &str) -> Result<Attempt, AppError>` (ruling R8: public extension used by the service to record `normalized.wav` after the conversion). Publication and writing keep the old references in case of failure; `restore_last` recovers valid artifacts and returns warnings if a component is missing. An unreadable manifest/pointer gives a recoverable error, without deleting files nor preventing a new capture.
 
-### Áudio
+### Audio
 
-`RecordingTarget { id: String, directory: PathBuf }` e `CapturedAudio { id: String, original: PathBuf, meta: CaptureMeta }` definidos em `audio/mod.rs`.
+`RecordingTarget { id: String, directory: PathBuf }` and `CapturedAudio { id: String, original: PathBuf, meta: CaptureMeta }` defined in `audio/mod.rs`.
 
-Porta `AudioPort: Send + Sync`: `availability() -> AvailabilityAudio`, `start_capture(target: RecordingTarget) -> Result<(), AppError>`, `stop_capture() -> Result<CapturedAudio, AppError>`, `play(path: PathBuf) -> Result<(), AppError>`, `stop_playback() -> Result<(), AppError>`. `AvailabilityAudio` contém `microphone` e `playback: ComponentState`. Eventos `AudioEvent`: `CaptureInterrupted { capture: Option<CapturedAudio>, error }` e `PlaybackFinished`. Implementação `NativeAudio` usa a thread proprietária; testes usam `FakeAudio`.
+Port `AudioPort: Send + Sync`: `availability() -> AvailabilityAudio`, `start_capture(target: RecordingTarget) -> Result<(), AppError>`, `stop_capture() -> Result<CapturedAudio, AppError>`, `play(path: PathBuf) -> Result<(), AppError>`, `stop_playback() -> Result<(), AppError>`. `AvailabilityAudio` contains `microphone` and `playback: ComponentState`. `AudioEvent` events: `CaptureInterrupted { capture: Option<CapturedAudio>, error }` and `PlaybackFinished`. Implementation `NativeAudio` uses the owning thread; tests use `FakeAudio`.
 
-`normalize_wav(source: &Path, destination: &Path) -> Result<CaptureMeta, AppError>` em `audio/normalize.rs`; nunca modifica `source`.
+`normalize_wav(source: &Path, destination: &Path) -> Result<CaptureMeta, AppError>` in `audio/normalize.rs`; it never modifies `source`.
 
-### Protocolo Python v1
+### Python protocol v1
 
-Uma linha JSON por mensagem, com `protocolVersion: 1`, `id` e `op`. Operações: `health`, `transcribe`, `synthesize`, `shutdown`. `health` verifica disponibilidade sem carregar os modelos ou descarregar ficheiros.
+One JSON line per message, with `protocolVersion: 1`, `id` and `op`. Operations: `health`, `transcribe`, `synthesize`, `shutdown`. `health` checks availability without loading the models or downloading files.
 
-| Operação | `params` | `result` de sucesso |
+| Operation | `params` | Successful `result` |
 | --- | --- | --- |
 | `health` | `{}` | `{transcription: ComponentState, synthesis: ComponentState}` |
-| `transcribe` | `{audioPath, modelPath, device: "cpu", computeType: "int8", language: "en"}` | `{status: "completed" ou "no_speech", text, segments, model: "small", language: "en", loadMs, processingMs}` |
+| `transcribe` | `{audioPath, modelPath, device: "cpu", computeType: "int8", language: "en"}` | `{status: "completed" or "no_speech", text, segments, model: "small", language: "en", loadMs, processingMs}` |
 | `synthesize` | `{text, outputPath, voice: "af_heart", speed: 1.0}` | `{audioPath, sampleRate: 24000, durationMs, loadMs, processingMs}` |
-| `shutdown` | `{}` | `{stopped: true}`, seguido de saída do processo. |
+| `shutdown` | `{}` | `{stopped: true}`, followed by process exit. |
 
-Resposta final: `{protocolVersion, id, event: "result", ok: true, result}` ou `{protocolVersion, id, event: "result", ok: false, error: AppError}`. Progresso: `{protocolVersion, id, event: "progress", stage: "loading" ou "processing"}`. Exatamente uma resposta final por pedido válido; preservar stdout exclusivamente para o protocolo e drenar stderr continuamente em Rust.
+Final response: `{protocolVersion, id, event: "result", ok: true, result}` or `{protocolVersion, id, event: "result", ok: false, error: AppError}`. Progress: `{protocolVersion, id, event: "progress", stage: "loading" or "processing"}`. Exactly one final response per valid request; keep stdout exclusively for the protocol and drain stderr continuously in Rust.
 
-`WorkerClient` em `worker/mod.rs`: `start(config: WorkerConfig) -> Result<Self, AppError>`, `submit(request: WorkerRequest) -> Result<(), AppError>`, `restart() -> Result<(), AppError>`, `shutdown() -> Result<(), AppError>`. `WorkerConfig` contém caminhos absolutos do executável e manifesto de modelos, o nome fixo do módulo e os prazos. `WorkerEvent { generation: u64, message: WorkerMessage }` é entregue ao serviço por canal; `WorkerPort` oferece `submit` e `restart` para substituição nos testes.
+`WorkerClient` in `worker/mod.rs`: `start(config: WorkerConfig) -> Result<Self, AppError>`, `submit(request: WorkerRequest) -> Result<(), AppError>`, `restart() -> Result<(), AppError>`, `shutdown() -> Result<(), AppError>`. `WorkerConfig` contains absolute paths of the executable and of the models manifest, the fixed module name and the deadlines. `WorkerEvent { generation: u64, message: WorkerMessage }` is delivered to the service through a channel; `WorkerPort` offers `submit` and `restart` for substitution in the tests.
 
-O ficheiro pessoal `audio.json`, em `app_config_dir()` ou indicado por `LANGUAGE_TUTOR_CONFIG`, contém `schemaVersion: 1`, `pythonExecutable` e `modelsManifest`, ambos caminhos absolutos. O módulo é fixo `audio_worker`, instalado na `.venv`; o processo recebe `--models-manifest <caminho>` e usa a pasta de dados como diretório de trabalho. O manifesto preparado contém `whisperDir`, `kokoroConfig`, `kokoroWeights`, `kokoroVoice`, revisões dos modelos e inventário de recursos linguísticos. O exemplo usa caminhos Windows com espaços; não guardar a configuração pessoal no Git.
+The personal file `audio.json`, in `app_config_dir()` or indicated by `LANGUAGE_TUTOR_CONFIG`, contains `schemaVersion: 1`, `pythonExecutable` and `modelsManifest`, both absolute paths. The module is fixed `audio_worker`, installed in the `.venv`; the process receives `--models-manifest <path>` and uses the data folder as working directory. The prepared manifest contains `whisperDir`, `kokoroConfig`, `kokoroWeights`, `kokoroVoice`, model revisions and an inventory of language resources. The example uses Windows paths with spaces; do not store the personal configuration in Git.
 
-### Serviço e interface
+### Service and interface
 
-`AppService` em `service.rs` recebe `AttemptStore`, `AudioPort` e `WorkerPort`; usa um coordenador serial para transições, delegando IO/inferência para trabalho assíncrono. Nunca mantém um lock de estado enquanto aguarda um dispositivo, processo ou ficheiro.
+`AppService` in `service.rs` receives `AttemptStore`, `AudioPort` and `WorkerPort`; it uses a serial coordinator for transitions, delegating IO/inference to asynchronous work. It never holds a state lock while waiting for a device, process or file.
 
-Comandos Tauri, definidos em `commands.rs`, delegam a métodos homónimos de `AppService` e devolvem `Result<AppSnapshot, AppError>`:
+Tauri commands, defined in `commands.rs`, delegate to same-named `AppService` methods and return `Result<AppSnapshot, AppError>`:
 
 ```text
 get_snapshot()
@@ -196,22 +196,22 @@ restart_worker()
 prepare_close()
 ```
 
-`AppService::on_audio_event(event: AudioEvent)` e `AppService::on_worker_event(event: WorkerEvent)` aplicam resultados e publicam `practice://snapshot` com revisão crescente. `prepare_close` finaliza captura válida, assinala jobs interrompidos e encerra o auxiliar; uma falha que possa perder dados impede fechar silenciosamente.
+`AppService::on_audio_event(event: AudioEvent)` and `AppService::on_worker_event(event: WorkerEvent)` apply results and publish `practice://snapshot` with an increasing revision. `prepare_close` finalizes a valid capture, flags interrupted jobs and shuts down the helper; a failure that could lose data prevents closing silently.
 
-O adaptador TS expõe `PracticeClient { snapshot(), refresh(), startRecording(), stopRecording(), retrySaveRecording(), transcribe(attemptId), play(target), stop(), saveReview(attemptId, sourceId, text), restartWorker(), prepareClose(), subscribe(listener) }`, com Promises de `AppSnapshot`; `subscribe` devolve uma função de remoção do listener. A correspondência entre nomes TS e comandos está apenas em `src/lib/tauri.ts`.
+The TS adapter exposes `PracticeClient { snapshot(), refresh(), startRecording(), stopRecording(), retrySaveRecording(), transcribe(attemptId), play(target), stop(), saveReview(attemptId, sourceId, text), restartWorker(), prepareClose(), subscribe(listener) }`, with `AppSnapshot` Promises; `subscribe` returns a listener removal function. The mapping between TS names and commands is only in `src/lib/tauri.ts`.
 
-## 4. Tarefas de implementação
+## 4. Implementation tasks
 
-Executar sequencialmente. Cada tarefa termina numa entrega verificável e num commit local quando for possível fazê-lo sem incluir alterações alheias. Git já existe: não o reinicializar nem alterar o staging preexistente. Antes de cada commit, conferir o conteúdo e limitar a alteração à tarefa. Não publicar nem criar PR. Os comandos seguintes são instruções futuras, não resultados já obtidos.
+Run sequentially. Each task ends in a verifiable delivery and a local commit when it is possible to do so without including other people's changes. Git already exists: do not reinitialize it nor change the preexisting staging. Before each commit, check the content and limit the change to the task. Do not publish or create a PR. The following commands are future instructions, not results already obtained.
 
-### Tarefa 1: Base desktop e contratos de operação
+### Task 1: Desktop base and operation contracts
 
-**Ficheiros:** criar os manifestos/configurações da base, `rust-toolchain.toml`, `src/{main.tsx,App.tsx}`, `src/lib/contracts.ts`, `src-tauri/src/{main.rs,lib.rs,domain.rs}`, exemplos em `contracts/` e `src-tauri/tests/domain.rs`; rever o `.gitignore` existente apenas se faltar uma exclusão necessária.
+**Files:** create the manifests/configurations of the base, `rust-toolchain.toml`, `src/{main.tsx,App.tsx}`, `src/lib/contracts.ts`, `src-tauri/src/{main.rs,lib.rs,domain.rs}`, examples in `contracts/` and `src-tauri/tests/domain.rs`; review the existing `.gitignore` only if a necessary exclusion is missing.
 
-**Interfaces:** produz `AppState`, `Action`, os tipos da secção 3 e uma janela com a pergunta exata. `AppSnapshot` inicial tem `revision=0`, sem resposta/gravação/job; componentes não verificados ficam `loading` com mensagem “A verificar disponibilidade”, até à verificação real.
+**Interfaces:** produces `AppState`, `Action`, the types of section 3 and a window with the exact question. The initial `AppSnapshot` has `revision=0`, without an answer/recording/job; unverified components stay `loading` with the message “A verificar disponibilidade”, until the real verification.
 
-- [ ] Preparar Rust 1.99.1/MSVC, verificar SDK/WebView2 e criar a base sem sobrescrever docs. Scripts npm: `dev`=Vite, `build`=typecheck e Vite build, `typecheck`=tsc --noEmit, `test`=vitest run, `tauri`=CLI Tauri. Ignorar `.venv`, `target`, `node_modules`, modelos, áudio e configuração pessoal; guardar lockfiles.
-- [ ] Escrever `recording_gate` e `stale_generation`, com estas asserções, contra o domínio ainda não implementado:
+- [ ] Prepare Rust 1.99.1/MSVC, check the SDK/WebView2 and create the base without overwriting docs. npm scripts: `dev`=Vite, `build`=typecheck and Vite build, `typecheck`=tsc --noEmit, `test`=vitest run, `tauri`=Tauri CLI. Ignore `.venv`, `target`, `node_modules`, models, audio and personal configuration; keep lockfiles.
+- [ ] Write `recording_gate` and `stale_generation`, with these assertions, against the domain not yet implemented:
 
 ```rust
 assert!(idle_without_worker.can_start_recording().is_ok());
@@ -220,18 +220,18 @@ assert_eq!(transcribing.can_start_recording().unwrap_err().code, "BUSY");
 assert!(!waiting.accepts_result("old-request", 1));
 ```
 
-- [ ] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test domain`; confirmar falha por comportamento/tipos ainda ausentes depois de resolver a compilação da base.
-- [ ] Implementar os tipos e regras indicados. Ler `contracts/app-v1.example.json` no teste para fixar camelCase, enums e pergunta. A UI inicial apenas apresenta a pergunta; não simular áudio.
-- [ ] Verificar o teste anterior, `npm.cmd run typecheck`, `npm.cmd run build` e abrir `npm.cmd run tauri -- dev`. Esperado: testes/build com saída 0 e janela com a pergunta.
+- [ ] Run `cargo test --manifest-path src-tauri/Cargo.toml --test domain`; confirm failure due to behavior/types still missing after resolving the compilation of the base.
+- [ ] Implement the indicated types and rules. Read `contracts/app-v1.example.json` in the test to pin camelCase, enums and question. The initial UI only presents the question; do not simulate audio.
+- [ ] Verify the previous test, `npm.cmd run typecheck`, `npm.cmd run build` and open `npm.cmd run tauri -- dev`. Expected: tests/build with exit 0 and a window with the question.
 - [ ] Commit: `chore: create phase one desktop foundation`.
 
-### Tarefa 2: Artefactos locais e recuperação sem SQLite
+### Task 2: Local artifacts and recovery without SQLite
 
-**Ficheiros:** criar `src-tauri/src/storage.rs` e `src-tauri/tests/storage.rs`; atualizar `domain.rs` apenas para os contratos já definidos.
+**Files:** create `src-tauri/src/storage.rs` and `src-tauri/tests/storage.rs`; update `domain.rs` only for the contracts already defined.
 
-**Interfaces:** consome `RecordingTarget`, `CapturedAudio`, `Attempt`, `Transcript` e `Review`; produz `AttemptStore` e a estrutura de ficheiros da secção 3. Aceitar uma raiz de teste temporária e obter a raiz real pelo Tauri apenas na integração.
+**Interfaces:** consumes `RecordingTarget`, `CapturedAudio`, `Attempt`, `Transcript` and `Review`; produces `AttemptStore` and the file structure of section 3. Accept a temporary test root and obtain the real root through Tauri only in the integration.
 
-- [ ] Escrever testes `failed_publish_preserves_last`, `failed_review_write_preserves_saved_text`, `append_does_not_overwrite_raw`, `restore_reports_missing_original` e `restore_interrupted_job`. Fixar asserções:
+- [ ] Write tests `failed_publish_preserves_last`, `failed_review_write_preserves_saved_text`, `append_does_not_overwrite_raw`, `restore_reports_missing_original` and `restore_interrupted_job`. Pin assertions:
 
 ```rust
 assert_eq!(store.restore_last()?.attempt.unwrap().id, previous_id);
@@ -240,19 +240,19 @@ assert_eq!(restored.transcripts.len(), 2);
 assert_eq!(restored.last_operation.unwrap().state, OperationState::Interrupted);
 ```
 
-- [ ] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test storage`; confirmar falha antes de implementar `AttemptStore`.
-- [ ] Implementar as assinaturas da secção 3, com `atomicwrites::AtomicFile`, ficheiros temporários no mesmo volume e validação de referências. Reconstruir transcrições e revisão a partir dos ficheiros autoritativos, sem duplicar os textos no manifesto. Não atualizar o apontador da última resposta enquanto a publicação não terminar.
-- [ ] Exercitar substituição real de um JSON já existente em Windows e falhas injetadas antes da escrita/substituição. Metadados inválidos ou ficheiros em falta devolvem diagnóstico e conservam os restantes dados; um original recuperável permite retomar transcrição.
-- [ ] Repetir o teste. Esperado: saída 0, dados antigos intactos nos cenários de falha e novos IDs sem colisão de pastas.
+- [ ] Run `cargo test --manifest-path src-tauri/Cargo.toml --test storage`; confirm failure before implementing `AttemptStore`.
+- [ ] Implement the signatures of section 3, with `atomicwrites::AtomicFile`, temporary files on the same volume and reference validation. Rebuild transcripts and review from the authoritative files, without duplicating the texts in the manifest. Do not update the last answer pointer until publication finishes.
+- [ ] Exercise real replacement of an already existing JSON on Windows and injected failures before the writing/replacement. Invalid metadata or missing files return a diagnosis and preserve the remaining data; a recoverable original allows resuming transcription.
+- [ ] Repeat the test. Expected: exit 0, old data intact in the failure scenarios and new IDs without folder collision.
 - [ ] Commit: `feat: persist local audio attempts and reviewed transcripts`.
 
-### Tarefa 3: Captura, reprodução e normalização nativas
+### Task 3: Native capture, playback and normalization
 
-**Ficheiros:** criar `src-tauri/src/audio/{mod.rs,capture.rs,playback.rs,normalize.rs}` e `src-tauri/tests/audio.rs`; acrescentar as dependências de áudio ao Cargo.
+**Files:** create `src-tauri/src/audio/{mod.rs,capture.rs,playback.rs,normalize.rs}` and `src-tauri/tests/audio.rs`; add the audio dependencies to Cargo.
 
-**Interfaces:** consome `RecordingTarget`; produz `NativeAudio`, `CapturedAudio`, `AudioEvent` e `normalize_wav`, conforme a secção 3. A thread de áudio possui os streams; callbacks entregam amostras através de canal limitado e não escrevem em disco nem aguardam locks.
+**Interfaces:** consumes `RecordingTarget`; produces `NativeAudio`, `CapturedAudio`, `AudioEvent` and `normalize_wav`, according to section 3. The audio thread owns the streams; callbacks deliver samples through a bounded channel and do not write to disk nor wait for locks.
 
-- [ ] Escrever `normalizes_stereo_48k_without_mutating_source`, `empty_audio_is_invalid`, `capture_failure_preserves_previous`, `overflow_is_reported` e `recording_stops_playback`. Para a conversão de 1 s de sinal estéreo, verificar:
+- [ ] Write `normalizes_stereo_48k_without_mutating_source`, `empty_audio_is_invalid`, `capture_failure_preserves_previous`, `overflow_is_reported` and `recording_stops_playback`. For the conversion of 1 s of stereo signal, verify:
 
 ```rust
 assert_eq!((output.sample_rate, output.channels, output.bits_per_sample), (16000, 1, 16));
@@ -261,20 +261,20 @@ assert_eq!(sha256(source_before), sha256(source_after));
 assert_eq!(overflow_error.code, "CAPTURE_INTERRUPTED");
 ```
 
-- [ ] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test audio`; confirmar falha sem os adaptadores/conversão.
-- [ ] Implementar CPAL/Hound e Rodio. Converter I16/U16/F32, detetar dispositivo ausente e formato não suportado. Escrever em ficheiro provisório, finalizar o cabeçalho WAV antes de publicar; em erro preservar uma captura parcial válida com `incomplete=true` ou reportar que não existe áudio recuperável. Canal cheio não pode descartar amostras silenciosamente.
-- [ ] Implementar `normalize_wav` com média dos canais, Rubato e PCM16, compensando atraso/final do filtro. Acrescentar teste de duração a 44,1 kHz e de atenuação de um sinal acima de 8 kHz, para evitar uma conversão por simples descarte de amostras.
-- [ ] Repetir testes; executar uma verificação manual local de entrada/saída quando o adaptador estiver ligado na tarefa 6. Testes automáticos não ligam o microfone real. Esperado agora: testes com ficheiros sintéticos/adaptador controlado passam.
+- [ ] Run `cargo test --manifest-path src-tauri/Cargo.toml --test audio`; confirm failure without the adapters/conversion.
+- [ ] Implement CPAL/Hound and Rodio. Convert I16/U16/F32, detect a missing device and unsupported format. Write to a provisional file, finalize the WAV header before publishing; on error preserve a valid partial capture with `incomplete=true` or report that no recoverable audio exists. A full channel must not discard samples silently.
+- [ ] Implement `normalize_wav` with channel averaging, Rubato and PCM16, compensating filter delay/end. Add a duration test at 44.1 kHz and an attenuation test of a signal above 8 kHz, to avoid a conversion by simple sample dropping.
+- [ ] Repeat the tests; run a local manual input/output check when the adapter is wired in task 6. Automated tests do not turn on the real microphone. Expected now: tests with synthetic files/controlled adapter pass.
 - [ ] Commit: `feat: add native audio capture playback and normalization`.
 
-### Tarefa 4: Processo Python com motores reais e preparação offline
+### Task 4: Python process with real engines and offline preparation
 
-**Ficheiros:** criar o pacote `audio-worker`, `config/audio.example.json`, exemplos de protocolo e os três ficheiros de teste Python listados na estrutura.
+**Files:** create the `audio-worker` package, `config/audio.example.json`, protocol examples and the three Python test files listed in the structure.
 
-**Interfaces:** `parse_request(line: str) -> WorkerRequest` e `encode_message(message: dict) -> str` em `protocol.py`; `EngineRegistry.health() -> dict`, `transcribe(params: dict, progress: Callable[[str], None]) -> dict` e `synthesize(params: dict, progress: Callable[[str], None]) -> dict` em `engines.py`. `prepare.main(argv: list[str] | None = None) -> int` prepara explicitamente os recursos; `__main__.main() -> int` serve JSON. `WorkerRequest` é dataclass com `protocol_version`, `id`, `op`, `params`.
+**Interfaces:** `parse_request(line: str) -> WorkerRequest` and `encode_message(message: dict) -> str` in `protocol.py`; `EngineRegistry.health() -> dict`, `transcribe(params: dict, progress: Callable[[str], None]) -> dict` and `synthesize(params: dict, progress: Callable[[str], None]) -> dict` in `engines.py`. `prepare.main(argv: list[str] | None = None) -> int` explicitly prepares the resources; `__main__.main() -> int` serves JSON. `WorkerRequest` is a dataclass with `protocol_version`, `id`, `op`, `params`.
 
-- [ ] Criar `.venv` com `py -3.11 -m venv .venv`. Instalar PyTorch CPU a partir do índice oficial `https://download.pytorch.org/whl/cpu`, as dependências de `requirements.in` e o pacote editável com `.\.venv\Scripts\python.exe -m pip install -e "audio-worker[test]"`. Fixar faster-whisper, Kokoro e Misaki nas versões da secção 1; depois de verificar imports e compatibilidade, guardar o resultado de `pip freeze --exclude-editable` em `requirements.lock.txt`. Documentar a reinstalação com o índice CPU e os recursos spaCy necessários. Documentar o eventual requisito de eSpeak-NG/fallback no Windows após validar a combinação escolhida.
-- [ ] Escrever `test_protocol_examples`, `test_missing_assets_does_not_connect`, `test_stdout_contains_only_json` e `test_voice_and_text_cache_key`. Fixar valores:
+- [ ] Create `.venv` with `py -3.11 -m venv .venv`. Install PyTorch CPU from the official index `https://download.pytorch.org/whl/cpu`, the dependencies of `requirements.in` and the editable package with `.\.venv\Scripts\python.exe -m pip install -e "audio-worker[test]"`. Pin faster-whisper, Kokoro and Misaki at the versions of section 1; after verifying imports and compatibility, save the result of `pip freeze --exclude-editable` in `requirements.lock.txt`. Document the reinstallation with the CPU index and the needed spaCy resources. Document the eventual eSpeak-NG/fallback requirement on Windows after validating the chosen combination.
+- [ ] Write `test_protocol_examples`, `test_missing_assets_does_not_connect`, `test_stdout_contains_only_json` and `test_voice_and_text_cache_key`. Pin values:
 
 ```python
 assert request.op == "transcribe"
@@ -283,21 +283,21 @@ assert all(json.loads(line)["protocolVersion"] == 1 for line in stdout.splitline
 assert first_key != changed_voice_key
 ```
 
-- [ ] Executar `.\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_protocol.py audio-worker/tests/test_engines.py -q`; confirmar falha por contratos/comportamentos ainda ausentes, não por dependências mal instaladas.
-- [ ] Implementar parser e servidor sequencial. Imports dos motores são tardios; redirecionar stdout das bibliotecas para stderr. Aplicar `HF_HUB_OFFLINE=1` e `TRANSFORMERS_OFFLINE=1` antes dos imports no servidor; `health` verifica caminhos, voz, dependências e recursos ingleses sem os descarregar.
-- [ ] Implementar preparação online explícita: descarregar `Systran/faster-whisper-small`, configuração/pesos do `hexgrad/Kokoro-82M` e `voices/af_heart.pt`; instalar/preparar o recurso spaCy inglês exigido por Misaki e materializar também o fallback linguístico escolhido. Registar revisões dos modelos, caminhos absolutos e recursos em `models.json`. Executar uma síntese fixa na preparação para revelar dependências tardias; não usar gravações pessoais para esse passo.
-- [ ] Implementar loaders: `WhisperModel(local_path, device="cpu", compute_type="int8", local_files_only=True)` e transcrição `language="en", task="transcribe", vad_filter=True`, preservando texto/segmentos. Kokoro recebe caminhos locais de configuração/pesos e tensor de voz local, modelo CPU e pipeline inglês; verificar recursos de Misaki antes de construir o pipeline, pois a biblioteca pode tentar obtê-los automaticamente. Concatenar todos os segmentos de áudio gerados, sem truncar a pergunta.
-- [ ] Acrescentar testes que impedem ligações de rede e subprocessos de download durante `health` e uso normal. Registar a marca pytest `models` em `pyproject.toml`; `test_offline_models.py` usa-a e só executa com recursos preparados: gerar a pergunta, ler WAV 24 kHz e transcrevê-lo com Whisper. Falta de modelos deve ser um skip explícito apenas neste teste opcional, nunca sucesso falso da validação real.
-- [ ] Repetir testes unitários e `.\.venv\Scripts\python.exe -m pip check`. Esperado: saída 0; falhas de modelos identificam o recurso em falta sem contaminar stdout.
+- [ ] Run `.\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_protocol.py audio-worker/tests/test_engines.py -q`; confirm failure due to contracts/behaviors still missing, not due to badly installed dependencies.
+- [ ] Implement the parser and the sequential server. Engine imports are late; redirect library stdout to stderr. Apply `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` before the imports in the server; `health` checks paths, voice, dependencies and English resources without downloading them.
+- [ ] Implement explicit online preparation: download `Systran/faster-whisper-small`, configuration/weights of `hexgrad/Kokoro-82M` and `voices/af_heart.pt`; install/prepare the English spaCy resource required by Misaki and also materialize the chosen language fallback. Record model revisions, absolute paths and resources in `models.json`. Run a fixed synthesis during preparation to reveal late dependencies; do not use personal recordings for that step.
+- [ ] Implement loaders: `WhisperModel(local_path, device="cpu", compute_type="int8", local_files_only=True)` and transcription `language="en", task="transcribe", vad_filter=True`, preserving text/segments. Kokoro receives local configuration/weight paths and a local voice tensor, CPU model and English pipeline; check Misaki resources before building the pipeline, since the library may try to obtain them automatically. Concatenate all generated audio segments, without truncating the question.
+- [ ] Add tests that prevent network connections and download subprocesses during `health` and normal use. Register the pytest marker `models` in `pyproject.toml`; `test_offline_models.py` uses it and only runs with prepared resources: generate the question, read the 24 kHz WAV and transcribe it with Whisper. Missing models must be an explicit skip only in this optional test, never a false success of the real validation.
+- [ ] Repeat the unit tests and `.\.venv\Scripts\python.exe -m pip check`. Expected: exit 0; model failures identify the missing resource without contaminating stdout.
 - [ ] Commit: `feat: add offline whisper and kokoro audio worker`.
 
-### Tarefa 5: Supervisão e recuperação do auxiliar
+### Task 5: Helper supervision and recovery
 
-**Ficheiros:** criar `src-tauri/src/worker/{mod.rs,protocol.rs}`, `src-tauri/tests/worker.rs` e `src-tauri/tests/fixtures/worker_stub.py`.
+**Files:** create `src-tauri/src/worker/{mod.rs,protocol.rs}`, `src-tauri/tests/worker.rs` and `src-tauri/tests/fixtures/worker_stub.py`.
 
-**Interfaces:** consome protocolo v1 e `AppError`; produz `WorkerClient`, `WorkerPort`, `WorkerConfig`, `WorkerRequest`, `WorkerMessage` e `WorkerEvent` definidos na secção 3. `WorkerConfig` obtém o executável/caminhos do ficheiro de configuração, validando existência e caminhos absolutos.
+**Interfaces:** consumes protocol v1 and `AppError`; produces `WorkerClient`, `WorkerPort`, `WorkerConfig`, `WorkerRequest`, `WorkerMessage` and `WorkerEvent` defined in section 3. `WorkerConfig` obtains the executable/paths from the configuration file, validating existence and absolute paths.
 
-- [ ] Escrever `worker_crash_releases_job`, `timeout_rejects_old_generation`, `stderr_does_not_block`, `non_json_stdout_is_protocol_error` e `handshake_does_not_load_models`. Asserções essenciais:
+- [ ] Write `worker_crash_releases_job`, `timeout_rejects_old_generation`, `stderr_does_not_block`, `non_json_stdout_is_protocol_error` and `handshake_does_not_load_models`. Essential assertions:
 
 ```rust
 assert_eq!(timeout.code, "WORKER_TIMEOUT");
@@ -305,19 +305,19 @@ assert!(restarted_generation > previous_generation);
 assert!(!state.accepts_result(&old_id, previous_generation));
 ```
 
-- [ ] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test worker`; confirmar falha antes da supervisão.
-- [ ] Implementar o processo com `tokio::process`, argumentos separados, stdin/stdout piped e stderr drenado. Usar processo sem janela visível em Windows. O handshake `health` não importa modelos pesados. Aplicar prazos por etapa e uma geração nova após reinício; EOF, JSON inválido e timeout falham o pedido pendente e permitem novo arranque.
-- [ ] No timeout, terminar o processo, aguardar a saída e invalidar quaisquer resultados/ficheiros provisórios do pedido. Um novo pedido nunca reutiliza o identificador de um pedido terminado. No encerramento, enviar `shutdown`, esperar até 3 s e terminar forçadamente se necessário.
-- [ ] Repetir testes com o Python 3.11 configurado e o stub de teste. Esperado: saída 0, sem processo filho pendurado e sem depender de modelos ou microfone.
+- [ ] Run `cargo test --manifest-path src-tauri/Cargo.toml --test worker`; confirm failure before the supervision.
+- [ ] Implement the process with `tokio::process`, separate arguments, stdin/stdout piped and stderr drained. Use a process without a visible window on Windows. The `health` handshake does not import heavy models. Apply per-stage deadlines and a new generation after a restart; EOF, invalid JSON and timeout fail the pending request and allow a new start.
+- [ ] On timeout, terminate the process, wait for the exit and invalidate any provisional results/files of the request. A new request never reuses the identifier of a terminated request. On shutdown, send `shutdown`, wait up to 3 s and terminate forcibly if necessary.
+- [ ] Repeat the tests with the configured Python 3.11 and the test stub. Expected: exit 0, no hanging child process and no dependency on models or microphone.
 - [ ] Commit: `feat: supervise local audio worker with recoverable jobs`.
 
-### Tarefa 6: Coordenar o fluxo e expor comandos Tauri
+### Task 6: Coordinate the flow and expose Tauri commands
 
-**Ficheiros:** criar `src-tauri/src/{service.rs,commands.rs}` e `src-tauri/tests/service.rs`; integrar em `lib.rs` e `capabilities/default.json`; implementar `src/lib/tauri.ts`.
+**Files:** create `src-tauri/src/{service.rs,commands.rs}` and `src-tauri/tests/service.rs`; integrate into `lib.rs` and `capabilities/default.json`; implement `src/lib/tauri.ts`.
 
-**Interfaces:** consome `AttemptStore`, `AudioPort`, `WorkerPort` e todos os tipos da secção 3; produz `AppService`, os comandos públicos e `practice://snapshot`. `PracticeClient` é o único acesso Tauri usado pela interface.
+**Interfaces:** consumes `AttemptStore`, `AudioPort`, `WorkerPort` and all the types of section 3; produces `AppService`, the public commands and `practice://snapshot`. `PracticeClient` is the only Tauri access used by the interface.
 
-- [ ] Escrever `can_record_with_worker_missing`, `failed_stop_keeps_previous_attempt`, `retry_transcription_reuses_audio`, `late_result_does_not_change_active_review`, `save_publication_can_retry`, `retranscribe_preserves_existing_review` e `close_finalizes_capture`. Asserções essenciais:
+- [ ] Write `can_record_with_worker_missing`, `failed_stop_keeps_previous_attempt`, `retry_transcription_reuses_audio`, `late_result_does_not_change_active_review`, `save_publication_can_retry`, `retranscribe_preserves_existing_review` and `close_finalizes_capture`. Essential assertions:
 
 ```rust
 assert_eq!(snapshot.attempt.unwrap().id, previous_id);
@@ -326,21 +326,21 @@ assert_eq!(after_late_result.attempt.unwrap().review.unwrap().text, "my words");
 assert_eq!(pending_jobs, 0);
 ```
 
-- [ ] Executar `cargo test --manifest-path src-tauri/Cargo.toml --test service`; confirmar falha antes da coordenação.
-- [ ] Implementar start/stop: terminar playback, reservar pasta/ID e iniciar captura. No stop, finalizar, publicar e só depois ativar a nova resposta. Se o transcritor estiver pronto, normalizar e iniciar automaticamente a transcrição; caso contrário, conservar áudio com ação de transcrever. `retry_save_recording` repete publicação de captura já finalizada, sem a gravar outra vez.
-- [ ] Implementar voz da pergunta e cache SHA-256 de texto+voz+velocidade+revisão do modelo; `play_audio(question)` usa cache ou inicia síntese, validando o WAV antes de reproduzir. `play_audio(response)` resolve apenas o original da resposta ativa; o frontend nunca fornece caminhos arbitrários.
-- [ ] Aplicar resultados só ao job/geração de origem. Guardar `Transcript` antes de publicá-lo; criar uma revisão inicial apenas se não existir. Preservar versões anteriores em nova transcrição. Um resultado sem fala guarda estado explícito, permite ouvir/gravar novamente e não cria qualquer nota.
-- [ ] Implementar restauro, refresh, save de revisão e encerramento normal, com eventos de captura interrompida/playback concluído. O snapshot tem `revision` crescente; eventos/comandos fora de ordem não substituem um estado mais recente. Não ativar automaticamente um pedido após timeout.
-- [ ] Repetir todos os testes Rust e verificar `npm.cmd run typecheck`. Esperado: saída 0. Abrir a app e confirmar que o microfone/ficheiros funcionam mesmo se Python não estiver configurado.
+- [ ] Run `cargo test --manifest-path src-tauri/Cargo.toml --test service`; confirm failure before the coordination.
+- [ ] Implement start/stop: end playback, reserve folder/ID and start capture. On stop, finalize, publish and only then activate the new answer. If the transcriber is ready, normalize and automatically start the transcription; otherwise, keep the audio with a transcribe action. `retry_save_recording` repeats the publication of an already finalized capture, without recording it again.
+- [ ] Implement the question voice and the SHA-256 cache of text+voice+speed+model revision; `play_audio(question)` uses the cache or starts synthesis, validating the WAV before playing. `play_audio(response)` resolves only the original of the active answer; the frontend never provides arbitrary paths.
+- [ ] Apply results only to the originating job/generation. Save the `Transcript` before publishing it; create an initial revision only if none exists. Preserve previous versions in a new transcription. A result without speech saves an explicit state, allows listening/recording again and does not create any note.
+- [ ] Implement restore, refresh, review save and normal shutdown, with interrupted capture/playback finished events. The snapshot has an increasing `revision`; out-of-order events/commands do not replace a more recent state. Do not automatically activate a request after a timeout.
+- [ ] Repeat all Rust tests and check `npm.cmd run typecheck`. Expected: exit 0. Open the app and confirm that the microphone/files work even if Python is not configured.
 - [ ] Commit: `feat: connect local audio workflow to tauri commands`.
 
-### Tarefa 7: Interface de prática e proteção das revisões
+### Task 7: Practice interface and protection of reviews
 
-**Ficheiros:** criar `src/features/practice/{Practice.tsx,usePractice.ts,practice.css,Practice.test.tsx}`, `src/test/setup.ts`; ligar `App.tsx` e o adaptador Tauri.
+**Files:** create `src/features/practice/{Practice.tsx,usePractice.ts,practice.css,Practice.test.tsx}`, `src/test/setup.ts`; wire `App.tsx` and the Tauri adapter.
 
-**Interfaces:** consome `PracticeClient` e `AppSnapshot`; `Practice({client}: {client: PracticeClient})` permite testar com adaptador controlado. `usePractice(client)` mantém snapshot, texto de revisão e estado de escrita local; não controla o estado persistente da captura nem dos jobs.
+**Interfaces:** consumes `PracticeClient` and `AppSnapshot`; `Practice({client}: {client: PracticeClient})` allows testing with a controlled adapter. `usePractice(client)` keeps the snapshot, the review text and the local writing state; it does not control the persistent state of the capture nor of the jobs.
 
-- [ ] Escrever testes Testing Library: `manual_start_stop`, `shows_loading_without_freezing_editor`, `raw_transcript_is_readonly`, `save_failure_keeps_dirty_text`, `new_recording_with_dirty_review`, `close_with_dirty_review` e `older_snapshot_is_ignored`. Fixar os comportamentos observáveis:
+- [ ] Write Testing Library tests: `manual_start_stop`, `shows_loading_without_freezing_editor`, `raw_transcript_is_readonly`, `save_failure_keeps_dirty_text`, `new_recording_with_dirty_review`, `close_with_dirty_review` and `older_snapshot_is_ignored`. Pin the observable behaviors:
 
 ```typescript
 expect(screen.getByRole('button', {name: 'Terminar gravação'})).toBeEnabled();
@@ -349,62 +349,62 @@ expect(screen.getByLabelText('Revisão da transcrição')).toHaveValue('my edite
 expect(client.startRecording).not.toHaveBeenCalled(); // enquanto a decisão sobre a revisão está pendente
 ```
 
-- [ ] Executar `npm.cmd test -- src/features/practice/Practice.test.tsx`; confirmar falhas de comportamento antes de implementar a experiência.
-- [ ] Implementar pergunta e ações “Ouvir pergunta”, “Iniciar gravação”, “Terminar gravação”, “Ouvir resposta”, “Parar áudio”, “Transcrever resposta”, “Guardar revisão” e “Reiniciar áudio local”, apresentadas conforme o estado. Mostrar duração de gravação, disponibilidade por componente, carregamento/processamento e erros com recuperação. O texto automático permanece apenas de leitura.
-- [ ] Implementar guardar/descartar/cancelar ao iniciar outra gravação com edição por guardar. Só iniciar a captura depois de resolver a decisão. Não limpar `dirty` quando `saveReview` falhar. Eventos de transcrição nunca substituem uma edição local existente.
-- [ ] Intercetar o fecho normal com `onCloseRequested`, impedir fecho imediato e resolver revisões por guardar. Após escolha válida, chamar `prepareClose`; fechar efetivamente só quando terminar com sucesso. Se o utilizador cancelar, manter a janela e os dados. Se houver erro de escrita, manter a revisão editável e explicar o erro.
-- [ ] Mostrar revisão em falta/por guardar/guardada, sem chamar “confirmar” à gravação do texto nesta fase. Garantir navegação por teclado, rótulos dos controlos e estado legível além da cor; não introduzir pontuações, chat fictício ou feedback de IA.
-- [ ] Repetir `npm.cmd test`, `npm.cmd run typecheck` e `npm.cmd run build`. Esperado: saída 0 e testes do fluxo sem chamadas reais ao microfone/modelos.
+- [ ] Run `npm.cmd test -- src/features/practice/Practice.test.tsx`; confirm behavior failures before implementing the experience.
+- [ ] Implement the question and the actions “Ouvir pergunta”, “Iniciar gravação”, “Terminar gravação”, “Ouvir resposta”, “Parar áudio”, “Transcrever resposta”, “Guardar revisão” and “Reiniciar áudio local”, presented according to the state. Show recording duration, availability per component, loading/processing and errors with recovery. The automatic text remains read-only.
+- [ ] Implement save/discard/cancel when starting another recording with a pending edit. Only start the capture after resolving the decision. Do not clear `dirty` when `saveReview` fails. Transcription events never replace an existing local edit.
+- [ ] Intercept the normal close with `onCloseRequested`, prevent immediate closing and resolve pending reviews. After a valid choice, call `prepareClose`; close effectively only when it finishes successfully. If the user cancels, keep the window and the data. If there is a write error, keep the review editable and explain the error.
+- [ ] Show review missing/pending/saved, without calling the saving of the text “confirmar” in this phase. Guarantee keyboard navigation, control labels and state legible beyond color; do not introduce scores, fictitious chat or AI feedback.
+- [ ] Repeat `npm.cmd test`, `npm.cmd run typecheck` and `npm.cmd run build`. Expected: exit 0 and flow tests without real calls to the microphone/models.
 - [ ] Commit: `feat: add local voice practice and transcript review interface`.
 
-### Tarefa 8: Validação real e instruções reproduzíveis
+### Task 8: Real validation and reproducible instructions
 
-**Ficheiros:** criar `docs/phase-1/{setup.md,validation.md}`, `scripts/verify.ps1`; atualizar `README.md`, `AGENTS.md` e o estado da fase apenas com evidência. Ajustar `config/audio.example.json` e locks se a validação exigir compatibilidade diferente.
+**Files:** create `docs/phase-1/{setup.md,validation.md}`, `scripts/verify.ps1`; update `README.md`, `AGENTS.md` and the phase status only with evidence. Adjust `config/audio.example.json` and locks if the validation requires different compatibility.
 
-**Interfaces:** consome a aplicação integrada e o CLI `python -m audio_worker.prepare --models-dir <caminho absoluto>`. Produz instruções verificadas, medições e a matriz CA-01 a CA-15; não produz funcionalidades da fase 2.
+**Interfaces:** consumes the integrated application and the CLI `python -m audio_worker.prepare --models-dir <absolute path>`. Produces verified instructions, measurements and the CA-01 to CA-15 matrix; does not produce phase 2 features.
 
-- [x] Implementar `scripts/verify.ps1` executando, com controlo de exit codes e interrupção na primeira falha: typecheck, testes React, build Vite, cargo fmt --check, cargo clippy --all-targets -- -D warnings, testes Rust, pytest sem a marca `models` e pip check. As mensagens de sucesso dependem de todos os comandos terem terminado com saída 0.
-- [x] Documentar preparação: `.venv` Python 3.11, dependências bloqueadas, recursos ingleses necessários, preparação explícita dos modelos, configuração pessoal fora do Git e execução `npm.cmd run tauri -- dev`. Usar caminhos com espaços no exemplo e não exigir execução a partir de um diretório implícito para resolver modelos.
-- [x] Executar `.\scripts\verify.ps1`. Esperado: todos os checks com saída 0. Executar separadamente `.\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_offline_models.py -m models -q` com modelos preparados; um skip aqui não satisfaz o percurso real.
-- [ ] Abrir a aplicação e validar com o utilizador pelo menos três gravações: curta, com termos técnicos e problemática. Testar ouvir Kokoro real, guardar/recuperar revisão, repetir transcrição sem nova captura, remover/restaurar o dispositivo e parar/reiniciar o auxiliar. Captura pessoal acontece por ação manual do utilizador, não por um teste automático. **Pendente de validação do utilizador** (a janela e a pergunta foram verificadas; as gravações reais não).
-- [ ] Repetir o percurso sem rede, depois da preparação, e com um recurso de voz em falta. Esperado: funcionamento offline quando preparado, erro explícito quando incompleto, sem tentativa de descarregar durante a prática. Verificar que iniciar outra gravação ou fechar não perde uma revisão. **Pendente na janela**; os motores e o erro de voz em falta já foram verificados por automação.
-- [x] Registar em `validation.md` hardware, versões, IDs/revisões dos modelos, duração do áudio, carregamento inicial, síntese e transcrição a frio e em repetição. Não incluir áudios pessoais no Git. Marcar cada CA como verificado, falhado ou pendente, com evidência; a aceitabilidade da espera depende do utilizador.
-- [x] Opcionalmente verificar `npm.cmd run tauri -- build --no-bundle` para antecipar problemas de compilação release; não apresentar esse binário como instalador autónomo com Python incluído. O pacote final é da fase 5.
-- [x] Atualizar a documentação de estado apenas se todos os critérios estiverem verificados, ou registar os bloqueios concretos. Commit: `docs: record phase one setup and local audio validation`.
+- [x] Implement `scripts/verify.ps1` running, with exit code control and interruption at the first failure: typecheck, React tests, Vite build, cargo fmt --check, cargo clippy --all-targets -- -D warnings, Rust tests, pytest without the `models` marker and pip check. The success messages depend on all commands having finished with exit 0.
+- [x] Document preparation: Python 3.11 `.venv`, locked dependencies, needed English resources, explicit preparation of the models, personal configuration outside Git and execution `npm.cmd run tauri -- dev`. Use paths with spaces in the example and do not require execution from an implicit directory to resolve models.
+- [x] Run `.\scripts\verify.ps1`. Expected: all checks with exit 0. Run separately `.\.venv\Scripts\python.exe -m pytest audio-worker/tests/test_offline_models.py -m models -q` with prepared models; a skip here does not satisfy the real journey.
+- [ ] Open the application and validate with the user at least three recordings: short, with technical terms and problematic. Test listening to real Kokoro, saving/restoring a review, repeating transcription without a new capture, removing/restoring the device and stopping/restarting the helper. Personal capture happens by manual action of the user, not by an automated test. **Pending user validation** (the window and the question were verified; the real recordings were not).
+- [ ] Repeat the journey without network, after preparation, and with a voice resource missing. Expected: offline operation when prepared, explicit error when incomplete, without an attempt to download during practice. Verify that starting another recording or closing does not lose a review. **Pending in the window**; the engines and the missing voice error have already been verified by automation.
+- [x] Record in `validation.md` hardware, versions, model IDs/revisions, audio duration, initial loading, synthesis and transcription cold and on repetition. Do not include personal audio in Git. Mark each CA as verified, failed or pending, with evidence; the acceptability of the wait depends on the user.
+- [x] Optionally verify `npm.cmd run tauri -- build --no-bundle` to anticipate release compilation problems; do not present that binary as a standalone installer with Python included. The final package is from phase 5.
+- [x] Update the status documentation only if all criteria are verified, or record the concrete blockers. Commit: `docs: record phase one setup and local audio validation`.
 
-## 5. Cobertura da spec
+## 5. Spec coverage
 
-| Critérios | Tarefas e prova principal |
+| Criteria | Tasks and main proof |
 | --- | --- |
-| CA-01 | 1 e 7: janela e pergunta exata; execução real em 8. |
-| CA-02 | 4 e 6: Kokoro real/cache; reprodução validada em 8. |
-| CA-03, CA-04 | 1, 3, 6 e 7: exclusão de operações, captura manual e controlos. |
-| CA-05 | 2, 3 e 6: ficheiro finalizado, publicação e playback independentes da transcrição. |
-| CA-06 | 4 e 8: Whisper CPU/int8 em inglês com gravações reais. |
-| CA-07, CA-08 | 2, 6 e 7: originais, versões, revisão e repetição sem sobrescrita. |
-| CA-09 | 2 e 6: apontador atómico, restauro e nova captura com publicação segura. |
-| CA-10 | 2, 3, 4 e 6: ficheiro/dispositivo/modelo em falta, áudio inválido e no_speech. |
-| CA-11 | 5 e 6: morte, timeout, geração e rejeição de resultados atrasados. |
-| CA-12 | 5, 6 e 7: trabalho fora da thread da interface e estados de progresso. |
-| CA-13 | 4 e 8: modelos locais completos e validação sem rede. |
-| CA-14, CA-15 | 8: documentação, medições, três gravações e validação pelo utilizador. |
+| CA-01 | 1 and 7: window and exact question; real execution in 8. |
+| CA-02 | 4 and 6: real Kokoro/cache; playback validated in 8. |
+| CA-03, CA-04 | 1, 3, 6 and 7: exclusion of operations, manual capture and controls. |
+| CA-05 | 2, 3 and 6: finalized file, publication and playback independent of transcription. |
+| CA-06 | 4 and 8: Whisper CPU/int8 in English with real recordings. |
+| CA-07, CA-08 | 2, 6 and 7: originals, versions, review and repetition without overwriting. |
+| CA-09 | 2 and 6: atomic pointer, restore and new capture with safe publication. |
+| CA-10 | 2, 3, 4 and 6: missing file/device/model, invalid audio and no_speech. |
+| CA-11 | 5 and 6: death, timeout, generation and rejection of delayed results. |
+| CA-12 | 5, 6 and 7: work outside the interface thread and progress states. |
+| CA-13 | 4 and 8: complete local models and validation without network. |
+| CA-14, CA-15 | 8: documentation, measurements, three recordings and validation by the user. |
 
-## 6. Revisão do plano e execução
+## 6. Plan review and execution
 
-- [x] Ler a spec e mapear os 15 critérios para tarefas.
-- [x] Definir ficheiros, contratos partilhados, versões de referência e limites por operação.
-- [x] Associar os cinco riscos de revisão a testes das tarefas responsáveis.
-- [x] Distinguir testes com adaptadores da integração com hardware/modelos reais.
-- [x] Manter SQLite, API, entrevista completa e instalador final fora desta fase.
-- [x] Fazer a revisão do plano diretamente, sem delegar uma segunda revisão.
+- [x] Read the spec and map the 15 criteria to tasks.
+- [x] Define files, shared contracts, reference versions and limits per operation.
+- [x] Associate the five review risks with tests of the responsible tasks.
+- [x] Distinguish tests with adapters from the integration with real hardware/models.
+- [x] Keep SQLite, API, complete interview and final installer outside this phase.
+- [x] Do the plan review directly, without delegating a second review.
 
-Recomendação para a execução futura: **execução direta na mesma sessão**, com `executing-plans`, por as tarefas dependerem dos mesmos contratos e ser importante controlar custos. Não iniciar a implementação como consequência de criar este documento; o utilizador pediu o plano. Não iniciar automaticamente as fases seguintes quando este plano terminar.
+Recommendation for future execution: **direct execution in the same session**, with `executing-plans`, because the tasks depend on the same contracts and it is important to control costs. Do not start the implementation as a consequence of creating this document; the user asked for the plan. Do not automatically start the following phases when this plan ends.
 
-## 7. Referências técnicas verificadas
+## 7. Verified technical references
 
-- [Tauri: pré-requisitos Windows](https://v2.tauri.app/start/prerequisites/), [comandos Rust](https://v2.tauri.app/develop/calling-rust/) e [testes de APIs](https://v2.tauri.app/develop/tests/mocking/).
-- [CPAL 0.18.2](https://docs.rs/cpal/0.18.2/cpal/), [Rodio 0.23.0](https://docs.rs/rodio/0.23.0/rodio/), [Hound 3.5.1](https://docs.rs/hound/3.5.1/hound/), [Rubato 5.0.1](https://docs.rs/rubato/5.0.1/rubato/) e [atomicwrites 0.4.4](https://docs.rs/atomicwrites/0.4.4/atomicwrites/).
-- [faster-whisper: requisitos e utilização](https://github.com/SYSTRAN/faster-whisper).
-- [Kokoro 0.9.4: requisitos Python](https://pypi.org/project/kokoro/0.9.4/), [modelo/voz](https://huggingface.co/hexgrad/Kokoro-82M) e [construtor com ficheiros locais](https://github.com/hexgrad/kokoro/blob/main/kokoro/model.py).
-- [Misaki: preparação dos recursos ingleses](https://github.com/hexgrad/misaki/blob/main/misaki/en.py).
-- Versões consultadas nos registos oficiais [npm](https://registry.npmjs.org/), [crates.io](https://crates.io/), [PyPI](https://pypi.org/) e no [canal Rust estável](https://static.rust-lang.org/dist/channel-rust-stable.toml).
+- [Tauri: Windows prerequisites](https://v2.tauri.app/start/prerequisites/), [Rust commands](https://v2.tauri.app/develop/calling-rust/) and [API tests](https://v2.tauri.app/develop/tests/mocking/).
+- [CPAL 0.18.2](https://docs.rs/cpal/0.18.2/cpal/), [Rodio 0.23.0](https://docs.rs/rodio/0.23.0/rodio/), [Hound 3.5.1](https://docs.rs/hound/3.5.1/hound/), [Rubato 5.0.1](https://docs.rs/rubato/5.0.1/rubato/) and [atomicwrites 0.4.4](https://docs.rs/atomicwrites/0.4.4/atomicwrites/).
+- [faster-whisper: requirements and usage](https://github.com/SYSTRAN/faster-whisper).
+- [Kokoro 0.9.4: Python requirements](https://pypi.org/project/kokoro/0.9.4/), [model/voice](https://huggingface.co/hexgrad/Kokoro-82M) and [builder with local files](https://github.com/hexgrad/kokoro/blob/main/kokoro/model.py).
+- [Misaki: preparation of the English resources](https://github.com/hexgrad/misaki/blob/main/misaki/en.py).
+- Versions consulted in the official registries [npm](https://registry.npmjs.org/), [crates.io](https://crates.io/), [PyPI](https://pypi.org/) and in the [stable Rust channel](https://static.rust-lang.org/dist/channel-rust-stable.toml).
