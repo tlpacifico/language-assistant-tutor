@@ -58,6 +58,18 @@ fn write_wav(path: &Path) {
     writer.finalize().expect("fechar WAV de teste");
 }
 
+#[derive(Clone, Default)]
+struct OrderLog(Arc<Mutex<Vec<&'static str>>>);
+
+impl OrderLog {
+    fn push(&self, step: &'static str) {
+        self.0.lock().unwrap().push(step);
+    }
+    fn steps(&self) -> Vec<&'static str> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
 #[derive(Default)]
 struct FakeAudio {
     capture: Mutex<Option<RecordingTarget>>,
@@ -73,9 +85,21 @@ struct FakeAudio {
     pause_attempts: Mutex<usize>,
     /// Quando ligado, `start_playback` falha com `DEVICE_UNAVAILABLE`.
     start_fail: Mutex<bool>,
+    /// Quando ligado, `start_capture` falha com `DEVICE_UNAVAILABLE`.
+    capture_fail: Mutex<bool>,
+    /// Quando ligado, `stop_playback`/`stop_all_playback` falham.
+    stop_fail: Mutex<bool>,
+    /// Registo ordenado dos passos de áudio e do auxiliar.
+    order: OrderLog,
 }
 
 impl FakeAudio {
+    fn with_order(order: OrderLog) -> Self {
+        Self {
+            order,
+            ..Self::default()
+        }
+    }
     fn starts(&self) -> usize {
         *self.starts.lock().unwrap()
     }
@@ -109,6 +133,14 @@ impl FakeAudio {
     fn fail_start(&self) {
         *self.start_fail.lock().unwrap() = true;
     }
+    /// Faz a próxima captura falhar como se o microfone estivesse ausente.
+    fn fail_capture(&self) {
+        *self.capture_fail.lock().unwrap() = true;
+    }
+    /// Faz a próxima paragem da saída falhar.
+    fn fail_stop(&self) {
+        *self.stop_fail.lock().unwrap() = true;
+    }
 }
 
 impl AudioPort for FakeAudio {
@@ -119,6 +151,14 @@ impl AudioPort for FakeAudio {
         }
     }
     fn start_capture(&self, target: RecordingTarget) -> Result<(), AppError> {
+        if *self.capture_fail.lock().unwrap() {
+            return Err(AppError::new(
+                error_code::DEVICE_UNAVAILABLE,
+                "micrófone indisponível.",
+                true,
+            ));
+        }
+        self.order.push("start_capture");
         write_wav(&target.directory.join("original.wav"));
         *self.starts.lock().unwrap() += 1;
         *self.capture.lock().unwrap() = Some(target);
@@ -170,10 +210,26 @@ impl AudioPort for FakeAudio {
         Ok(())
     }
     fn stop_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        if *self.stop_fail.lock().unwrap() {
+            return Err(AppError::new(
+                error_code::DEVICE_UNAVAILABLE,
+                "saída indisponível.",
+                true,
+            ));
+        }
+        self.order.push("stop");
         *self.stops.lock().unwrap() += 1;
         Ok(())
     }
     fn stop_all_playback(&self) -> Result<(), AppError> {
+        if *self.stop_fail.lock().unwrap() {
+            return Err(AppError::new(
+                error_code::DEVICE_UNAVAILABLE,
+                "saída indisponível.",
+                true,
+            ));
+        }
+        self.order.push("stop");
         *self.stops.lock().unwrap() += 1;
         Ok(())
     }
@@ -186,9 +242,16 @@ impl AudioPort for FakeAudio {
 struct FakeWorker {
     requests: Mutex<Vec<WorkerRequest>>,
     cancels: Mutex<usize>,
+    order: OrderLog,
 }
 
 impl FakeWorker {
+    fn with_order(order: OrderLog) -> Self {
+        Self {
+            order,
+            ..Self::default()
+        }
+    }
     fn transcriptions(&self) -> Vec<WorkerRequest> {
         self.requests
             .lock()
@@ -233,6 +296,7 @@ impl WorkerControl for FakeWorker {
         true
     }
     fn cancel(&self) -> Result<(), AppError> {
+        self.order.push("cancel");
         *self.cancels.lock().unwrap() += 1;
         Ok(())
     }
@@ -348,6 +412,7 @@ struct Harness {
     worker: Arc<FakeWorker>,
     transport: Arc<FakeTransport>,
     service: Arc<AppService>,
+    order: OrderLog,
 }
 
 fn build_service(
@@ -405,8 +470,9 @@ impl Harness {
         )
         .unwrap();
         let database = Database::open(database_path.clone()).expect("abrir a base");
-        let audio = Arc::new(FakeAudio::default());
-        let worker = Arc::new(FakeWorker::default());
+        let order = OrderLog::default();
+        let audio = Arc::new(FakeAudio::with_order(order.clone()));
+        let worker = Arc::new(FakeWorker::with_order(order.clone()));
         let transport = Arc::new(FakeTransport::default());
         let service = build_service(
             directory.path(),
@@ -426,6 +492,7 @@ impl Harness {
             worker,
             transport,
             service,
+            order,
         }
     }
 
@@ -2703,5 +2770,352 @@ async fn a_cached_play_device_failure_is_labelled_output() {
     assert_eq!(
         view.failure.as_ref().map(|f| f.operation),
         Some(PlayerOperation::Output)
+    );
+}
+
+// -- «Responder agora» e o ciclo de vida da gravação --------------------------
+
+#[tokio::test]
+async fn respond_now_stops_output_before_capture() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    h.service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    assert_eq!(h.order.steps(), vec!["stop", "cancel", "start_capture"]);
+}
+
+#[tokio::test]
+async fn a_capture_failure_does_not_restore_voice() {
+    use language_assistant_tutor::article::{ArticleRecovery, PlayerState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let streams = h.worker.streams().len();
+    let plays = h.audio.plays().len();
+
+    h.audio.fail_capture();
+    let error = h
+        .service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, error_code::DEVICE_UNAVAILABLE);
+
+    // A voz não volta: sem nova síntese nem reprodução, e o leitor fica inativo.
+    assert_eq!(h.worker.streams().len(), streams, "sem nova síntese");
+    assert_eq!(h.audio.plays().len(), plays, "sem nova reprodução");
+    assert_eq!(h.snapshot(&id).await.audio.state, PlayerState::Idle);
+    // A falha fica recuperável: gravar de novo.
+    let after = h.snapshot(&id).await;
+    assert_eq!(after.session.state, ArticleState::RecoverableError);
+    assert_eq!(after.session.recovery, Some(ArticleRecovery::ReRecord));
+}
+
+#[tokio::test]
+async fn a_duplicate_respond_now_starts_one_capture_and_one_turn() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let start = h.cmd(&ready);
+    let first = h
+        .service
+        .article_start_recording(start.clone())
+        .await
+        .unwrap();
+    let second = h.service.article_start_recording(start).await.unwrap();
+    assert_eq!(h.audio.starts(), 1, "uma só captura");
+    let turns: i64 = h
+        .database
+        .with_connection(|c| {
+            Ok(c.query_row(
+                "SELECT count(*) FROM article_turns WHERE speaker = 'user'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap())
+        })
+        .unwrap();
+    assert_eq!(turns, 1, "um só turno do utilizador");
+    assert_eq!(first.session.version, second.session.version);
+}
+
+#[tokio::test]
+async fn recording_events_carry_capture_identity_and_sequence() {
+    use language_assistant_tutor::article::{ArticleRecordingView, RecordingState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let events: Arc<Mutex<Vec<ArticleRecordingView>>> = Default::default();
+    let sink = events.clone();
+    h.service
+        .subscribe_article_recording(Arc::new(move |view: &ArticleRecordingView| {
+            sink.lock().unwrap().push(view.clone());
+        }));
+
+    h.service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    let first = events.lock().unwrap().clone();
+    assert_eq!(first.len(), 1, "o reconhecimento publica um evento");
+    let view = &first[0];
+    assert_eq!(view.state, RecordingState::Active);
+    assert_eq!(view.session_id, id);
+    assert!(!view.capture_id.is_empty(), "capture_id novo");
+    assert!(!view.turn_id.is_empty());
+    assert_eq!(view.sequence, 1);
+    assert_eq!(view.elapsed_ms, 0);
+    assert_eq!(view.level, None);
+
+    // O progresso da captura atual avança a sequência, mantendo a identidade.
+    h.service
+        .on_audio_event(AudioEvent::CaptureProgress {
+            recording_id: Some(view.turn_id.clone()),
+            elapsed_ms: 120,
+            level: Some(0.4),
+        })
+        .await;
+    let second = events.lock().unwrap().clone();
+    assert_eq!(second.len(), 2);
+    assert_eq!(second[1].capture_id, view.capture_id);
+    assert_eq!(second[1].sequence, 2);
+    assert_eq!(second[1].state, RecordingState::Active);
+}
+
+#[tokio::test]
+async fn a_resubscription_gets_the_current_recording_or_inactive() {
+    use language_assistant_tutor::article::RecordingState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+
+    assert_eq!(
+        h.snapshot(&id).await.recording.state,
+        RecordingState::Inactive
+    );
+
+    let started = h
+        .service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    let active = h.snapshot(&id).await.recording;
+    assert_eq!(active.state, RecordingState::Active);
+    assert!(!active.capture_id.is_empty());
+    assert!(!active.turn_id.is_empty());
+
+    h.service
+        .article_stop_recording(h.cmd(&started))
+        .await
+        .unwrap();
+    let ended = h.snapshot(&id).await.recording;
+    assert_eq!(ended.state, RecordingState::Ended);
+    assert_eq!(ended.elapsed_ms, 500, "o tempo final vem da captura");
+    assert_eq!(ended.level, None);
+
+    h.transcript("Remote work helps people focus.").await;
+    assert_eq!(
+        h.snapshot(&id).await.recording.state,
+        RecordingState::Inactive
+    );
+}
+
+#[tokio::test]
+async fn a_late_active_event_cannot_revive_a_finished_capture() {
+    use language_assistant_tutor::article::{ArticleRecordingView, RecordingState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let events: Arc<Mutex<Vec<ArticleRecordingView>>> = Default::default();
+    let sink = events.clone();
+    h.service
+        .subscribe_article_recording(Arc::new(move |view: &ArticleRecordingView| {
+            sink.lock().unwrap().push(view.clone());
+        }));
+    let started = h
+        .service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    let old_turn_id = events.lock().unwrap()[0].turn_id.clone();
+
+    h.service
+        .article_stop_recording(h.cmd(&started))
+        .await
+        .unwrap();
+    assert_eq!(
+        events.lock().unwrap().last().unwrap().state,
+        RecordingState::Ended
+    );
+    let len = events.lock().unwrap().len();
+    let sequence = events.lock().unwrap().last().unwrap().sequence;
+
+    // Um progresso tardio da captura já terminada não revive a gravação.
+    h.service
+        .on_audio_event(AudioEvent::CaptureProgress {
+            recording_id: Some(old_turn_id),
+            elapsed_ms: 999,
+            level: Some(0.9),
+        })
+        .await;
+    let now = events.lock().unwrap().clone();
+    assert_eq!(now.len(), len, "sem novo evento");
+    assert_eq!(now.last().unwrap().sequence, sequence);
+    assert_eq!(now.last().unwrap().state, RecordingState::Ended);
+}
+
+#[tokio::test]
+async fn recording_progress_uses_native_elapsed_and_real_level() {
+    use language_assistant_tutor::article::{ArticleRecordingView, RecordingState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let events: Arc<Mutex<Vec<ArticleRecordingView>>> = Default::default();
+    let sink = events.clone();
+    h.service
+        .subscribe_article_recording(Arc::new(move |view: &ArticleRecordingView| {
+            sink.lock().unwrap().push(view.clone());
+        }));
+    h.service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    let turn_id = events.lock().unwrap()[0].turn_id.clone();
+
+    h.service
+        .on_audio_event(AudioEvent::CaptureProgress {
+            recording_id: Some(turn_id),
+            elapsed_ms: 2500,
+            level: Some(0.75),
+        })
+        .await;
+    let view = events.lock().unwrap().last().unwrap().clone();
+    assert_eq!(view.elapsed_ms, 2500);
+    assert_eq!(view.level, Some(0.75));
+    assert_eq!(view.state, RecordingState::Active);
+}
+
+#[tokio::test]
+async fn microphone_loss_keeps_the_recoverable_recording_without_a_new_take() {
+    use language_assistant_tutor::article::{ArticleRecordingView, RecordingState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let events: Arc<Mutex<Vec<ArticleRecordingView>>> = Default::default();
+    let sink = events.clone();
+    h.service
+        .subscribe_article_recording(Arc::new(move |view: &ArticleRecordingView| {
+            sink.lock().unwrap().push(view.clone());
+        }));
+    h.service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    let turn_id = events.lock().unwrap()[0].turn_id.clone();
+
+    // O microfone cai a meio: áudio parcial recuperável.
+    let partial = CapturedAudio {
+        id: turn_id.clone(),
+        original: h
+            .directory
+            .path()
+            .join("articles")
+            .join(&id)
+            .join(&turn_id)
+            .join("original.wav"),
+        meta: CaptureMeta {
+            sample_rate: 48_000,
+            channels: 1,
+            duration_ms: 300,
+            bytes: 1440,
+            incomplete: true,
+        },
+    };
+    h.service
+        .on_audio_event(AudioEvent::CaptureInterrupted {
+            recording_id: Some(turn_id),
+            capture: Some(partial),
+            error: AppError::new(error_code::CAPTURE_INTERRUPTED, "microfone perdido.", true),
+        })
+        .await;
+
+    // A gravação recuperável fica guardada e não obriga a uma nova gravação:
+    // segue para revisão, com o áudio disponível e a vista em Inactive.
+    let after = h.snapshot(&id).await;
+    assert_eq!(after.session.state, ArticleState::NeedsReview);
+    assert_eq!(after.session.recovery, None);
+    assert!(after
+        .turns
+        .iter()
+        .any(|t| t.speaker == ArticleSpeaker::User && t.audio_available));
+    assert_eq!(after.recording.state, RecordingState::Inactive);
+}
+
+#[tokio::test]
+async fn meter_values_are_not_persisted_or_logged() {
+    use language_assistant_tutor::article::{ArticleRecordingView, RecordingState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let events: Arc<Mutex<Vec<ArticleRecordingView>>> = Default::default();
+    let sink = events.clone();
+    h.service
+        .subscribe_article_recording(Arc::new(move |view: &ArticleRecordingView| {
+            sink.lock().unwrap().push(view.clone());
+        }));
+    let started = h
+        .service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    let turn_id = events.lock().unwrap()[0].turn_id.clone();
+
+    // Progresso com nível e tempo reais: chegam à vista em memória…
+    h.service
+        .on_audio_event(AudioEvent::CaptureProgress {
+            recording_id: Some(turn_id),
+            elapsed_ms: 987_654,
+            level: Some(0.625),
+        })
+        .await;
+    assert_eq!(
+        events.lock().unwrap().last().unwrap().level,
+        Some(0.625),
+        "o nível real chega à vista"
+    );
+
+    // …mas nunca são persistidos: a fotografia da base reconstrói sempre a
+    // gravação como `Inactive`, sem nível nem tempo. O registo estruturado de
+    // diagnóstico só guarda operação/código/duração (`record_metric`), nunca o
+    // nível nem o tempo da gravação — coberto também pelo teste
+    // `turn_metrics_use_closed_operations_with_durations_and_no_content`.
+    h.service
+        .article_stop_recording(h.cmd(&started))
+        .await
+        .unwrap();
+    h.transcript("Remote work helps people focus.").await;
+    let persisted = h.database.article_snapshot(&id).unwrap();
+    assert_eq!(persisted.recording.state, RecordingState::Inactive);
+    assert_eq!(persisted.recording.level, None);
+    assert_eq!(persisted.recording.elapsed_ms, 0);
+}
+
+#[tokio::test]
+async fn a_failed_output_stop_does_not_start_capture() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+
+    h.audio.fail_stop();
+    let error = h
+        .service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, error_code::DEVICE_UNAVAILABLE);
+    assert_eq!(h.audio.starts(), 0, "a captura nunca começa");
+    assert_eq!(
+        h.snapshot(&id).await.session.state,
+        ArticleState::Ready,
+        "a conversa continua por gravar"
     );
 }

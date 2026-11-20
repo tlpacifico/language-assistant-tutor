@@ -31,13 +31,13 @@ use crate::ai::{
 use crate::article::{
     begin_entry, can_send_automatically, finish_entry, read_cache, remove_incomplete, voice_key,
     ArticleCommand, ArticleConsent, ArticleCorrection, ArticleCreate, ArticleError,
-    ArticleMutation, ArticleOutcome, ArticlePlayerView, ArticlePreferences, ArticleRequestKind,
-    ArticleSnapshot, ArticleSpeaker, ArticleState, ArticleSummary, CachedVoice, PlaybackTrigger,
-    PlayerEvent, PlayerOperation, PlayerRuntime, PlayerSource, PlayerState, RecordingRuntime,
-    ARTICLE_NOTICE_VERSION, ENGINE_ID,
+    ArticleMutation, ArticleOutcome, ArticlePlayerView, ArticlePreferences, ArticleRecordingView,
+    ArticleRequestKind, ArticleSnapshot, ArticleSpeaker, ArticleState, ArticleSummary, CachedVoice,
+    PlaybackTrigger, PlayerEvent, PlayerOperation, PlayerRuntime, PlayerSource, PlayerState,
+    RecordingRuntime, RecordingState, ARTICLE_NOTICE_VERSION, ENGINE_ID,
 };
 use crate::article::{ChunkRejection, ChunkSequence};
-use crate::audio::{PlaybackProgress, RecordingTarget};
+use crate::audio::{CapturedAudio, PlaybackProgress, RecordingTarget};
 use crate::worker::protocol::{SynthesizeStreamParams, TranscribeParams};
 
 /// Voz fixa do tutor no modo artigo; entra na identidade da cache.
@@ -48,6 +48,9 @@ pub type ArticleListener = Arc<dyn Fn(&ArticleSnapshot) + Send + Sync>;
 
 /// Destinatário do estado de reprodução publicado em `article://player`.
 pub type ArticlePlayerListener = Arc<dyn Fn(&ArticlePlayerView) + Send + Sync>;
+
+/// Destinatário do estado de gravação publicado em `article://recording`.
+pub type ArticleRecordingListener = Arc<dyn Fn(&ArticleRecordingView) + Send + Sync>;
 
 /// Captura de uma resposta em curso.
 #[derive(Debug, Clone)]
@@ -193,6 +196,14 @@ impl AppService {
             .unwrap_or_else(|p| p.into_inner())
     }
 
+    fn lock_article_recording_listener(
+        &self,
+    ) -> std::sync::MutexGuard<'_, Option<ArticleRecordingListener>> {
+        self.article_recording_listener
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
     /// Substitui o transporte do modo artigo (testes e configuração).
     pub fn with_article_transport(
         mut self,
@@ -210,6 +221,11 @@ impl AppService {
     /// Regista o destinatário do estado de reprodução (`article://player`).
     pub fn subscribe_article_player(&self, listener: ArticlePlayerListener) {
         *self.lock_article_player_listener() = Some(listener);
+    }
+
+    /// Regista o destinatário do estado de gravação (`article://recording`).
+    pub fn subscribe_article_recording(&self, listener: ArticleRecordingListener) {
+        *self.lock_article_recording_listener() = Some(listener);
     }
 
     /// Guarda a referência ao próprio serviço para lançar pedidos em segundo plano.
@@ -242,6 +258,13 @@ impl AppService {
 
     fn publish_player(&self, view: &ArticlePlayerView) {
         let listener = self.lock_article_player_listener().clone();
+        if let Some(listener) = listener {
+            listener(view);
+        }
+    }
+
+    fn publish_recording(&self, view: &ArticleRecordingView) {
+        let listener = self.lock_article_recording_listener().clone();
         if let Some(listener) = listener {
             listener(view);
         }
@@ -446,8 +469,27 @@ impl AppService {
         &self,
         command: ArticleCommand,
     ) -> Result<ArticleSnapshot, AppError> {
+        self.start_article_capture(command, true).await
+    }
+
+    /// Começa uma captura de resposta («Responder agora»).
+    ///
+    /// A ordem importa: primeiro valida (comando repetido, versão, estado,
+    /// limite, autorização e dono do áudio) sem tocar em dispositivos; depois
+    /// invalida a geração da reprodução e a intenção automática, pára a saída e
+    /// confirma, pede o cancelamento cooperativo da síntese (sem esperar pela
+    /// síntese descartada) e só então aplica a mutação e abre a captura. A
+    /// gravação só é reconhecida quando a captura está ativa, com um
+    /// `capture_id` novo nesse instante. `handoff` liga a paragem da voz
+    /// (`true` num «Responder agora»).
+    async fn start_article_capture(
+        &self,
+        command: ArticleCommand,
+        handoff: bool,
+    ) -> Result<ArticleSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
         let database = self.database()?;
+
         let turn_id = uuid::Uuid::new_v4().to_string();
         let audio_path = format!(
             "articles/{}/{turn_id}/{}",
@@ -459,7 +501,8 @@ impl AppService {
             audio_path,
         };
 
-        // Um comando repetido devolve o resultado guardado, sem tocar no áudio.
+        // 1. Validação prévia, sem tocar em dispositivos. Um comando repetido
+        //    devolve o resultado guardado, sem nova captura nem novo turno.
         let db = database.clone();
         let request = command.request_id.clone();
         if database_task(move || db.article_replayed(&request)).await? {
@@ -467,8 +510,51 @@ impl AppService {
             return database_task(move || db.apply_article(&command, change)).await;
         }
 
-        self.stop_article_speech_locked().await;
+        let snapshot = self.article_snapshot(&command.session_id).await?;
+        let session = &snapshot.session;
+        if session.version != command.expected_version {
+            return Err(AppError::new(
+                error_code::STALE_SOURCE,
+                "A conversa mudou entretanto. Atualize antes de repetir.",
+                false,
+            ));
+        }
+        if !matches!(
+            session.state,
+            ArticleState::Ready | ArticleState::NeedsReview | ArticleState::RecoverableError
+        ) {
+            return Err(AppError::new(
+                error_code::INVALID_INPUT,
+                "Não é possível gravar neste estado da conversa.",
+                false,
+            ));
+        }
+        if session.limit_reached {
+            return Err(AppError::new(
+                error_code::INVALID_INPUT,
+                "A conversa atingiu o limite. Termine para obter o feedback.",
+                false,
+            ));
+        }
+        if session.authorization.is_none() {
+            return Err(consent_error(
+                "Autorize o envio automático desta conversa antes de responder.",
+            ));
+        }
+        // O microfone e o auxiliar são partilhados com o STAR e entre artigos.
         self.ensure_audio_free_for_article()?;
+
+        if handoff {
+            // 2. Invalida a geração da reprodução e a intenção automática antes
+            //    de tocar no dispositivo: uma síntese tardia fica obsoleta.
+            self.invalidate_article_player_locked();
+            // 3. Pára a saída nativa e confirma; sem paragem não há captura.
+            self.stop_native_output_locked().await?;
+            // 4. Cancela a síntese cooperativamente, sem esperar pela descartada.
+            self.cancel_article_synthesis().await;
+        }
+
+        // 5. Prepara a pasta da gravação antes de aplicar a mutação.
         let directory = self
             .articles_base()
             .join("articles")
@@ -486,13 +572,7 @@ impl AppService {
         })
         .await?;
 
-        let audio = Arc::clone(&self.audio);
-        let _ = audio_task(move || audio.stop_all_playback()).await;
-        self.commit(|state| {
-            state.playback = None;
-            state.playback_id = None;
-        });
-
+        // 6. Aplica a mutação (validação autoritativa) e abre a captura.
         let db = database.clone();
         let session_id = command.session_id.clone();
         let applied = database_task(move || db.apply_article(&command, change)).await;
@@ -511,17 +591,31 @@ impl AppService {
         let audio = Arc::clone(&self.audio);
         match audio_task(move || audio.start_capture(target)).await {
             Ok(()) => {
-                self.lock_article().capture = Some(ArticleCapture {
-                    session_id,
-                    turn_id,
-                    directory,
-                });
+                // 7. Reconhece a gravação: `capture_id` novo, só quando ativa.
+                let capture_id = uuid::Uuid::new_v4().to_string();
+                let view = {
+                    let mut runtime = self.lock_article();
+                    if runtime.recording.view().session_id != session_id {
+                        runtime.recording = RecordingRuntime::new(session_id.clone());
+                    }
+                    if runtime.recording.view().state != RecordingState::Inactive {
+                        runtime.recording.inactive();
+                    }
+                    runtime.capture = Some(ArticleCapture {
+                        session_id: session_id.clone(),
+                        turn_id: turn_id.clone(),
+                        directory,
+                    });
+                    runtime.recording.start(turn_id.clone(), capture_id, true)
+                };
                 self.set_article_busy();
                 self.publish_article(&snapshot);
+                self.publish_recording(&view);
                 Ok(snapshot)
             }
             Err(error) => {
                 let _ = fs::remove_dir(&directory);
+                // Falha de captura: fica recuperável (ReRecord) e a voz não volta.
                 let db = database.clone();
                 let failure = article_error(&error);
                 let failed = database_task(move || {
@@ -535,6 +629,59 @@ impl AppService {
                 Err(error)
             }
         }
+    }
+
+    /// Invalida a geração da reprodução e a intenção automática, sem tocar no
+    /// dispositivo; a paragem efetiva da saída é feita em separado.
+    fn invalidate_article_player_locked(&self) {
+        let view = {
+            let mut runtime = self.lock_article();
+            runtime.position_offset_ms = 0;
+            runtime.buffered_offset_ms = 0;
+            runtime.player.invalidate()
+        };
+        self.publish_player(&view);
+    }
+
+    /// Pára a saída nativa e confirma; devolve erro se a paragem falhar, para
+    /// que a captura nunca comece sobre um dispositivo que continua a tocar.
+    async fn stop_native_output_locked(&self) -> Result<(), AppError> {
+        let playback_id = self.lock_article().playback_id.take();
+        if let Some(id) = playback_id {
+            let audio = Arc::clone(&self.audio);
+            audio_task(move || audio.stop_playback(&id)).await?;
+        }
+        let audio = Arc::clone(&self.audio);
+        audio_task(move || audio.stop_all_playback()).await?;
+        self.clear_star_playback();
+        Ok(())
+    }
+
+    /// Pede o cancelamento cooperativo da síntese em curso e esquece-a, sem
+    /// esperar que a síntese descartada termine.
+    async fn cancel_article_synthesis(&self) {
+        let speech = {
+            let mut runtime = self.lock_article();
+            runtime.speech.take()
+        };
+        if speech.is_some() {
+            if let Some(control) = self.worker_control() {
+                let _ = worker_task(move || control.cancel()).await;
+            }
+        }
+    }
+
+    /// Regressa a gravação a `Inactive` e publica a mudança, apenas quando a
+    /// gravação pertence à sessão indicada; usado quando o turno é consumido,
+    /// apagado, ou no reinício.
+    fn reset_article_recording(&self, session_id: &str) {
+        let mut runtime = self.lock_article();
+        if runtime.recording.view().session_id != session_id {
+            return;
+        }
+        let view = runtime.recording.inactive();
+        drop(runtime);
+        self.publish_recording(&view);
     }
 
     pub async fn article_stop_recording(
@@ -565,7 +712,11 @@ impl AppService {
         let captured = match stopped {
             Ok(captured) => captured,
             Err(error) => {
+                // A captura falhou ao fechar: publica o fim (sem tempo) e
+                // regressa a `Inactive`, pois o turno fica por gravar.
+                self.finish_article_recording(0);
                 self.lock_article().capture = None;
+                self.reset_article_recording(&capture.session_id);
                 self.set_article_busy();
                 let db = database.clone();
                 let failure = article_error(&error);
@@ -582,7 +733,9 @@ impl AppService {
             }
         };
 
-        // O áudio finalizado já está no disco; só agora se regista o fim.
+        // O áudio finalizado já está no disco: publica o fim com o tempo real e
+        // só agora se regista o fim no repositório.
+        self.finish_article_recording(captured.meta.duration_ms);
         let db = database.clone();
         let session_id = capture.session_id.clone();
         let stopped =
@@ -593,6 +746,7 @@ impl AppService {
             Err(error) => {
                 // O áudio já fechou: sem esta marca a conversa ficava em `recording`
                 // sem captura viva. Fica recuperável (`Retry` volta a gravar).
+                self.reset_article_recording(&capture.session_id);
                 self.set_article_busy();
                 let db = database.clone();
                 let failure = article_error(&error);
@@ -637,10 +791,22 @@ impl AppService {
                 })
                 .await?;
                 self.publish_article(&snapshot);
+                self.reset_article_recording(&capture.session_id);
                 self.record_error(&error);
                 Ok(snapshot)
             }
         }
+    }
+
+    /// Publica o fim da gravação com o tempo final e sem nível.
+    fn finish_article_recording(&self, duration_ms: u64) {
+        let view = {
+            let mut runtime = self.lock_article();
+            let capture_id = runtime.recording.capture_id().to_owned();
+            runtime.recording.end(&capture_id, duration_ms);
+            runtime.recording.view()
+        };
+        self.publish_recording(&view);
     }
 
     /// Normaliza o áudio e pede a transcrição ao auxiliar.
@@ -784,6 +950,7 @@ impl AppService {
         // Uma conversa eliminada, revogada ou mudada entretanto recusa o resultado.
         if let Ok(snapshot) = applied {
             self.publish_article(&snapshot);
+            self.reset_article_recording(&job.session_id);
             self.dispatch_request_if_due(&snapshot);
         }
         true
@@ -1657,6 +1824,120 @@ impl AppService {
         self.apply_player_event(generation, PlayerEvent::Drained);
     }
 
+    /// Progresso da captura do artigo, entregue pela porta de áudio (≤10 Hz).
+    ///
+    /// Só é aceite quando `recording_id` coincide com o turno da captura atual
+    /// e a vista da gravação está `Active`; qualquer evento tardio é ignorado.
+    pub(super) async fn article_capture_progress(
+        &self,
+        recording_id: Option<String>,
+        elapsed_ms: u64,
+        level: Option<f32>,
+    ) {
+        let (changed, view) = {
+            let mut runtime = self.lock_article();
+            let Some(capture) = runtime.capture.as_ref() else {
+                return;
+            };
+            if recording_id.as_deref() != Some(capture.turn_id.as_str()) {
+                return;
+            }
+            let capture_id = runtime.recording.capture_id().to_owned();
+            let changed = runtime.recording.progress(&capture_id, elapsed_ms, level);
+            (changed, runtime.recording.view())
+        };
+        if changed {
+            self.publish_recording(&view);
+        }
+    }
+
+    /// Interrupção da captura do artigo (perda do microfone, por exemplo).
+    ///
+    /// Devolve `true` quando o evento pertence à captura atual. Publica `Ended`
+    /// com o tempo final e sem nível; com áudio recuperável o turno segue para
+    /// revisão (sem nova gravação), sem áudio fica `ReRecord`.
+    pub(super) async fn article_capture_interrupted(
+        &self,
+        recording_id: Option<String>,
+        capture: Option<CapturedAudio>,
+        error: AppError,
+    ) -> bool {
+        let (turn_id, session_id, duration_ms) = {
+            let runtime = self.lock_article();
+            let Some(active) = runtime.capture.as_ref() else {
+                return false;
+            };
+            let id = recording_id
+                .as_deref()
+                .or_else(|| capture.as_ref().map(|c| c.id.as_str()));
+            if id != Some(active.turn_id.as_str()) {
+                return false;
+            }
+            (
+                active.turn_id.clone(),
+                active.session_id.clone(),
+                capture.as_ref().map_or(0, |c| c.meta.duration_ms),
+            )
+        };
+
+        // Publica o fim com o tempo final e sem nível.
+        self.finish_article_recording(duration_ms);
+        self.lock_article().capture = None;
+        self.set_article_busy();
+
+        let reset_session = session_id.clone();
+        let Ok(database) = self.database() else {
+            return true;
+        };
+        match capture {
+            Some(_) => {
+                // Áudio recuperável já no disco: o turno segue para revisão,
+                // sem obrigar a uma nova gravação.
+                let db = database.clone();
+                let sid = session_id.clone();
+                if let Ok(snapshot) = database_task(move || {
+                    db.apply_article_system(&sid, ArticleMutation::StopRecording)
+                })
+                .await
+                {
+                    self.publish_article(&snapshot);
+                }
+                let db = database.clone();
+                let tid = turn_id.clone();
+                let sid = reset_session.clone();
+                if let Ok(snapshot) = database_task(move || {
+                    db.apply_article_system(
+                        &sid,
+                        ArticleMutation::RecordTranscript {
+                            turn_id: tid,
+                            text: None,
+                        },
+                    )
+                })
+                .await
+                {
+                    self.publish_article(&snapshot);
+                }
+                self.record_error(&error);
+            }
+            None => {
+                // Sem áudio recuperável: fica `ReRecord`.
+                let db = database.clone();
+                let failure = article_error(&error);
+                if let Ok(snapshot) = database_task(move || {
+                    db.apply_article_system(&session_id, ArticleMutation::Fail { error: failure })
+                })
+                .await
+                {
+                    self.publish_article(&snapshot);
+                }
+                self.record_error(&error);
+            }
+        }
+        self.reset_article_recording(&reset_session);
+        true
+    }
+
     /// Encaminha mensagens do pedido de voz; `true` se pertencem a ele.
     async fn route_speech_message(
         &self,
@@ -1847,6 +2128,7 @@ impl AppService {
         let command = correction.command;
         let snapshot = database_task(move || database.apply_article(&command, change)).await?;
         self.publish_article(&snapshot);
+        self.reset_article_recording(&snapshot.session.id);
         self.dispatch_request_if_due(&snapshot);
         Ok(snapshot)
     }
@@ -1937,6 +2219,7 @@ impl AppService {
             }
         }
         self.set_article_busy();
+        self.reset_article_recording(&session_id);
         self.clean_deleted_article(&database, &session_id).await;
         Ok(())
     }
@@ -1949,6 +2232,10 @@ impl AppService {
             let mut runtime = self.lock_article();
             (runtime.capture.take(), runtime.transcription.take())
         };
+        let reset_session = capture
+            .as_ref()
+            .map(|c| c.session_id.clone())
+            .or_else(|| transcription.as_ref().map(|t| t.session_id.clone()));
         let Ok(database) = self.database() else {
             return;
         };
@@ -1978,6 +2265,9 @@ impl AppService {
             .await;
         }
         self.set_article_busy();
+        if let Some(session_id) = reset_session {
+            self.reset_article_recording(&session_id);
+        }
     }
 
     /// Remove os ficheiros pendentes e, sem pendentes, as linhas da conversa.

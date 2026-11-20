@@ -53,6 +53,9 @@ pub const ARTICLE_SNAPSHOT_EVENT: &str = "article://snapshot";
 /// Evento com o estado de reprodução de um artigo.
 pub const ARTICLE_PLAYER_EVENT: &str = "article://player";
 
+/// Evento com o estado de gravação de um artigo.
+pub const ARTICLE_RECORDING_EVENT: &str = "article://recording";
+
 /// Arranque real do auxiliar a partir da configuração pessoal.
 ///
 /// A configuração é lida uma vez no arranque; corrigir `audio.json` exige
@@ -166,6 +169,22 @@ pub fn run() {
                     ));
                 }
             }));
+
+            let recording_handle = app.handle().clone();
+            service.subscribe_article_recording(Arc::new(
+                move |view: &article::ArticleRecordingView| {
+                    if recording_handle
+                        .emit(ARTICLE_RECORDING_EVENT, view.clone())
+                        .is_err()
+                    {
+                        diagnostics::record(diagnostics::Event::new(
+                            "rust",
+                            "snapshot_publish",
+                            "UNEXPECTED",
+                        ));
+                    }
+                },
+            ));
 
             let audio_service = Arc::clone(&service);
             tauri::async_runtime::spawn(async move {

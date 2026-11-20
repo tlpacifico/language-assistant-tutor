@@ -77,7 +77,7 @@ mod article;
 mod interview;
 mod practice;
 
-pub use article::{ArticleListener, ArticlePlayerListener};
+pub use article::{ArticleListener, ArticlePlayerListener, ArticleRecordingListener};
 
 /// Falha de SQLite simulada nos testes, injetada em pontos concretos do arranque
 /// da captura de preparação. Nunca é usada pelo caminho real.
@@ -438,6 +438,7 @@ pub struct AppService {
     article_transport: Arc<dyn crate::ai::ArticleTransport>,
     article_listener: Mutex<Option<ArticleListener>>,
     article_player_listener: Mutex<Option<ArticlePlayerListener>>,
+    article_recording_listener: Mutex<Option<ArticleRecordingListener>>,
 }
 
 impl AppService {
@@ -481,6 +482,7 @@ impl AppService {
             article_transport: Arc::new(crate::ai::ArticleHttpTransport::default()),
             article_listener: Mutex::new(None),
             article_player_listener: Mutex::new(None),
+            article_recording_listener: Mutex::new(None),
         }
     }
 
@@ -1061,6 +1063,17 @@ impl AppService {
                 capture,
                 error,
             } => {
+                // A interrupção pertence ao artigo quando a captura atual é sua.
+                if self
+                    .article_capture_interrupted(
+                        recording_id.clone(),
+                        capture.clone(),
+                        error.clone(),
+                    )
+                    .await
+                {
+                    return;
+                }
                 self.apply_capture_interruption(recording_id, capture, error)
                     .await;
             }
@@ -1079,9 +1092,13 @@ impl AppService {
                 // O progresso é consumido pelo leitor de artigos (≤4 Hz).
                 self.article_playback_progress(&id, progress).await;
             }
-            AudioEvent::CaptureProgress { .. } => {
-                // O progresso da captura é consumido pelo leitor de artigos
-                // (tarefa 7), que o mapeia para `ArticleRecordingView`.
+            AudioEvent::CaptureProgress {
+                recording_id,
+                elapsed_ms,
+                level,
+            } => {
+                self.article_capture_progress(recording_id, elapsed_ms, level)
+                    .await;
             }
         }
     }
