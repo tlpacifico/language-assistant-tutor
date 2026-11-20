@@ -66,6 +66,11 @@ struct FakeAudio {
     appends: Mutex<Vec<PathBuf>>,
     stops: Mutex<usize>,
     last_id: Mutex<Option<PlaybackId>>,
+    /// Quando presente, `pause_playback` bloqueia até receber um sinal, para
+    /// simular um dispositivo lento que detém o coordenador serial.
+    pause_gate: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    /// Quantas vezes `pause_playback` foi invocado (antes do bloqueio).
+    pause_attempts: Mutex<usize>,
 }
 
 impl FakeAudio {
@@ -88,6 +93,15 @@ impl FakeAudio {
             .unwrap()
             .clone()
             .expect("reprodução iniciada")
+    }
+    fn pause_attempts(&self) -> usize {
+        *self.pause_attempts.lock().unwrap()
+    }
+    /// Retém a próxima pausa, devolvendo o remetente que a liberta.
+    fn hold_pause(&self) -> std::sync::mpsc::Sender<()> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        *self.pause_gate.lock().unwrap() = Some(rx);
+        tx
     }
 }
 
@@ -133,6 +147,10 @@ impl AudioPort for FakeAudio {
         Ok(())
     }
     fn pause_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        *self.pause_attempts.lock().unwrap() += 1;
+        if let Some(gate) = self.pause_gate.lock().unwrap().take() {
+            let _ = gate.recv();
+        }
         Ok(())
     }
     fn resume_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
@@ -1798,13 +1816,21 @@ async fn a_stale_finished_event_does_not_stop_a_new_item() {
     let second_id = h.audio.last_id();
     assert_ne!(first_id, second_id);
 
+    // A substituição fica audivelmente a tocar.
+    progress(&h, 300, 500).await;
+    let playing = h.snapshot(&id).await.audio;
+    assert_eq!(playing.state, PlayerState::Playing);
+    assert_eq!(playing.position_ms, 300);
+
+    // O fim tardio do item antigo não pára nem regride a substituição.
     h.service
         .on_audio_event(AudioEvent::PlaybackFinished { id: first_id })
         .await;
     let view = h.snapshot(&id).await.audio;
     assert_eq!(view.turn_id.as_deref(), Some(users[1].as_str()));
     assert_eq!(view.source, Some(PlayerSource::UserRecording));
-    assert_ne!(view.state, PlayerState::Idle);
+    assert_eq!(view.state, PlayerState::Playing);
+    assert_eq!(view.position_ms, 300);
 }
 
 #[tokio::test]
@@ -1907,10 +1933,13 @@ async fn an_explicit_restart_starts_the_position_at_zero() {
     progress(&h, 500, 500).await;
     assert_eq!(h.snapshot(&id).await.audio.position_ms, 500);
 
-    // Reinicia a mesma fala do início: a posição e o desvio voltam a zero.
+    // Reinicia a mesma fala do início: a posição, a preparação e a duração
+    // voltam ao estado inicial.
     let view = h.service.article_player_play(&id, &tutor).await.unwrap();
     assert_eq!(view.state, PlayerState::Preparing);
     assert_eq!(view.position_ms, 0, "o reinício começa do início");
+    assert_eq!(view.buffered_ms, None, "a preparação volta ao início");
+    assert_eq!(view.duration_ms, None, "a duração volta a desconhecida");
 
     // O progresso seguinte é a posição local do dispositivo, sem desvio.
     progress(&h, 100, 500).await;
@@ -2018,6 +2047,20 @@ async fn disabling_autoplay_stops_automatic_voice_but_not_an_explicit_replay() {
     let view = h.service.article_player_play(&id, &tutor).await.unwrap();
     assert_eq!(view.state, PlayerState::Preparing);
     assert_eq!(view.trigger, Some(PlaybackTrigger::Explicit));
+
+    // Desligar a reprodução automática não pára uma repetição explícita.
+    h.service
+        .article_preferences_save(ArticlePreferences {
+            autoplay: false,
+            speed_x10: 10,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        playback(&h, &id).await,
+        PlayerState::Preparing,
+        "a repetição explícita continua ativa"
+    );
 }
 
 #[tokio::test]
@@ -2140,10 +2183,17 @@ async fn deleting_finishing_or_revoking_cancels_pending_player_work() {
     send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
     progress(&h, 200, 400).await;
     assert_eq!(playback(&h, &id).await, PlayerState::Playing);
+    let generation = h.snapshot(&id).await.audio.generation;
     let cancels = h.worker.cancels();
     h.service.article_finish(h.cmd(&ready)).await.unwrap();
     assert!(h.worker.cancels() > cancels, "terminar cancela a síntese");
-    assert_eq!(playback(&h, &id).await, PlayerState::Idle);
+    let after = h.snapshot(&id).await.audio;
+    assert_eq!(after.state, PlayerState::Idle);
+    assert!(after.generation > generation, "terminar invalida a geração");
+    // Um bloco tardio não toca.
+    let appends = h.audio.appends().len();
+    send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
+    assert_eq!(h.audio.appends().len(), appends, "o bloco tardio não toca");
 
     // Eliminar.
     let ready = h.ready().await;
@@ -2152,14 +2202,22 @@ async fn deleting_finishing_or_revoking_cancels_pending_player_work() {
     let cancels = h.worker.cancels();
     h.service.article_delete(h.cmd(&ready)).await.unwrap();
     assert!(h.worker.cancels() > cancels, "eliminar cancela a síntese");
+    // Um bloco tardio não toca depois de eliminar.
+    let appends = h.audio.appends().len();
+    send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
+    assert_eq!(h.audio.appends().len(), appends, "o bloco tardio não toca");
 
     // Revogar.
     let ready = h.ready().await;
+    let id = ready.session.id.clone();
     let request = h.worker.streams().last().cloned().unwrap();
     send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    let generation = h.snapshot(&id).await.audio.generation;
     let cancels = h.worker.cancels();
     h.service.article_revoke(h.cmd(&ready)).await.unwrap();
     assert!(h.worker.cancels() > cancels, "revogar cancela a síntese");
+    let after = h.snapshot(&id).await.audio;
+    assert!(after.generation > generation, "revogar invalida a geração");
 }
 
 #[tokio::test]
@@ -2186,4 +2244,328 @@ async fn reopening_starts_the_player_idle() {
     let snapshot = restarted.article_snapshot(&id).await.unwrap();
     assert_eq!(snapshot.audio.state, PlayerState::Idle);
     assert_eq!(snapshot.audio.generation, 0);
+}
+
+// -- revisão: autoplay obsoleta, foco, saída e geração --------------------------
+
+#[tokio::test]
+async fn stale_autoplay_does_not_start_after_autoplay_is_disabled() {
+    let h = Harness::new().await;
+    let created = h.create().await;
+    let id = created.session.id.clone();
+    h.service.article_view_focus(&id, "token").await.unwrap();
+    // Retém o pedido de abertura.
+    let gate = h.transport.hold_next();
+    h.service
+        .article_authorize(h.consent(&created))
+        .await
+        .unwrap();
+    h.wait_for_calls(1).await;
+    // Desliga a reprodução automática enquanto a abertura está em voo.
+    h.service
+        .article_preferences_save(ArticlePreferences {
+            autoplay: false,
+            speed_x10: 10,
+        })
+        .await
+        .unwrap();
+    gate.notify_one();
+    h.service.article_settle().await;
+    assert_eq!(h.snapshot(&id).await.session.state, ArticleState::Ready);
+    assert_eq!(
+        h.worker.streams().len(),
+        0,
+        "autoplay desligada antes da conclusão"
+    );
+}
+
+#[tokio::test]
+async fn stale_autoplay_does_not_start_after_the_view_blurs() {
+    let h = Harness::new().await;
+    let created = h.create().await;
+    let id = created.session.id.clone();
+    h.service.article_view_focus(&id, "token").await.unwrap();
+    let gate = h.transport.hold_next();
+    h.service
+        .article_authorize(h.consent(&created))
+        .await
+        .unwrap();
+    h.wait_for_calls(1).await;
+    // A vista desfoca enquanto a abertura está em voo.
+    h.service.article_view_blur("token").await.unwrap();
+    gate.notify_one();
+    h.service.article_settle().await;
+    assert_eq!(h.snapshot(&id).await.session.state, ArticleState::Ready);
+    assert_eq!(h.worker.streams().len(), 0, "sem autoplay depois do blur");
+}
+
+#[tokio::test]
+async fn blur_stops_the_focused_session_playback() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    progress(&h, 200, 400).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
+
+    h.service.article_view_blur("harness").await.unwrap();
+    assert_eq!(playback(&h, &id).await, PlayerState::Idle);
+    assert!(h.worker.cancels() >= 1, "o blur cancela a síntese");
+}
+
+#[tokio::test]
+async fn focusing_another_session_stops_the_previous_player_even_without_a_prior_focus() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let created = h.create().await;
+    let id = created.session.id.clone();
+    // Autoriza sem focar: a abertura não toca sozinha.
+    h.service
+        .article_authorize(h.consent(&created))
+        .await
+        .unwrap();
+    h.service.article_settle().await;
+    let ready = h.snapshot(&id).await;
+    assert_eq!(ready.session.state, ArticleState::Ready);
+    let tutor = ready.turns[0].id.clone();
+
+    // Reproduz explicitamente sem focar: o leitor pertence a esta sessão.
+    h.service.article_player_play(&id, &tutor).await.unwrap();
+    let request = h.worker.streams().last().cloned().unwrap();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    progress(&h, 200, 400).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
+
+    // Outra sessão toma o foco: a reprodução anterior pára, mesmo sem um foco
+    // anterior registado.
+    h.service
+        .article_view_focus("other-session", "token")
+        .await
+        .unwrap();
+    assert_eq!(playback(&h, &id).await, PlayerState::Idle);
+}
+
+#[tokio::test]
+async fn completion_after_a_drain_restart_stays_buffering_until_audio_ends() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+    send_chunk_file(&h, &request, 0).await;
+    progress(&h, 500, 500).await;
+    // A fila esvazia.
+    let first_id = h.audio.last_id();
+    h.service
+        .on_audio_event(AudioEvent::PlaybackFinished { id: first_id })
+        .await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Buffering);
+    // O bloco seguinte retoma a fila.
+    send_chunk_file(&h, &request, 1).await;
+    // A síntese termina antes de qualquer tick: continua `buffering`, não `ended`.
+    finish_stream(&h, &request, 2).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Buffering);
+    assert_eq!(h.snapshot(&id).await.audio.duration_ms, Some(1000));
+    // Um tick audível passa a `playing`.
+    progress(&h, 300, 500).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
+    assert_eq!(h.snapshot(&id).await.audio.position_ms, 800);
+    // O fim da fila conclui a rendição.
+    let last_id = h.audio.last_id();
+    h.service
+        .on_audio_event(AudioEvent::PlaybackFinished { id: last_id })
+        .await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Ended);
+}
+
+#[tokio::test]
+async fn active_prefix_reuse_is_scoped_to_the_same_session() {
+    use language_assistant_tutor::article::{ArticleMutation, PlayerState};
+    let h = Harness::new().await;
+    // Sessão A com uma síntese em curso e um prefixo já entregue.
+    let a = h.ready().await;
+    let request_a = h.worker.streams()[0].clone();
+    send_chunk_file(&h, &request_a, 0).await;
+    // Elimina A diretamente na base, sem passar pela limpeza do serviço: a
+    // síntese de A continua viva em memória.
+    h.database
+        .apply_article(&h.cmd(&a), ArticleMutation::Delete)
+        .unwrap();
+
+    // Sessão B com o mesmo artigo (a abertura tem o mesmo texto).
+    let b = h.create().await;
+    let b_id = b.session.id.clone();
+    h.service.article_authorize(h.consent(&b)).await.unwrap();
+    h.service.article_settle().await;
+    let b_snapshot = h.snapshot(&b_id).await;
+    let b_turn = b_snapshot.turns[0].id.clone();
+    let streams = h.worker.streams().len();
+
+    // Reproduzir a abertura de B não reutiliza o prefixo da sessão A.
+    let view = h.service.article_player_play(&b_id, &b_turn).await.unwrap();
+    assert_eq!(
+        h.worker.streams().len(),
+        streams + 1,
+        "síntese nova para a sessão B"
+    );
+    assert_eq!(view.state, PlayerState::Preparing);
+}
+
+#[tokio::test]
+async fn finish_forces_a_stop_before_waiting_for_a_pending_play() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    progress(&h, 200, 400).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
+    let generation = h.snapshot(&id).await.audio.generation;
+
+    // Uma pausa pendente detém o coordenador serial.
+    let release = h.audio.hold_pause();
+    let service = Arc::clone(&h.service);
+    let pause = tokio::spawn({
+        let id = id.clone();
+        async move {
+            let _ = service.article_player_pause(&id, generation).await;
+        }
+    });
+    for _ in 0..200 {
+        if h.audio.pause_attempts() >= 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert_eq!(h.audio.pause_attempts(), 1, "a pausa ficou pendente");
+
+    // Terminar pára o dispositivo antes de esperar pelo coordenador.
+    let finish = {
+        let service = Arc::clone(&h.service);
+        let cmd = h.cmd(&ready);
+        tokio::spawn(async move {
+            let _ = service.article_finish(cmd).await;
+        })
+    };
+    for _ in 0..200 {
+        if h.audio.stops() > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(h.audio.stops() > 0, "o dispositivo parou antes de esperar");
+
+    // Liberta a pausa e o término; o resultado tardio fica invalidado.
+    drop(release);
+    pause.await.unwrap();
+    finish.await.unwrap();
+    let after = h.snapshot(&id).await.audio;
+    assert_eq!(after.state, PlayerState::Idle);
+    assert!(after.generation > generation, "a geração foi invalidada");
+}
+
+#[tokio::test]
+async fn a_completion_with_more_chunks_than_accepted_is_not_cached_as_complete() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let text = ready.turns[0].version.text.clone();
+    let request = h.worker.streams()[0].clone();
+    send_chunk_file(&h, &request, 0).await;
+    // O auxiliar reporta mais blocos do que os aceites: rendição incompleta.
+    finish_stream(&h, &request, 2).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Failed);
+    let session_dir = h.directory.path().join("articles").join(&id);
+    let key = voice_key(&text, "af_heart", 10, ENGINE_ID);
+    assert!(
+        read_cache(&session_dir, &key).is_none(),
+        "sem cache completa"
+    );
+}
+
+#[tokio::test]
+async fn autoplay_respects_the_shared_audio_owner() {
+    let h = Harness::new().await;
+    let created = h.create().await;
+    let id = created.session.id.clone();
+    h.service.article_view_focus(&id, "token").await.unwrap();
+    // O STAR detém o áudio (gravação em curso).
+    h.service
+        .start_session(StartSession {
+            mode: Default::default(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+            category: None,
+            count: 1,
+        })
+        .await
+        .unwrap();
+    let star = h.service.snapshot();
+    let question = star.current.as_ref().unwrap().question.id.clone();
+    let selection = star.current_answer.as_ref().unwrap().selection_version;
+    h.service
+        .start_recording(question, selection)
+        .await
+        .unwrap();
+
+    // A abertura do artigo não toca enquanto o STAR grava.
+    h.service
+        .article_authorize(h.consent(&created))
+        .await
+        .unwrap();
+    h.service.article_settle().await;
+    assert_eq!(
+        h.worker.streams().len(),
+        0,
+        "a autoplay respeita o dono do áudio"
+    );
+    assert_eq!(h.snapshot(&id).await.session.state, ArticleState::Ready);
+}
+
+#[tokio::test]
+async fn play_errors_do_not_expose_paths() {
+    use language_assistant_tutor::article::ArticleSpeaker;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    h.record(&ready).await;
+    h.transcript("My answer.").await;
+    let snapshot = h.snapshot(&id).await;
+    let user = snapshot
+        .turns
+        .iter()
+        .find(|t| t.speaker == ArticleSpeaker::User)
+        .unwrap()
+        .id
+        .clone();
+    // Corrompe o original para provocar INVALID_AUDIO.
+    let original = h
+        .directory
+        .path()
+        .join("articles")
+        .join(&id)
+        .join(&user)
+        .join("original.wav");
+    std::fs::write(&original, b"not a wav").unwrap();
+
+    let error = h.service.article_player_play(&id, &user).await.unwrap_err();
+    assert_eq!(error.code, error_code::INVALID_AUDIO);
+    assert!(
+        !error.message.contains('\\'),
+        "sem caminho: {}",
+        error.message
+    );
+    assert!(
+        !error.message.contains(':'),
+        "sem unidade: {}",
+        error.message
+    );
+    assert!(
+        !error.message.contains("original.wav"),
+        "sem ficheiro: {}",
+        error.message
+    );
 }

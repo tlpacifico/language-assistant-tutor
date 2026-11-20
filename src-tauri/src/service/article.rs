@@ -138,13 +138,12 @@ fn chunk_file(index: u32) -> String {
 }
 
 /// Duração real de um WAV em milissegundos, arredondada.
+///
+/// A mensagem de erro nunca expõe o caminho do ficheiro: o erro público só
+/// carrega um motivo estável, sem detalhes locais.
 fn wav_duration_ms(path: &Path) -> Result<u64, AppError> {
-    let reader = hound::WavReader::open(path).map_err(|error| {
-        invalid_audio(format!(
-            "O áudio em «{}» não é um WAV legível: {error}.",
-            path.display()
-        ))
-    })?;
+    let reader = hound::WavReader::open(path)
+        .map_err(|_| invalid_audio("O áudio desta resposta não é um WAV legível."))?;
     let spec = reader.spec();
     if spec.channels == 0 || spec.sample_rate == 0 {
         return Err(invalid_audio(
@@ -264,6 +263,10 @@ impl AppService {
 
     /// Seleciona uma reprodução nova do início. Garante que a máquina pertence
     /// a esta sessão (uma sessão nova começa com uma máquina limpa).
+    ///
+    /// Contrato de sequência: a sequência é monotónica dentro de uma sessão;
+    /// trocar de sessão recria a máquina, iniciando um novo fluxo com identidade
+    /// ligada ao `sessionId` da vista.
     fn select_player(
         &self,
         session_id: &str,
@@ -423,10 +426,12 @@ impl AppService {
         &self,
         command: ArticleCommand,
     ) -> Result<ArticleSnapshot, AppError> {
+        // Pára o dispositivo já, antes de esperar pelo coordenador serial.
+        self.stop_device_now().await;
         let _transition = self.transitions.lock().await;
         // A revogação invalida a reprodução e a intenção automática antes de
         // tocar na base.
-        self.stop_article_speech_locked().await;
+        self.force_stop_article_speech_locked().await;
         let database = self.database()?;
         let snapshot =
             database_task(move || database.apply_article(&command, ArticleMutation::Revoke))
@@ -945,8 +950,16 @@ impl AppService {
     /// Reprodução automática de um turno novo do tutor, uma única vez.
     ///
     /// Só acontece com a preferência ligada e a vista desta sessão focada;
-    /// nunca depois de reabrir, retomar ou de um evento duplicado.
+    /// nunca depois de reabrir, retomar ou de um evento duplicado. Toda a
+    /// validação é repetida sob o coordenador serial, para que desligar,
+    /// desfocar, terminar, revogar ou eliminar entre o envio e esta conclusão
+    /// anulem a intenção.
     async fn maybe_autoplay(&self, session_id: &str, turn_id: &str, version_id: &str, text: &str) {
+        let _transition = self.transitions.lock().await;
+        // A autoplay respeita o mesmo dono de áudio que a reprodução explícita.
+        if self.ensure_audio_free_for_article().is_err() {
+            return;
+        }
         let Ok(preferences) = self.article_preferences_load().await else {
             return;
         };
@@ -961,7 +974,25 @@ impl AppService {
         if !focused {
             return;
         }
-        let _transition = self.transitions.lock().await;
+        // O turno tem de continuar a ser a última fala do tutor, com a conversa
+        // ainda `Ready`; uma revogação, término ou nova resposta anulam-no.
+        let Ok(snapshot) = self.article_snapshot(session_id).await else {
+            return;
+        };
+        if snapshot.session.state != ArticleState::Ready {
+            return;
+        }
+        let Some(last) = snapshot
+            .turns
+            .iter()
+            .rev()
+            .find(|turn| turn.speaker == ArticleSpeaker::Tutor)
+        else {
+            return;
+        };
+        if last.id != turn_id {
+            return;
+        }
         let version_id = (!version_id.is_empty()).then(|| version_id.to_owned());
         let _ = self
             .play_tutor_turn(
@@ -997,12 +1028,14 @@ impl AppService {
 
         // Reinício durante uma geração ativa: conserva o prefixo ordenado e
         // aceita os blocos restantes uma vez, sem regenerar. Tem de vir antes
-        // de `remove_incomplete`, que apagaria a entrada ainda em curso.
+        // de `remove_incomplete`, que apagaria a entrada ainda em curso. A
+        // reutilização é limitada à mesma sessão: o prefixo de uma conversa
+        // nunca é reproduzido noutra com texto idêntico.
         let reuse = self
             .lock_article()
             .speech
             .as_ref()
-            .is_some_and(|speech| speech.key == key);
+            .is_some_and(|speech| speech.key == key && speech.session_id == session_id);
         if reuse {
             {
                 let mut runtime = self.lock_article();
@@ -1112,15 +1145,15 @@ impl AppService {
         Ok(())
     }
 
-    /// Pára a voz: limpa a fila, invalida a sequência (blocos tardios são
-    /// descartados) e pede ao auxiliar que pare entre blocos.
-    pub(super) async fn stop_article_speech_locked(&self) {
-        let (speech, playback_id, generation) = {
+    /// Pára o dispositivo e o auxiliar imediatamente, sem o coordenador serial.
+    /// Usado por fim/revogação/eliminação para parar o áudio antes de esperar
+    /// pelo coordenador; o estado da reprodução é invalidado depois.
+    async fn stop_device_now(&self) {
+        let (speech, playback_id) = {
             let mut runtime = self.lock_article();
             let speech = runtime.speech.take();
             let playback_id = runtime.playback_id.take();
-            let generation = runtime.player.generation();
-            (speech, playback_id, generation)
+            (speech, playback_id)
         };
         if speech.is_some() {
             if let Some(control) = self.worker_control() {
@@ -1131,7 +1164,28 @@ impl AppService {
             let audio = Arc::clone(&self.audio);
             let _ = audio_task(move || audio.stop_playback(&id)).await;
         }
+    }
+
+    /// Pára a voz: limpa a fila, invalida a sequência (blocos tardios são
+    /// descartados) e pede ao auxiliar que pare entre blocos.
+    pub(super) async fn stop_article_speech_locked(&self) {
+        let generation = self.lock_article().player.generation();
+        self.stop_device_now().await;
         self.apply_player_event(generation, PlayerEvent::Stop);
+    }
+
+    /// Pára e invalida a reprodução (fim, revogação, eliminação, desfocagem):
+    /// a geração é aumentada para que os controlos da geração anterior fiquem
+    /// obsoletos, e a intenção automática é anulada.
+    async fn force_stop_article_speech_locked(&self) {
+        self.stop_device_now().await;
+        let view = {
+            let mut runtime = self.lock_article();
+            runtime.position_offset_ms = 0;
+            runtime.buffered_offset_ms = 0;
+            runtime.player.invalidate()
+        };
+        self.publish_player(&view);
     }
 
     /// Entrega à porta de áudio todos os blocos aceites e ainda não tocados,
@@ -1166,6 +1220,7 @@ impl AppService {
             {
                 let mut runtime = self.lock_article();
                 runtime.playback_id = Some(new_id.clone());
+                runtime.player.note_queued();
                 runtime.position_offset_ms = position_offset;
                 runtime.buffered_offset_ms = buffered_offset;
                 if let Some(speech) = runtime.speech.as_mut() {
@@ -1198,6 +1253,7 @@ impl AppService {
         let audio = Arc::clone(&self.audio);
         let id = audio_task(move || audio.start_playback(first)).await?;
         self.lock_article().playback_id = Some(id.clone());
+        self.lock_article().player.note_queued();
         self.clear_star_playback();
         for chunk in cached.chunks.iter().skip(1) {
             let path = chunk.path.clone();
@@ -1235,6 +1291,7 @@ impl AppService {
         let audio = Arc::clone(&self.audio);
         let id = audio_task(move || audio.start_playback(path)).await?;
         self.lock_article().playback_id = Some(id);
+        self.lock_article().player.note_queued();
         self.clear_star_playback();
         let generation = self.lock_article().player.generation();
         self.apply_player_event(
@@ -1248,13 +1305,17 @@ impl AppService {
 
     /// Conclui uma síntese incremental: escreve o manifesto e completa a
     /// reprodução, ou marca a execução incompleta sem perder o texto.
-    async fn complete_speech(&self, cancelled: bool) {
+    ///
+    /// O auxiliar tem de reportar exatamente os blocos aceites; um resultado
+    /// com mais ou menos blocos é tratado como rendição incompleta e nunca é
+    /// guardado como cache completa.
+    async fn complete_speech(&self, cancelled: bool, reported_chunks: u32) {
         let speech = self.lock_article().speech.take();
         let Some(speech) = speech else {
             return;
         };
         let accepted = speech.sequence.accepted();
-        if accepted == 0 || cancelled {
+        if accepted == 0 || cancelled || reported_chunks != accepted {
             self.fail_player_synthesis();
             return;
         }
@@ -1307,6 +1368,19 @@ impl AppService {
         );
     }
 
+    /// Marca a saída (dispositivo) como falhada; a falha é rotulada como
+    /// `Output`, não como síntese, para escolher a repetição certa.
+    fn fail_player_output(&self) {
+        let generation = self.lock_article().player.generation();
+        self.apply_player_event(
+            generation,
+            PlayerEvent::Failed {
+                operation: PlayerOperation::Output,
+                retryable: true,
+            },
+        );
+    }
+
     /// Falha da síntese: cancela o auxiliar, esquece a sequência e marca a
     /// reprodução `failed` sem perder o texto.
     async fn fail_speech_after_error(&self, error: &AppError) {
@@ -1316,6 +1390,14 @@ impl AppService {
         self.lock_article().speech = None;
         self.record_error(error);
         self.fail_player_synthesis();
+    }
+
+    /// Falha da saída ao tocar um bloco: a síntese continua válida, mas o
+    /// dispositivo falhou. O texto fica visível e a operação é `Output`.
+    async fn fail_speech_output(&self, error: &AppError) {
+        self.lock_article().speech = None;
+        self.record_error(error);
+        self.fail_player_output();
     }
 
     // -- controlo público da reprodução -----------------------------------------
@@ -1407,6 +1489,8 @@ impl AppService {
             let audio = Arc::clone(&self.audio);
             if let Err(error) = audio_task(move || audio.pause_playback(&id)).await {
                 self.record_error(&error);
+                self.fail_player_output();
+                return Ok(self.current_player_view());
             }
         }
         self.apply_player_event(generation, PlayerEvent::Pause);
@@ -1436,6 +1520,8 @@ impl AppService {
             let audio = Arc::clone(&self.audio);
             if let Err(error) = audio_task(move || audio.resume_playback(&id)).await {
                 self.record_error(&error);
+                self.fail_player_output();
+                return Ok(self.current_player_view());
             }
         }
         self.apply_player_event(generation, PlayerEvent::Resume);
@@ -1472,35 +1558,39 @@ impl AppService {
     /// tomar o foco pára a reprodução anterior e a sua intenção automática.
     pub async fn article_view_focus(&self, session_id: &str, token: &str) -> Result<(), AppError> {
         let _transition = self.transitions.lock().await;
-        let previous = {
-            let mut runtime = self.lock_article();
-            let previous = runtime.focus.as_ref().map(|(session, _)| session.clone());
-            runtime.focus = Some((session_id.to_owned(), token.to_owned()));
-            previous
-        };
-        if previous
-            .as_deref()
-            .is_some_and(|session| session != session_id)
         {
-            let player_session = self.lock_article().player.view().session_id;
-            if player_session != session_id {
-                self.stop_article_speech_locked().await;
-            }
+            let mut runtime = self.lock_article();
+            runtime.focus = Some((session_id.to_owned(), token.to_owned()));
+        }
+        // Qualquer reprodução de outra sessão pára quando esta toma o foco,
+        // mesmo que o foco anterior já tivesse sido limpo (ex.: após um blur).
+        let player_session = self.lock_article().player.view().session_id;
+        if player_session != session_id {
+            self.stop_article_speech_locked().await;
         }
         Ok(())
     }
 
     /// Limpa o foco apenas quando o token coincide, para que uma desmontagem
-    /// atrasada não apague a vista que a substituiu.
+    /// atrasada não apague a vista que a substituiu. Ao limpar, pára também a
+    /// reprodução da sessão que deixou de estar focada.
     pub async fn article_view_blur(&self, token: &str) -> Result<(), AppError> {
         let _transition = self.transitions.lock().await;
-        let mut runtime = self.lock_article();
-        if runtime
-            .focus
-            .as_ref()
-            .is_some_and(|(_, stored)| stored == token)
-        {
-            runtime.focus = None;
+        let matched = {
+            let mut runtime = self.lock_article();
+            if runtime
+                .focus
+                .as_ref()
+                .is_some_and(|(_, stored)| stored == token)
+            {
+                runtime.focus = None;
+                true
+            } else {
+                false
+            }
+        };
+        if matched {
+            self.stop_article_speech_locked().await;
         }
         Ok(())
     }
@@ -1600,7 +1690,7 @@ impl AppService {
                         let paused = self.lock_article().player.view().state == PlayerState::Paused;
                         if !paused {
                             if let Err(error) = self.advance_speech_playback().await {
-                                self.fail_speech_after_error(&error).await;
+                                self.fail_speech_output(&error).await;
                             }
                         }
                     }
@@ -1625,7 +1715,7 @@ impl AppService {
                     self.lock_article().speech = None;
                     return true;
                 }
-                self.complete_speech(done.cancelled).await;
+                self.complete_speech(done.cancelled, done.chunks).await;
             }
             WorkerMessage::Completed { .. } => {
                 let error = AppError::new(
@@ -1782,9 +1872,11 @@ impl AppService {
         self: &Arc<Self>,
         command: ArticleCommand,
     ) -> Result<ArticleSnapshot, AppError> {
+        // Pára o dispositivo já, antes de esperar pelo coordenador serial.
+        self.stop_device_now().await;
         let _transition = self.transitions.lock().await;
         // Terminar invalida a reprodução e a intenção automática antes da base.
-        self.stop_article_speech_locked().await;
+        self.force_stop_article_speech_locked().await;
         let database = self.database()?;
         let db = database.clone();
         let session_id = command.session_id.clone();
@@ -1805,9 +1897,11 @@ impl AppService {
 
     /// Eliminação lógica seguida da limpeza repetível dos ficheiros.
     pub async fn article_delete(&self, command: ArticleCommand) -> Result<(), AppError> {
+        // Pára o dispositivo já, antes de esperar pelo coordenador serial.
+        self.stop_device_now().await;
         let _transition = self.transitions.lock().await;
         // Eliminar invalida a reprodução e a intenção automática antes da base.
-        self.stop_article_speech_locked().await;
+        self.force_stop_article_speech_locked().await;
         let database = self.database()?;
         let session_id = command.session_id.clone();
         let db = database.clone();

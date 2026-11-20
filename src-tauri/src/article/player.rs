@@ -168,6 +168,10 @@ pub enum PlayerEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayerRuntime {
     view: ArticlePlayerView,
+    /// Há áudio na fila do dispositivo (uma reprodução está ativa). Distingue
+    /// um `Buffering` com a fila vazia (fim) de um `Buffering` com áudio ainda
+    /// na fila depois de a geração retomar.
+    queued: bool,
 }
 
 impl PlayerRuntime {
@@ -175,6 +179,7 @@ impl PlayerRuntime {
     pub fn idle(session_id: impl Into<String>) -> Self {
         Self {
             view: ArticlePlayerView::idle(session_id),
+            queued: false,
         }
     }
 
@@ -188,6 +193,30 @@ impl PlayerRuntime {
 
     pub fn sequence(&self) -> u64 {
         self.view.sequence
+    }
+
+    /// Marca que há áudio na fila do dispositivo (uma reprodução foi iniciada
+    /// ou retomada); só um `Drained` volta a esvaziar a marca.
+    pub fn note_queued(&mut self) {
+        self.queued = true;
+    }
+
+    /// Invalida a reprodução atual: aumenta a geração e regressa a `Idle` sem
+    /// seleção, para que os controlos da geração anterior sejam rejeitados.
+    pub fn invalidate(&mut self) -> ArticlePlayerView {
+        self.view.generation += 1;
+        self.view.sequence += 1;
+        self.view.state = PlayerState::Idle;
+        self.view.turn_id = None;
+        self.view.version_id = None;
+        self.view.position_ms = 0;
+        self.view.duration_ms = None;
+        self.view.buffered_ms = None;
+        self.view.source = None;
+        self.view.trigger = None;
+        self.view.failure = None;
+        self.queued = false;
+        self.view()
     }
 
     /// Seleciona uma nova gravação do início: aumenta a geração, volta a
@@ -210,6 +239,7 @@ impl PlayerRuntime {
         self.view.source = Some(source);
         self.view.trigger = Some(trigger);
         self.view.failure = None;
+        self.queued = false;
         self.view()
     }
 
@@ -265,17 +295,20 @@ impl PlayerRuntime {
                     _ => buffered,
                 }
             }
-            PlayerEvent::Drained => match self.view.state {
-                S::Playing => {
-                    self.view.state = if self.view.duration_ms.is_some() {
-                        S::Ended
-                    } else {
-                        S::Buffering
-                    };
-                    true
+            PlayerEvent::Drained => {
+                self.queued = false;
+                match self.view.state {
+                    S::Playing => {
+                        self.view.state = if self.view.duration_ms.is_some() {
+                            S::Ended
+                        } else {
+                            S::Buffering
+                        };
+                        true
+                    }
+                    _ => false,
                 }
-                _ => false,
-            },
+            }
             PlayerEvent::Completed { duration_ms } => {
                 let mut changed = false;
                 if self.view.duration_ms != Some(duration_ms) {
@@ -286,8 +319,10 @@ impl PlayerRuntime {
                     self.view.buffered_ms = Some(duration_ms);
                     changed = true;
                 }
-                // Síntese terminada com a fila já vazia: nada mais virá.
-                if self.view.state == S::Buffering {
+                // A síntese terminou: só conclui quando a fila está vazia. Com
+                // áudio ainda na fila (geração retomada depois de esvaziar) o
+                // fim só chega pelo `Drained` da reprodução atual.
+                if self.view.state == S::Buffering && !self.queued {
                     self.view.state = S::Ended;
                     changed = true;
                 }
@@ -315,6 +350,7 @@ impl PlayerRuntime {
                 if self.view.state == S::Idle {
                     return false;
                 }
+                self.queued = false;
                 self.view.state = S::Idle;
                 self.view.turn_id = None;
                 self.view.version_id = None;
