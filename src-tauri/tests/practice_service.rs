@@ -14,11 +14,13 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 
 use language_assistant_tutor::artifacts::ArtifactStore;
 use language_assistant_tutor::audio::{
-    AudioPort, AvailabilityAudio, CapturedAudio, PlaybackId, RecordingTarget,
+    AudioEvent, AudioPort, AvailabilityAudio, CapturedAudio, PlaybackId, RecordingTarget,
 };
 use language_assistant_tutor::db::Database;
-use language_assistant_tutor::domain::{error_code, AppError, CaptureMeta, ComponentState};
-use language_assistant_tutor::interview::{Id, ReviewOrigin, Version};
+use language_assistant_tutor::domain::{
+    error_code, AppError, CaptureMeta, ComponentState, PlaybackTarget,
+};
+use language_assistant_tutor::interview::{AudioSelection, Id, ReviewOrigin, Version};
 use language_assistant_tutor::practice::{
     CaptureOwner, ConfirmPracticeAnswer, CreatePractice, PracticeAnswerTarget, PracticeCommand,
     PracticeDetail, PracticeStatus, SavePracticeReview,
@@ -1019,6 +1021,48 @@ async fn late_event_applies_only_to_the_capturing_owner() {
         .stop_recording()
         .await
         .expect("terminar a captura");
+}
+
+#[tokio::test]
+async fn practice_playback_is_not_stopped_by_a_stale_article_id() {
+    let harness = Harness::new().await;
+    let detail = harness.create("s1", "sq1").await;
+    harness
+        .service
+        .start_practice_recording(Harness::owner_of(&detail), 0)
+        .await
+        .unwrap();
+    harness.service.stop_recording().await.unwrap();
+    let practice = harness.service.load_practice(detail.id).await.unwrap();
+    harness
+        .service
+        .play_audio(AudioSelection::Recording {
+            recording_id: practice.answer.selected_recording_id.unwrap(),
+        })
+        .await
+        .unwrap();
+    harness
+        .service
+        .article_player_stop("previous-article", 1)
+        .await
+        .unwrap();
+    harness
+        .service
+        .on_audio_event(AudioEvent::PlaybackFinished {
+            id: "previous-article-playback".into(),
+        })
+        .await;
+    assert_eq!(
+        harness.service.snapshot().playback,
+        Some(PlaybackTarget::Response)
+    );
+    harness
+        .service
+        .on_audio_event(AudioEvent::PlaybackFinished {
+            id: "playback".into(),
+        })
+        .await;
+    assert_eq!(harness.service.snapshot().playback, None);
 }
 
 #[tokio::test]

@@ -268,6 +268,7 @@ impl PlayerRuntime {
                 match self.view.state {
                     S::Preparing => {
                         if position_ms > 0 {
+                            self.queued = true;
                             self.view.position_ms = position_ms;
                             self.view.state = S::Playing;
                             true
@@ -277,6 +278,7 @@ impl PlayerRuntime {
                     }
                     S::Buffering => {
                         if position_ms > self.view.position_ms {
+                            self.queued = true;
                             self.view.position_ms = position_ms;
                             self.view.state = S::Playing;
                             true
@@ -337,10 +339,11 @@ impl PlayerRuntime {
             },
             PlayerEvent::Resume => match self.view.state {
                 S::Paused => {
-                    let queued = self
-                        .view
-                        .buffered_ms
-                        .is_some_and(|b| b > self.view.position_ms);
+                    let queued = self.queued
+                        && self
+                            .view
+                            .buffered_ms
+                            .is_some_and(|b| b > self.view.position_ms);
                     self.view.state = if queued { S::Playing } else { S::Buffering };
                     true
                 }

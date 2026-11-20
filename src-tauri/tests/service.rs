@@ -255,7 +255,7 @@ impl AudioPort for FakeAudio {
         let mut state = self.state.lock().expect("estado do áudio");
         state.played.push(path.clone());
         state.playing = Some(path);
-        Ok("playback".to_owned())
+        Ok(format!("playback-{}", state.played.len()))
     }
 
     fn append_chunk(&self, path: PathBuf, _id: &PlaybackId) -> Result<(), AppError> {
@@ -2604,6 +2604,32 @@ async fn failed_restart_discards_the_pending_health_handle() {
         after.last_error.expect("erro do reinício").code,
         error_code::BUSY
     );
+}
+
+#[tokio::test]
+async fn star_playback_finished_still_clears_only_its_own_id() {
+    let harness = Harness::new().await;
+    let snapshot = harness.record_once().await;
+    let recording = selected_recording(snapshot.current.as_ref().unwrap());
+    let selection = AudioSelection::Recording {
+        recording_id: recording.id.clone(),
+    };
+    harness.service.play_audio(selection.clone()).await.unwrap();
+    harness.service.play_audio(selection).await.unwrap();
+    harness
+        .service
+        .on_audio_event(AudioEvent::PlaybackFinished {
+            id: "playback-1".into(),
+        })
+        .await;
+    assert_eq!(harness.snapshot().playback, Some(PlaybackTarget::Response));
+    harness
+        .service
+        .on_audio_event(AudioEvent::PlaybackFinished {
+            id: "playback-2".into(),
+        })
+        .await;
+    assert_eq!(harness.snapshot().playback, None);
 }
 
 #[tokio::test]

@@ -167,7 +167,7 @@ fn chunk_duration(path: &Path, index: u32) -> Result<u64, AppError> {
             "O bloco {index} de voz está em falta."
         )));
     }
-    let reader = hound::WavReader::open(path).map_err(|error| {
+    let mut reader = hound::WavReader::open(path).map_err(|error| {
         invalid_audio(format!(
             "O bloco {index} de voz não é um WAV legível: {error}."
         ))
@@ -178,13 +178,25 @@ fn chunk_duration(path: &Path, index: u32) -> Result<u64, AppError> {
             "O bloco {index} de voz tem um formato inválido (canais ou taxa a zero)."
         )));
     }
-    let frames = u64::from(reader.duration());
+    let frames = reader.duration();
     if frames == 0 {
         return Err(invalid_audio(format!(
             "O bloco {index} de voz não contém amostras."
         )));
     }
-    Ok(duration_ms(frames, spec.sample_rate))
+    // Seeking beyond EOF succeeds on a file. Read the last declared frame to
+    // distinguish a complete payload from a truncated file with a valid header.
+    let last_frame = reader.seek(frames - 1).is_ok()
+        && match spec.sample_format {
+            hound::SampleFormat::Int => reader.samples::<i32>().all(|sample| sample.is_ok()),
+            hound::SampleFormat::Float => reader.samples::<f32>().all(|sample| sample.is_ok()),
+        };
+    if !last_frame {
+        return Err(invalid_audio(format!(
+            "O bloco {index} de voz está incompleto."
+        )));
+    }
+    Ok(duration_ms(u64::from(frames), spec.sample_rate))
 }
 
 /// Conclui uma entrada: mede a duração real de cada bloco, exige que todos
@@ -208,7 +220,10 @@ pub fn finish_entry(
         return Err(invalid("A síntese não produziu blocos de voz."));
     }
     let mut entries = Vec::with_capacity(chunks.len());
-    for &(index, _reported_ms) in chunks {
+    for (expected_index, &(index, _reported_ms)) in chunks.iter().enumerate() {
+        if index as usize != expected_index {
+            return Err(invalid("Os blocos de voz não estão em sequência."));
+        }
         let path = dir.join(chunk_file(index));
         let duration_ms = chunk_duration(&path, index)?;
         entries.push(ChunkEntry { index, duration_ms });
@@ -230,13 +245,19 @@ pub fn finish_entry(
 pub fn read_cache(session_dir: &Path, key: &str) -> Option<CachedVoice> {
     let dir = entry_dir(session_dir, key).ok()?;
     let manifest = read_manifest(&dir)?;
-    if manifest.version != MANIFEST_VERSION || manifest.key != key || !manifest.complete {
+    if manifest.version != MANIFEST_VERSION
+        || manifest.key != key
+        || !manifest.complete
+        || manifest.chunks.is_empty()
+    {
         return None;
     }
     let mut chunks = Vec::with_capacity(manifest.chunks.len());
-    for entry in &manifest.chunks {
+    for (expected_index, entry) in manifest.chunks.iter().enumerate() {
         let path = dir.join(chunk_file(entry.index));
-        if chunk_duration(&path, entry.index).is_err() {
+        if entry.index as usize != expected_index
+            || chunk_duration(&path, entry.index).ok()? != entry.duration_ms
+        {
             return None;
         }
         chunks.push(CachedChunk {

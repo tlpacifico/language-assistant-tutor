@@ -331,3 +331,46 @@ fn clear_entry_removes_one_entry_and_a_missing_one_is_ok() {
     // Remover uma entrada ausente é um sucesso.
     clear_entry(session_dir, &key).unwrap();
 }
+
+#[test]
+fn a_truncated_payload_with_an_intact_header_is_not_reused() {
+    let session = tempfile::tempdir().unwrap();
+    let key = voice_key("text", "af_heart", 10, ENGINE_ID);
+    let entry = begin_entry(session.path(), &key).unwrap();
+    let chunk = write_chunk(&entry, 0, FRAMES_100MS);
+    finish_entry(&entry, "text", "af_heart", 10, ENGINE_ID, &[(0, 100)]).unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(chunk)
+        .unwrap()
+        .set_len(64)
+        .unwrap();
+    assert!(read_cache(session.path(), &key).is_none());
+}
+
+#[test]
+fn a_duplicate_index_or_a_false_duration_invalidates_the_manifest() {
+    let session = tempfile::tempdir().unwrap();
+    let key = voice_key("text", "af_heart", 10, ENGINE_ID);
+    let entry = begin_entry(session.path(), &key).unwrap();
+    write_chunk(&entry, 0, FRAMES_100MS);
+    write_chunk(&entry, 1, FRAMES_100MS);
+    finish_entry(
+        &entry,
+        "text",
+        "af_heart",
+        10,
+        ENGINE_ID,
+        &[(0, 100), (1, 100)],
+    )
+    .unwrap();
+    let manifest = entry.join("manifest.json");
+    let original: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    for (field, value) in [("index", 0), ("durationMs", 99)] {
+        let mut corrupt = original.clone();
+        corrupt["chunks"][1][field] = json!(value);
+        std::fs::write(&manifest, corrupt.to_string()).unwrap();
+        assert!(read_cache(session.path(), &key).is_none(), "{field}");
+    }
+}

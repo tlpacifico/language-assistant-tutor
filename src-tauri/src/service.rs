@@ -1079,14 +1079,17 @@ impl AppService {
             }
             AudioEvent::PlaybackFinished { id } => {
                 self.article_playback_finished(&id).await;
-                let matches = self.lock_state().playback_id.as_deref() == Some(id.as_str());
-                if !matches {
-                    return; // fim de uma reprodução já substituída
-                }
-                self.commit(|state| {
+                let snapshot = {
+                    let mut state = self.lock_state();
+                    if state.playback_id.as_deref() != Some(id.as_str()) {
+                        return;
+                    }
                     state.playback = None;
                     state.playback_id = None;
-                });
+                    state.revision = state.revision.saturating_add(1);
+                    state.snapshot()
+                };
+                self.notify(&snapshot);
             }
             AudioEvent::PlaybackProgress { id, progress } => {
                 // O progresso é consumido pelo leitor de artigos (≤4 Hz).
