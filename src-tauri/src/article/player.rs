@@ -391,21 +391,20 @@ impl RecordingRuntime {
         &self.view.capture_id
     }
 
-    /// Captura reconhecida pela porta de áudio: passa a `Active`. Ignora a
-    /// mesma identidade já reconhecida (duplicada ou atrasada) e não substitui
-    /// uma captura em curso.
+    /// Captura reconhecida pela porta de áudio: passa a `Active`. Só aceita a
+    /// partir de `Inactive`; um `start` tardio ou duplicado (com a identidade
+    /// igual ou diferente) deixa a vista e a sequência intactas.
     pub fn start(
         &mut self,
         turn_id: impl Into<String>,
         capture_id: impl Into<String>,
         available: bool,
     ) -> ArticleRecordingView {
-        let capture_id = capture_id.into();
-        if capture_id == self.view.capture_id || self.view.state == RecordingState::Active {
+        if self.view.state != RecordingState::Inactive {
             return self.view();
         }
         self.view.turn_id = turn_id.into();
-        self.view.capture_id = capture_id;
+        self.view.capture_id = capture_id.into();
         self.view.state = RecordingState::Active;
         self.view.elapsed_ms = 0;
         self.view.level = None;

@@ -195,6 +195,12 @@ fn a_finished_recording_ignores_late_active_events() {
     assert_eq!(r.view().state, RecordingState::Ended);
     assert_eq!(r.view().elapsed_ms, 1200);
     assert_eq!(r.sequence(), sequence);
+    // Um `start` tardio com identidade diferente também não revive a captura.
+    r.start("turn-0", "capture-0", true);
+    assert_eq!(r.view().state, RecordingState::Ended);
+    assert_eq!(r.view().capture_id, "capture-1");
+    assert_eq!(r.view().elapsed_ms, 1200);
+    assert_eq!(r.sequence(), sequence);
     // Progresso e fim tardios de outra identidade também são ignorados.
     assert!(!r.progress("capture-0", 999, Some(0.5)));
     assert!(!r.end("capture-0", 999));
