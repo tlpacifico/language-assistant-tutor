@@ -7,10 +7,9 @@
  * clique (um clique duplo não duplica o efeito).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { toAppError } from "../../lib/app-error";
-import type { ArticleClient } from "../../lib/article-client";
 import type {
   ArticleCommand,
   ArticleSnapshot,
@@ -22,10 +21,10 @@ export type ArticleAction = (
   command: ArticleCommand,
 ) => Promise<ArticleSnapshot | void>;
 
-export function useArticle(client: ArticleClient, initial: ArticleSnapshot) {
+export function useArticle(initial: ArticleSnapshot) {
   const [snapshot, setSnapshot] = useState(initial);
   const [error, setError] = useState<AppError | null>(null);
-  const [pending, setPending] = useState(false);
+  const [gestureInFlight, setGestureInFlight] = useState<string | null>(null);
   const latest = useRef(initial);
   const busy = useRef(false);
   // Mesmo gesto sobre a mesma versão reutiliza o `requestId`: um clique duplo
@@ -44,22 +43,6 @@ export function useArticle(client: ArticleClient, initial: ArticleSnapshot) {
     setSnapshot(next);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    let remove: (() => void) | null = null;
-    void client.subscribe(apply).then((unsubscribe) => {
-      if (cancelled) {
-        unsubscribe();
-      } else {
-        remove = unsubscribe;
-      }
-    });
-    return () => {
-      cancelled = true;
-      remove?.();
-    };
-  }, [client, apply]);
-
   const run = useCallback(
     async (gesture: string, action: ArticleAction) => {
       if (busy.current) {
@@ -71,7 +54,7 @@ export function useArticle(client: ArticleClient, initial: ArticleSnapshot) {
       }
       const requestId = lastRequest.current.id;
       busy.current = true;
-      setPending(true);
+      setGestureInFlight(gesture);
       setError(null);
       try {
         const next = await action({
@@ -86,7 +69,7 @@ export function useArticle(client: ArticleClient, initial: ArticleSnapshot) {
         setError(toAppError(failure));
       } finally {
         busy.current = false;
-        setPending(false);
+        setGestureInFlight(null);
       }
     },
     [apply],
@@ -95,8 +78,10 @@ export function useArticle(client: ArticleClient, initial: ArticleSnapshot) {
   return {
     snapshot,
     error,
-    pending,
+    pending: gestureInFlight !== null,
+    capturePending: gestureInFlight === "startRecording" || gestureInFlight === "stopRecording",
     run,
+    apply,
     dismissError: () => setError(null),
   };
 }

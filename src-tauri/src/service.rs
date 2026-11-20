@@ -77,7 +77,7 @@ mod article;
 mod interview;
 mod practice;
 
-pub use article::ArticleListener;
+pub use article::{ArticleListener, ArticlePlayerListener, ArticleRecordingListener};
 
 /// Falha de SQLite simulada nos testes, injetada em pontos concretos do arranque
 /// da captura de preparação. Nunca é usada pelo caminho real.
@@ -120,6 +120,9 @@ pub trait WorkerControl: Send + Sync {
     fn shutdown(&self) -> Result<(), AppError>;
     fn generation(&self) -> u64;
     fn is_running(&self) -> bool;
+    fn is_busy(&self) -> bool {
+        false
+    }
     /// Cancelamento cooperativo da síntese incremental em curso.
     fn cancel(&self) -> Result<(), AppError> {
         Ok(())
@@ -145,6 +148,9 @@ impl WorkerControl for WorkerClient {
 
     fn is_running(&self) -> bool {
         WorkerClient::is_running(self)
+    }
+    fn is_busy(&self) -> bool {
+        WorkerClient::is_busy(self)
     }
 
     fn cancel(&self) -> Result<(), AppError> {
@@ -241,6 +247,8 @@ struct InterviewState {
     finalizing: bool,
     model_job: Option<ModelJobView>,
     playback: Option<PlaybackTarget>,
+    /// Identidade da reprodução em curso, devolvida pela porta de áudio.
+    playback_id: Option<crate::audio::PlaybackId>,
     warnings: Vec<AppError>,
     last_error: Option<AppError>,
     worker_generation: u64,
@@ -272,6 +280,7 @@ impl InterviewState {
             finalizing: false,
             model_job: None,
             playback: None,
+            playback_id: None,
             warnings: Vec::new(),
             last_error: None,
             worker_generation: 0,
@@ -434,6 +443,8 @@ pub struct AppService {
     article: Mutex<article::ArticleRuntime>,
     article_transport: Arc<dyn crate::ai::ArticleTransport>,
     article_listener: Mutex<Option<ArticleListener>>,
+    article_player_listener: Mutex<Option<ArticlePlayerListener>>,
+    article_recording_listener: Mutex<Option<ArticleRecordingListener>>,
 }
 
 impl AppService {
@@ -476,6 +487,8 @@ impl AppService {
             article: Mutex::new(article::ArticleRuntime::default()),
             article_transport: Arc::new(crate::ai::ArticleHttpTransport::default()),
             article_listener: Mutex::new(None),
+            article_player_listener: Mutex::new(None),
+            article_recording_listener: Mutex::new(None),
         }
     }
 
@@ -818,12 +831,15 @@ impl AppService {
     /// Pára a reprodução em curso, se existir.
     pub async fn stop_audio(&self) -> Result<InterviewSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
-        if self.lock_state().playback.is_none() {
+        let Some(id) = self.lock_state().playback_id.clone() else {
             return Ok(self.snapshot());
-        }
+        };
         let audio = Arc::clone(&self.audio);
-        match audio_task(move || audio.stop_playback()).await {
-            Ok(()) => Ok(self.commit(|state| state.playback = None)),
+        match audio_task(move || audio.stop_playback(&id)).await {
+            Ok(()) => Ok(self.commit(|state| {
+                state.playback = None;
+                state.playback_id = None;
+            })),
             Err(error) => {
                 self.record_error(&error);
                 Err(error)
@@ -837,23 +853,29 @@ impl AppService {
         target: PlaybackTarget,
         path: PathBuf,
     ) -> Result<InterviewSnapshot, AppError> {
-        if self.lock_state().playback.is_some() {
+        // Reproduzir do STAR/prática substitui qualquer voz de artigo em curso:
+        // a síntese é cancelada e a identidade do artigo é descartada.
+        self.stop_article_speech_locked().await;
+        let playback_id = self.lock_state().playback_id.clone();
+        if let Some(id) = playback_id {
             let audio = Arc::clone(&self.audio);
-            if let Err(error) = audio_task(move || audio.stop_playback()).await {
+            if let Err(error) = audio_task(move || audio.stop_playback(&id)).await {
                 self.record_error(&error);
                 return Err(error);
             }
         }
         let audio = Arc::clone(&self.audio);
-        match audio_task(move || audio.play(path)).await {
-            Ok(()) => Ok(self.commit(|state| {
+        match audio_task(move || audio.start_playback(path)).await {
+            Ok(id) => Ok(self.commit(|state| {
                 state.playback = Some(target);
+                state.playback_id = Some(id);
                 state.last_error = None;
             })),
             Err(error) => {
                 let shown = error.clone();
                 self.commit(|state| {
                     state.playback = None;
+                    state.playback_id = None;
                     state.last_error = Some(shown);
                 });
                 Err(error)
@@ -1025,12 +1047,13 @@ impl AppService {
         }
 
         let audio = Arc::clone(&self.audio);
-        let _ = audio_task(move || audio.stop_playback()).await;
+        let _ = audio_task(move || audio.stop_all_playback()).await;
 
         Ok(self.commit(|state| {
             state.finish_model_job();
             state.set_worker_generation(0);
             state.playback = None;
+            state.playback_id = None;
             state.finalizing = false;
         }))
     }
@@ -1046,16 +1069,45 @@ impl AppService {
                 capture,
                 error,
             } => {
+                // A interrupção pertence ao artigo quando a captura atual é sua.
+                if self
+                    .article_capture_interrupted(
+                        recording_id.clone(),
+                        capture.clone(),
+                        error.clone(),
+                    )
+                    .await
+                {
+                    return;
+                }
                 self.apply_capture_interruption(recording_id, capture, error)
                     .await;
             }
-            AudioEvent::PlaybackFinished => {
-                self.article_playback_finished().await;
-                let playing = self.lock_state().playback.is_some();
-                if !playing {
-                    return; // fim de uma reprodução já substituída
-                }
-                self.commit(|state| state.playback = None);
+            AudioEvent::PlaybackFinished { id } => {
+                self.article_playback_finished(&id).await;
+                let snapshot = {
+                    let mut state = self.lock_state();
+                    if state.playback_id.as_deref() != Some(id.as_str()) {
+                        return;
+                    }
+                    state.playback = None;
+                    state.playback_id = None;
+                    state.revision = state.revision.saturating_add(1);
+                    state.snapshot()
+                };
+                self.notify(&snapshot);
+            }
+            AudioEvent::PlaybackProgress { id, progress } => {
+                // O progresso é consumido pelo leitor de artigos (≤4 Hz).
+                self.article_playback_progress(&id, progress).await;
+            }
+            AudioEvent::CaptureProgress {
+                recording_id,
+                elapsed_ms,
+                level,
+            } => {
+                self.article_capture_progress(recording_id, elapsed_ms, level)
+                    .await;
             }
         }
     }
@@ -1349,14 +1401,17 @@ impl AppService {
 
         // A síntese pode terminar enquanto um áudio está a ser ouvido; a
         // reprodução automática da pergunta substitui a reprodução em curso.
-        let playing = self.lock_state().playback.is_some();
-        if playing {
+        // Uma voz de artigo ativa também é parada antes de tocar a pergunta.
+        self.stop_article_speech_locked().await;
+        let playback_id = self.lock_state().playback_id.clone();
+        if let Some(id) = playback_id {
             let audio = Arc::clone(&self.audio);
-            if let Err(error) = audio_task(move || audio.stop_playback()).await {
+            if let Err(error) = audio_task(move || audio.stop_playback(&id)).await {
                 let shown = error.clone();
                 self.commit(|state| {
                     state.finish_model_job();
                     state.playback = None;
+                    state.playback_id = None;
                     state.last_error = Some(shown);
                 });
                 return;
@@ -1364,18 +1419,20 @@ impl AppService {
         }
 
         let audio = Arc::clone(&self.audio);
-        match audio_task(move || audio.play(expected)).await {
-            Ok(()) => {
+        match audio_task(move || audio.start_playback(expected)).await {
+            Ok(id) => {
                 let target = pending.target;
                 self.commit(|state| {
                     state.finish_model_job();
                     state.playback = Some(target);
+                    state.playback_id = Some(id);
                 });
             }
             Err(error) => {
                 self.commit(|state| {
                     state.finish_model_job();
                     state.playback = None;
+                    state.playback_id = None;
                     state.last_error = Some(error);
                 });
             }

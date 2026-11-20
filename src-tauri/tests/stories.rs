@@ -14,7 +14,7 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 
 use language_assistant_tutor::artifacts::ArtifactStore;
 use language_assistant_tutor::audio::{
-    AudioPort, AvailabilityAudio, CapturedAudio, RecordingTarget,
+    AudioPort, AvailabilityAudio, CapturedAudio, PlaybackId, RecordingTarget,
 };
 use language_assistant_tutor::db::{missing_fields, validate_story_input, Database};
 use language_assistant_tutor::domain::{error_code, AppError, CaptureMeta, ComponentState};
@@ -118,11 +118,27 @@ impl AudioPort for FakeAudio {
         })
     }
 
-    fn play(&self, _path: PathBuf) -> Result<(), AppError> {
+    fn start_playback(&self, _path: PathBuf) -> Result<PlaybackId, AppError> {
+        Ok("playback".to_owned())
+    }
+
+    fn append_chunk(&self, _path: PathBuf, id: &PlaybackId) -> Result<PlaybackId, AppError> {
+        Ok(id.clone())
+    }
+
+    fn pause_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
         Ok(())
     }
 
-    fn stop_playback(&self) -> Result<(), AppError> {
+    fn resume_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn stop_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn stop_all_playback(&self) -> Result<(), AppError> {
         Ok(())
     }
 

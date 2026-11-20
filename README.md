@@ -33,6 +33,10 @@ manual script and real paid inference are missing.
 The layout was updated from `docs/tutor-layout`, with side
 navigation, session preparation and adaptive views. See [validation and screenshots](docs/layout/validation.md).
 
+For article conversations, see [setup](docs/article-conversation/setup.md) and the
+[debate and conversation player roadmap](docs/article-conversation/roadmap.md)
+(proposed on 2026-11-20; implementation and manual acceptance remain separate).
+
 ## Requirements (Windows)
 
 Verified on this machine (details and versions in
@@ -208,6 +212,8 @@ Also on 2026-11-04 the [v0.2.0](docs/releases/v0.2.0.md) was published: voice mo
 On 2026-11-05 the **article conversation** was implemented (new mode, outside the five phases): Articles page, automatic sending authorized per session, final feedback, corrections in branches, local recovery and tutor voice in blocks. Automated verification: `.\scripts\verify.ps1` with 8/8 checks (354 Rust, 147 Vitest, 56 Python without the `models` marker), release build `--no-bundle` and rehearsal with temporary data with exit code 0. **It is not accepted**: the real conversation with audio, voice and paid inference, the performance measurements and the visual validation are missing. See [setup](docs/article-conversation/setup.md), [validation](docs/article-conversation/validation.md) and [performance](docs/article-conversation/performance.md).
 
 On 2026-11-05 the release [v0.3.0](docs/releases/v0.3.0.md) was published, with the article conversation (NSIS/MSI installers and portable with hashes in the document; portable smoke with exit code 0). The article conversation has no manual acceptance, installation of the packages remains to be validated and phase 5 was not started.
+
+The article conversation player (R1) adds a persistent control bar, per-message audio playback, **Responder agora**, microphone feedback, local playback preferences and keyboard controls. See [usage](docs/article-conversation/setup.md) and the [R1 validation record](docs/article-conversation/validation.md#r1--article-player-and-chat).
 
 On 2026-11-06 the repository went from private to public, under the MIT license.
 

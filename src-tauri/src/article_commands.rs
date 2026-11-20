@@ -10,8 +10,8 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::article::{
-    ArticleCommand, ArticleConsent, ArticleCorrection, ArticleCreate, ArticleSnapshot,
-    ArticleSummary,
+    ArticleCommand, ArticleConsent, ArticleCorrection, ArticleCreate, ArticlePlayerView,
+    ArticlePreferences, ArticleSnapshot, ArticleSummary,
 };
 use crate::domain::AppError;
 use crate::service::AppService;
@@ -88,29 +88,58 @@ pub async fn article_submit_text(
     service.article_submit_text(correction).await
 }
 
+/// Reproduz uma fala (tutor) ou a gravação de uma resposta, do início.
 #[tauri::command]
-pub async fn article_play_turn(
+pub async fn article_player_play(
     session_id: String,
     turn_id: String,
     service: State<'_, Arc<AppService>>,
-) -> Result<(), AppError> {
-    service.article_play_turn(&session_id, &turn_id).await
+) -> Result<ArticlePlayerView, AppError> {
+    service.article_player_play(&session_id, &turn_id).await
 }
 
-/// Para a voz do tutor sem perder texto nem estado.
 #[tauri::command]
-pub async fn article_stop_voice(service: State<'_, Arc<AppService>>) -> Result<(), AppError> {
-    service.article_stop_voice().await
-}
-
-/// Repete a voz de uma fala do tutor, sem nova chamada ao fornecedor de texto.
-#[tauri::command]
-pub async fn article_speak_turn(
+pub async fn article_player_pause(
     session_id: String,
-    turn_id: String,
+    generation: u64,
+    service: State<'_, Arc<AppService>>,
+) -> Result<ArticlePlayerView, AppError> {
+    service.article_player_pause(&session_id, generation).await
+}
+
+#[tauri::command]
+pub async fn article_player_resume(
+    session_id: String,
+    generation: u64,
+    service: State<'_, Arc<AppService>>,
+) -> Result<ArticlePlayerView, AppError> {
+    service.article_player_resume(&session_id, generation).await
+}
+
+#[tauri::command]
+pub async fn article_player_stop(
+    session_id: String,
+    generation: u64,
+    service: State<'_, Arc<AppService>>,
+) -> Result<ArticlePlayerView, AppError> {
+    service.article_player_stop(&session_id, generation).await
+}
+
+#[tauri::command]
+pub async fn article_view_focus(
+    session_id: String,
+    token: String,
     service: State<'_, Arc<AppService>>,
 ) -> Result<(), AppError> {
-    service.article_speak_turn(&session_id, &turn_id).await
+    service.article_view_focus(&session_id, &token).await
+}
+
+#[tauri::command]
+pub async fn article_view_blur(
+    token: String,
+    service: State<'_, Arc<AppService>>,
+) -> Result<(), AppError> {
+    service.article_view_blur(&token).await
 }
 
 #[tauri::command]
@@ -135,6 +164,21 @@ pub async fn article_list(
     service: State<'_, Arc<AppService>>,
 ) -> Result<Vec<ArticleSummary>, AppError> {
     service.article_list().await
+}
+
+#[tauri::command]
+pub async fn article_preferences_load(
+    service: State<'_, Arc<AppService>>,
+) -> Result<ArticlePreferences, AppError> {
+    service.article_preferences_load().await
+}
+
+#[tauri::command]
+pub async fn article_preferences_save(
+    preferences: ArticlePreferences,
+    service: State<'_, Arc<AppService>>,
+) -> Result<ArticlePreferences, AppError> {
+    service.article_preferences_save(preferences).await
 }
 
 #[tauri::command]

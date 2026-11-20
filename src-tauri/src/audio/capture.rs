@@ -16,7 +16,7 @@
 use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -26,8 +26,8 @@ use cpal::SampleFormat as CpalFormat;
 use hound::{SampleFormat as WavFormat, WavSpec, WavWriter};
 
 use crate::audio::{
-    capture_interrupted, device_unavailable, CaptureInterruption, CapturedAudio, RecordingTarget,
-    ORIGINAL_FILE,
+    capture_interrupted, device_unavailable, CaptureInterruption, CaptureProgress, CapturedAudio,
+    RecordingTarget, ORIGINAL_FILE,
 };
 use crate::domain::{error_code, AppError, CaptureMeta, ComponentState, ComponentStatus};
 
@@ -44,6 +44,9 @@ const INTERRUPT_NONE: u8 = 0;
 const INTERRUPT_CHANNEL_FULL: u8 = 1;
 const INTERRUPT_WRITER: u8 = 2;
 const INTERRUPT_DEVICE: u8 = 3;
+
+/// Valor do pico que marca «ainda sem leitura»: nunca um nível real.
+const LEVEL_UNSET: u16 = u16::MAX;
 
 /// Mensagem quando o consumidor não acompanha a captura.
 const CHANNEL_FULL_MESSAGE: &str =
@@ -70,6 +73,15 @@ impl CaptureSpec {
             sample_format: WavFormat::Int,
         }
     }
+}
+
+/// Pico de um bloco de amostras PCM16, normalizado para `0.0..=1.0`.
+///
+/// Usa `unsigned_abs` para que `i16::MIN` não provoque pânico; o silêncio e um
+/// bloco vazio devolvem `0.0`.
+pub fn peak_level(samples: &[i16]) -> f32 {
+    let peak = samples.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
+    f32::from(peak) / f32::from(i16::MAX)
 }
 
 /// Origem de uma interrupção de captura.
@@ -233,6 +245,9 @@ enum Block {
 pub struct CaptureChannel {
     sender: SyncSender<Block>,
     monitor: Arc<CaptureMonitor>,
+    /// Pico do bloco mais recente, escalado para 0–1000; `LEVEL_UNSET` enquanto
+    /// o dispositivo não entregou nenhuma leitura.
+    peak: Arc<AtomicU16>,
 }
 
 impl CaptureChannel {
@@ -269,6 +284,25 @@ impl CaptureChannel {
     fn has_failed(&self) -> bool {
         self.monitor.failed()
     }
+
+    /// Regista o pico do bloco mais recente (0–1000), sem locks nem alocação.
+    ///
+    /// Chamado pelo callback de tempo real a cada bloco; o valor nunca é
+    /// `LEVEL_UNSET`, pelo que um nível real de silêncio é distinguível de
+    /// «ainda sem leitura».
+    pub fn set_level(&self, level: u16) {
+        self.peak.store(level.min(1000), Ordering::SeqCst);
+    }
+
+    /// Nível do microfone mais recente, ou `None` antes do primeiro bloco.
+    pub fn level(&self) -> Option<f32> {
+        let raw = self.peak.load(Ordering::SeqCst);
+        if raw == LEVEL_UNSET {
+            None
+        } else {
+            Some(f32::from(raw) / 1000.0)
+        }
+    }
 }
 
 impl Clone for CaptureChannel {
@@ -276,6 +310,7 @@ impl Clone for CaptureChannel {
         Self {
             sender: self.sender.clone(),
             monitor: Arc::clone(&self.monitor),
+            peak: Arc::clone(&self.peak),
         }
     }
 }
@@ -293,6 +328,7 @@ pub fn channel(capacity: usize) -> (CaptureChannel, CaptureBlocks) {
         CaptureChannel {
             sender,
             monitor: Arc::new(CaptureMonitor::new()),
+            peak: Arc::new(AtomicU16::new(LEVEL_UNSET)),
         },
         CaptureBlocks(receiver),
     )
@@ -351,6 +387,7 @@ impl PendingCapture {
         let (sender, receiver) = mpsc::sync_channel(DEFAULT_CHANNEL_BLOCKS);
         let monitor = Arc::new(CaptureMonitor::new());
         let written = Arc::new(AtomicU64::new(0));
+        let peak = Arc::new(AtomicU16::new(LEVEL_UNSET));
         let writer_monitor = Arc::clone(&monitor);
         let writer_written = Arc::clone(&written);
         let channels = spec.channels;
@@ -372,6 +409,7 @@ impl PendingCapture {
             channel: CaptureChannel {
                 sender: sender.clone(),
                 monitor,
+                peak,
             },
             sender: Some(sender),
             written,
@@ -387,6 +425,17 @@ impl PendingCapture {
     /// Frames já escritos e confirmados no ficheiro.
     pub fn written_frames(&self) -> u64 {
         self.written.load(Ordering::SeqCst)
+    }
+
+    /// Tempo efetivamente gravado, derivado das frames já escritas pelo
+    /// escritor e da taxa da entrada (não do relógio de parede).
+    pub fn captured_ms(&self) -> u64 {
+        duration_ms(self.written_frames(), self.spec.sample_rate)
+    }
+
+    /// Nível do microfone mais recente; `None` antes do primeiro bloco.
+    pub fn level(&self) -> Option<f32> {
+        self.channel.level()
     }
 
     /// Fecha o WAV, renomeia o provisório e devolve o que é recuperável.
@@ -735,6 +784,29 @@ impl Capture {
     pub fn take_recovered(&mut self) -> Option<CapturedAudio> {
         self.recovered.take()
     }
+
+    /// Tempo efetivamente gravado na captura em curso (0 sem captura).
+    pub fn captured_ms(&self) -> u64 {
+        self.active
+            .as_ref()
+            .map_or(0, |active| active.pending.captured_ms())
+    }
+
+    /// Nível do microfone mais recente; `None` antes do primeiro bloco.
+    pub fn level(&self) -> Option<f32> {
+        self.active
+            .as_ref()
+            .and_then(|active| active.pending.level())
+    }
+
+    /// Progresso da captura em curso (tempo e nível), quando existe.
+    pub fn capture_progress(&self) -> Option<CaptureProgress> {
+        let active = self.active.as_ref()?;
+        Some(CaptureProgress {
+            elapsed_ms: active.pending.captured_ms(),
+            level: active.pending.level(),
+        })
+    }
 }
 
 /// Formatos de entrada aceites, com conversão para PCM16.
@@ -798,6 +870,11 @@ fn build_typed<T: CaptureSample>(
             }
             let mut block = Vec::with_capacity(whole);
             block.extend(data[..whole].iter().map(|sample| sample.to_pcm16()));
+            // O pico é registado por bloco, sem locks nem alocação extra; o
+            // nível real de silêncio é 0.0 e só antes do primeiro bloco não há
+            // leitura (`LEVEL_UNSET`).
+            let scaled = (peak_level(&block) * 1000.0).round().clamp(0.0, 1000.0) as u16;
+            callback_channel.set_level(scaled);
             // Um canal cheio é reportado como interrupção; as amostras não são
             // descartadas em silêncio porque a falha fica registada e a thread
             // de áudio fecha a captura.

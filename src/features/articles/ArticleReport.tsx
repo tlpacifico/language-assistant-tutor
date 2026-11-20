@@ -1,9 +1,11 @@
 import type {
   ArticleDimension,
+  ArticlePlayerView,
   ArticleReport as Report,
   ArticleTurnView,
   DimensionStatus,
 } from "../../lib/article-contracts";
+import ArticleTurnControls from "./ArticleTurnControls";
 
 const STATUS_LABELS: Record<DimensionStatus, string> = {
   clear: "Claro",
@@ -43,13 +45,23 @@ function DimensionCard({
   hint,
   dimension,
   turns,
+  player,
+  mediaDisabled,
   onPlay,
+  onPause,
+  onResume,
+  onRestart,
 }: {
   label: string;
   hint: string;
   dimension: ArticleDimension;
   turns: ArticleTurnView[];
+  player: ArticlePlayerView;
+  mediaDisabled: boolean;
   onPlay: (turnId: string) => void;
+  onPause: () => void;
+  onResume: () => void;
+  onRestart: (turnId: string) => void;
 }) {
   const headingId = `article-dimension-${label}`;
   return (
@@ -67,17 +79,21 @@ function DimensionCard({
         </p>
       ) : null}
       {dimension.evidence.map((item, index) => {
-        const playable = turns.some(
-          (turn) => turn.id === item.turnId && turn.audioAvailable,
-        );
+        const turn = turns.find((candidate) => candidate.id === item.turnId);
         return (
           <figure key={`${item.turnId}-${index}`} className="article__evidence">
             <blockquote lang="en">{item.quote}</blockquote>
             <figcaption>{item.note}</figcaption>
-            {playable ? (
-              <button type="button" onClick={() => onPlay(item.turnId)}>
-                Ouvir a resposta citada
-              </button>
+            {turn ? (
+              <ArticleTurnControls
+                turn={turn}
+                player={player}
+                disabled={mediaDisabled}
+                onPlay={onPlay}
+                onPause={onPause}
+                onResume={onResume}
+                onRestart={onRestart}
+              />
             ) : null}
           </figure>
         );
@@ -89,15 +105,26 @@ function DimensionCard({
 /**
  * Feedback final: quatro dimensões com citações das suas respostas e até três
  * melhorias. Baseia-se só no texto transcrito, não avalia pronúncia nem ritmo.
+ * As citações reutilizam os mesmos controlos de reprodução da conversa.
  */
 export default function ArticleReport({
   report,
   turns,
+  player,
+  mediaDisabled = false,
   onPlay,
+  onPause,
+  onResume,
+  onRestart,
 }: {
   report: Report;
   turns: ArticleTurnView[];
+  player: ArticlePlayerView;
+  mediaDisabled?: boolean;
   onPlay: (turnId: string) => void;
+  onPause: () => void;
+  onResume: () => void;
+  onRestart: (turnId: string) => void;
 }) {
   return (
     <section className="practice__panel article__report" aria-label="Feedback">
@@ -113,7 +140,12 @@ export default function ArticleReport({
           hint={hint}
           dimension={report[key]}
           turns={turns}
+          player={player}
+          mediaDisabled={mediaDisabled}
           onPlay={onPlay}
+          onPause={onPause}
+          onResume={onResume}
+          onRestart={onRestart}
         />
       ))}
       {report.improvements.length > 0 ? (

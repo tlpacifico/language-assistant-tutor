@@ -40,6 +40,16 @@
     "interaction": { "status": "clear", "summary": "Answered the tutor's question.", "evidence": [] },
     "improvements": ["Use connectors such as however and therefore."]
   },
+  "preferences": {
+    "autoplay": true,
+    "speedX10": 10
+  },
+  "preferencesSaved": {
+    "autoplay": false,
+    "speedX10": 8
+  },
+  "retrySendRecovery": "retry_send",
+  "retryFeedbackRecovery": "retry_feedback",
   "error": {
     "code": "AI_NETWORK",
     "message": "Falha de rede. O texto ficou guardado.",

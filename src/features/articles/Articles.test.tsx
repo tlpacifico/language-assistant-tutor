@@ -35,8 +35,9 @@ describe("Articles", () => {
       "finish",
       "correct",
       "authorize",
-      "playTurn",
-      "stopVoice",
+      "play",
+      "pause",
+      "stop",
       "resume",
     ] as const) {
       expect(fake.client[method]).not.toHaveBeenCalled();
@@ -51,7 +52,7 @@ describe("Articles", () => {
     await waitFor(() => expect(fake.client.resume).toHaveBeenCalledTimes(1));
     expect(fake.client.finish).not.toHaveBeenCalled();
     expect(fake.client.startRecording).not.toHaveBeenCalled();
-    expect(fake.client.playTurn).not.toHaveBeenCalled();
+    expect(fake.client.play).not.toHaveBeenCalled();
   });
 
   it("pede confirmação antes de eliminar", async () => {

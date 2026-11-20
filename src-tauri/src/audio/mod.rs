@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::domain::{error_code, AppError, CaptureMeta, ComponentState, ComponentStatus};
 
@@ -38,6 +38,35 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Intervalo de verificação de falhas assíncronas durante captura ou reprodução.
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// Intervalo mínimo entre eventos de progresso de reprodução.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Intervalo mínimo entre eventos de progresso de captura.
+const CAPTURE_PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Identidade única de uma reprodução de saída.
+///
+/// Gerada pela thread de áudio em cada [`AudioPort::start_playback`]; os
+/// comandos de pausa, retoma, acréscimo e paragem só se aplicam à reprodução
+/// que ainda usa a identidade devolvida.
+pub type PlaybackId = String;
+
+/// Progresso de uma reprodução em curso.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaybackProgress {
+    pub position_ms: u64,
+    pub buffered_ms: u64,
+    pub paused: bool,
+}
+
+/// Progresso de uma captura em curso: tempo efetivamente gravado e o nível do
+/// microfone mais recente (`None` antes do primeiro bloco).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CaptureProgress {
+    pub elapsed_ms: u64,
+    pub level: Option<f32>,
+}
 
 /// Reserva de uma gravação: identificador e pasta próprios.
 ///
@@ -86,8 +115,25 @@ pub enum AudioEvent {
         capture: Option<CapturedAudio>,
         error: AppError,
     },
-    /// A reprodução chegou ao fim do ficheiro.
-    PlaybackFinished,
+    /// A reprodução chegou ao fim da fila.
+    PlaybackFinished {
+        /// Reprodução que terminou; só se aplica ao estado que ainda a usa.
+        id: PlaybackId,
+    },
+    /// Progresso periódico de uma reprodução em curso.
+    PlaybackProgress {
+        id: PlaybackId,
+        progress: PlaybackProgress,
+    },
+    /// Progresso periódico de uma captura em curso.
+    ///
+    /// `recording_id` identifica a gravação que o originou: um evento atrasado
+    /// de uma gravação já terminada não pode atualizar a gravação nova.
+    CaptureProgress {
+        recording_id: Option<String>,
+        elapsed_ms: u64,
+        level: Option<f32>,
+    },
 }
 
 /// Captura interrompida, já fechada e pronta a entregar ao serviço.
@@ -103,18 +149,30 @@ pub type EventSink = Arc<dyn Fn(AudioEvent) + Send + Sync>;
 /// Porta de áudio usada pelo serviço.
 ///
 /// Captura e reprodução são mutuamente exclusivas: começar a gravar pára a
-/// reprodução e `play` é recusado com `BUSY` enquanto o microfone está aberto.
+/// reprodução e `start_playback` é recusado com `BUSY` enquanto o microfone
+/// está aberto. Cada reprodução tem uma [`PlaybackId`] própria: os comandos de
+/// pausa, retoma, acréscimo e paragem só se aplicam à reprodução atual e são
+/// ignorados (sem tocar no dispositivo) quando a identidade já foi substituída.
 pub trait AudioPort: Send + Sync {
     fn availability(&self) -> AvailabilityAudio;
     fn start_capture(&self, target: RecordingTarget) -> Result<(), AppError>;
     fn stop_capture(&self) -> Result<CapturedAudio, AppError>;
-    fn play(&self, path: PathBuf) -> Result<(), AppError>;
-    /// Acrescenta um WAV à fila do mesmo player, sem substituir o que já toca.
-    /// Por omissão equivale a `play` (portas sem fila).
-    fn append(&self, path: PathBuf) -> Result<(), AppError> {
-        self.play(path)
+    /// Começa uma reprodução nova, substituindo a anterior, e devolve a
+    /// identidade única que passa a controlá-la.
+    fn start_playback(&self, path: PathBuf) -> Result<PlaybackId, AppError>;
+    /// Acrescenta um WAV e devolve a identidade da fila. Continuar uma fila
+    /// já esvaziada atribui uma identidade nova aos seus eventos seguintes.
+    fn append_chunk(&self, path: PathBuf, id: &PlaybackId) -> Result<PlaybackId, AppError>;
+    fn pause_playback(&self, id: &PlaybackId) -> Result<(), AppError>;
+    fn resume_playback(&self, id: &PlaybackId) -> Result<(), AppError>;
+    fn stop_playback(&self, id: &PlaybackId) -> Result<(), AppError>;
+    /// Pára qualquer reprodução, sem identidade; reservado ao encerramento e a
+    /// caminhos que param «tudo».
+    fn stop_all_playback(&self) -> Result<(), AppError>;
+    /// Progresso atual da reprodução, quando existe.
+    fn playback_progress(&self) -> Option<PlaybackProgress> {
+        None
     }
-    fn stop_playback(&self) -> Result<(), AppError>;
     /// Reabre a porta depois de um comando ter excedido o prazo.
     ///
     /// Depois de um `AUDIO_TIMEOUT` a porta recusa novos comandos: a thread
@@ -127,7 +185,8 @@ pub trait AudioPort: Send + Sync {
 ///
 /// Existe para que a coordenação da porta (parar a reprodução ao começar a
 /// gravar, publicar interrupções, terminar a reprodução) seja verificável sem
-/// hardware, através de um adaptador controlado.
+/// hardware, através de um adaptador controlado. O dispositivo não conhece
+/// identidades: a coordenação da porta é dona da identidade atual.
 pub trait AudioBackend {
     fn availability(&mut self) -> AvailabilityAudio;
     fn start_capture(&mut self, target: RecordingTarget) -> Result<(), AppError>;
@@ -139,8 +198,17 @@ pub trait AudioBackend {
     fn append(&mut self, path: PathBuf) -> Result<(), AppError> {
         self.play(path)
     }
+    fn pause_playback(&mut self) -> Result<(), AppError>;
+    fn resume_playback(&mut self) -> Result<(), AppError>;
     fn stop_playback(&mut self) -> Result<(), AppError>;
+    fn playback_progress(&mut self) -> Option<PlaybackProgress> {
+        None
+    }
     fn playback_finished(&mut self) -> bool;
+    /// Progresso atual da captura (tempo e nível), quando existe.
+    fn capture_progress(&mut self) -> Option<CaptureProgress> {
+        None
+    }
 }
 
 /// Comandos aceites pela thread de áudio.
@@ -151,13 +219,29 @@ enum Command {
         reply: Sender<Result<(), AppError>>,
     },
     StopCapture(Sender<Result<CapturedAudio, AppError>>),
-    Play {
+    StartPlayback {
         path: PathBuf,
-        /// `true` acrescenta à fila em vez de substituir a reprodução.
-        queue: bool,
+        reply: Sender<Result<PlaybackId, AppError>>,
+    },
+    AppendChunk {
+        path: PathBuf,
+        id: PlaybackId,
+        reply: Sender<Result<PlaybackId, AppError>>,
+    },
+    PausePlayback {
+        id: PlaybackId,
         reply: Sender<Result<(), AppError>>,
     },
-    StopPlayback(Sender<Result<(), AppError>>),
+    ResumePlayback {
+        id: PlaybackId,
+        reply: Sender<Result<(), AppError>>,
+    },
+    StopPlayback {
+        id: PlaybackId,
+        reply: Sender<Result<(), AppError>>,
+    },
+    StopAllPlayback(Sender<Result<(), AppError>>),
+    PlaybackProgress(Sender<Option<PlaybackProgress>>),
     Shutdown,
 }
 
@@ -310,24 +394,45 @@ impl AudioPort for NativeAudio {
         self.request(Command::StopCapture)?
     }
 
-    fn play(&self, path: PathBuf) -> Result<(), AppError> {
-        self.request(|reply| Command::Play {
+    fn start_playback(&self, path: PathBuf) -> Result<PlaybackId, AppError> {
+        self.request(|reply| Command::StartPlayback { path, reply })?
+    }
+
+    fn append_chunk(&self, path: PathBuf, id: &PlaybackId) -> Result<PlaybackId, AppError> {
+        self.request(|reply| Command::AppendChunk {
             path,
-            queue: false,
+            id: id.clone(),
             reply,
         })?
     }
 
-    fn append(&self, path: PathBuf) -> Result<(), AppError> {
-        self.request(|reply| Command::Play {
-            path,
-            queue: true,
+    fn pause_playback(&self, id: &PlaybackId) -> Result<(), AppError> {
+        self.request(|reply| Command::PausePlayback {
+            id: id.clone(),
             reply,
         })?
     }
 
-    fn stop_playback(&self) -> Result<(), AppError> {
-        self.request(Command::StopPlayback)?
+    fn resume_playback(&self, id: &PlaybackId) -> Result<(), AppError> {
+        self.request(|reply| Command::ResumePlayback {
+            id: id.clone(),
+            reply,
+        })?
+    }
+
+    fn stop_playback(&self, id: &PlaybackId) -> Result<(), AppError> {
+        self.request(|reply| Command::StopPlayback {
+            id: id.clone(),
+            reply,
+        })?
+    }
+
+    fn stop_all_playback(&self) -> Result<(), AppError> {
+        self.request(Command::StopAllPlayback)?
+    }
+
+    fn playback_progress(&self) -> Option<PlaybackProgress> {
+        self.request(Command::PlaybackProgress).unwrap_or(None)
     }
 
     fn reopen(&self) -> Result<(), AppError> {
@@ -367,11 +472,15 @@ impl Drop for NativeAudio {
 fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: Receiver<Command>) {
     let mut capturing = false;
     let mut capturing_id: Option<String> = None;
-    let mut playing = false;
+    let mut current_id: Option<PlaybackId> = None;
+    let mut drained_id: Option<PlaybackId> = None;
+    let mut paused = false;
     let mut interruption_error: Option<AppError> = None;
+    let mut last_progress: Option<Instant> = None;
+    let mut last_capture_progress: Option<Instant> = None;
 
     loop {
-        let command = if capturing || playing {
+        let command = if capturing || current_id.is_some() {
             match commands.recv_timeout(POLL_INTERVAL) {
                 Ok(command) => Some(command),
                 Err(RecvTimeoutError::Timeout) => None,
@@ -393,14 +502,20 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                     // Começar a gravar pára qualquer reprodução em curso; a
                     // entrada tem prioridade mesmo que a paragem falhe.
                     if backend.stop_playback().is_ok() {
-                        playing = false;
+                        current_id = None;
+                        paused = false;
                     }
+                    drained_id = None;
                     let recording_id = target.id.clone();
                     match backend.start_capture(target) {
                         Ok(()) => {
                             capturing = true;
                             capturing_id = Some(recording_id);
                             interruption_error = None;
+                            // Primeiro progresso imediato; os seguintes no
+                            // máximo a cada 100 ms enquanto houver captura.
+                            emit_capture_progress(&mut backend, &events, capturing_id.as_deref());
+                            last_capture_progress = Some(Instant::now());
                             let _ = reply.send(Ok(()));
                         }
                         Err(error) => {
@@ -423,7 +538,7 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                         }
                     }
                 }
-                Command::Play { path, queue, reply } => {
+                Command::StartPlayback { path, reply } => {
                     // O microfone e a saída não funcionam ao mesmo tempo: a
                     // captura tem prioridade e a reprodução é recusada até ela
                     // terminar (só esta camada conhece o estado da captura).
@@ -432,15 +547,16 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                             "Não é possível reproduzir áudio enquanto o microfone está a gravar.",
                         )));
                     } else {
-                        let started = if queue {
-                            backend.append(path)
-                        } else {
-                            backend.play(path)
-                        };
-                        match started {
+                        // Uma reprodução nova substitui a anterior e obtém uma
+                        // identidade própria; a antiga deixa de ser aceite.
+                        let id = uuid::Uuid::new_v4().to_string();
+                        match backend.play(path) {
                             Ok(()) => {
-                                playing = true;
-                                let _ = reply.send(Ok(()));
+                                drained_id = None;
+                                current_id = Some(id.clone());
+                                paused = false;
+                                last_progress = None;
+                                let _ = reply.send(Ok(id));
                             }
                             Err(error) => {
                                 let _ = reply.send(Err(error));
@@ -448,12 +564,89 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                         }
                     }
                 }
-                Command::StopPlayback(reply) => {
+                Command::AppendChunk { path, id, reply } => {
+                    if capturing {
+                        let _ = reply.send(Err(AppError::busy(
+                            "Não é possível reproduzir áudio enquanto o microfone está a gravar.",
+                        )));
+                    } else if current_id.as_ref() == Some(&id) {
+                        let _ = reply.send(backend.append(path).map(|()| id));
+                    } else if drained_id.as_ref() == Some(&id) {
+                        // A fila acabou antes de o serviço receber PlaybackFinished.
+                        // O novo bloco continua o mesmo Player e o respetivo relógio.
+                        let result = backend.append(path).map(|()| {
+                            let next = uuid::Uuid::new_v4().to_string();
+                            current_id = Some(next.clone());
+                            drained_id = None;
+                            last_progress = None;
+                            next
+                        });
+                        let _ = reply.send(result);
+                    } else {
+                        let _ = reply.send(Err(AppError::new(
+                            error_code::STALE_SOURCE,
+                            "Esta reprodução já foi substituída.",
+                            false,
+                        )));
+                    }
+                }
+                Command::PausePlayback { id, reply } => {
+                    if current_id.as_deref() == Some(id.as_str()) {
+                        match backend.pause_playback() {
+                            Ok(()) => {
+                                paused = true;
+                                let _ = reply.send(Ok(()));
+                            }
+                            Err(error) => {
+                                let _ = reply.send(Err(error));
+                            }
+                        }
+                    } else {
+                        let _ = reply.send(Ok(()));
+                    }
+                }
+                Command::ResumePlayback { id, reply } => {
+                    if current_id.as_deref() == Some(id.as_str()) {
+                        match backend.resume_playback() {
+                            Ok(()) => {
+                                paused = false;
+                                let _ = reply.send(Ok(()));
+                            }
+                            Err(error) => {
+                                let _ = reply.send(Err(error));
+                            }
+                        }
+                    } else {
+                        let _ = reply.send(Ok(()));
+                    }
+                }
+                Command::StopPlayback { id, reply } => {
+                    if drained_id.as_ref() == Some(&id) {
+                        drained_id = None;
+                    }
+                    if current_id.as_deref() == Some(id.as_str()) {
+                        let result = backend.stop_playback();
+                        if result.is_ok() {
+                            current_id = None;
+                            paused = false;
+                        }
+                        let _ = reply.send(result);
+                    } else {
+                        // Identidade já substituída: a paragem é um no-op.
+                        let _ = reply.send(Ok(()));
+                    }
+                }
+                Command::StopAllPlayback(reply) => {
+                    drained_id = None;
                     let result = backend.stop_playback();
                     if result.is_ok() {
-                        playing = false;
+                        current_id = None;
+                        paused = false;
                     }
                     let _ = reply.send(result);
+                }
+                Command::PlaybackProgress(reply) => {
+                    let _ = reply.send(backend.playback_progress());
                 }
                 Command::Shutdown => {
                     if capturing {
@@ -465,7 +658,8 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
             }
         }
 
-        // Falhas e fim de reprodução chegam sem comando: verificar em cada volta.
+        // Falhas, progresso e fim de reprodução chegam sem comando: verificar em
+        // cada volta.
         if capturing {
             if let Some(interruption) = backend.capture_interruption() {
                 capturing = false;
@@ -475,13 +669,52 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                     capture: interruption.capture,
                     error: interruption.error,
                 });
+            } else if last_capture_progress.is_none_or(|t| t.elapsed() >= CAPTURE_PROGRESS_INTERVAL)
+            {
+                emit_capture_progress(&mut backend, &events, capturing_id.as_deref());
+                last_capture_progress = Some(Instant::now());
             }
         }
-        if playing && backend.playback_finished() {
-            playing = false;
-            events(AudioEvent::PlaybackFinished);
+        if let Some(id) = current_id.clone() {
+            // Progresso periódico, no máximo a cada 250 ms enquanto há player.
+            if last_progress.is_none_or(|t| t.elapsed() >= PROGRESS_INTERVAL) {
+                if let Some(progress) = backend.playback_progress() {
+                    events(AudioEvent::PlaybackProgress {
+                        id: id.clone(),
+                        progress,
+                    });
+                    last_progress = Some(Instant::now());
+                }
+            }
+            // Fim quando a fila esvazia, nunca enquanto está em pausa.
+            if !paused && backend.playback_finished() {
+                current_id = None;
+                paused = false;
+                drained_id = Some(id.clone());
+                events(AudioEvent::PlaybackFinished { id });
+            }
         }
     }
+}
+
+/// Publica o progresso atual da captura com a identidade da gravação ativa.
+///
+/// Sem progresso (captura já encerrada) não emite nada; a identidade vem da
+/// thread de áudio, que só passa a gravação ativa, para que uma gravação antiga
+/// não atualize uma mais recente.
+fn emit_capture_progress(
+    backend: &mut Box<dyn AudioBackend>,
+    events: &EventSink,
+    recording_id: Option<&str>,
+) {
+    let Some(progress) = backend.capture_progress() else {
+        return;
+    };
+    events(AudioEvent::CaptureProgress {
+        recording_id: recording_id.map(str::to_owned),
+        elapsed_ms: progress.elapsed_ms,
+        level: progress.level,
+    });
 }
 
 /// Fecha a captura ativa e publica a interrupção com o áudio recuperável.
@@ -555,6 +788,10 @@ impl AudioBackend for NativeDevices {
         result
     }
 
+    fn capture_progress(&mut self) -> Option<CaptureProgress> {
+        self.capture.capture_progress()
+    }
+
     fn play(&mut self, path: PathBuf) -> Result<(), AppError> {
         self.playback.play(&path)
     }
@@ -563,8 +800,20 @@ impl AudioBackend for NativeDevices {
         self.playback.append(&path)
     }
 
+    fn pause_playback(&mut self) -> Result<(), AppError> {
+        self.playback.pause()
+    }
+
+    fn resume_playback(&mut self) -> Result<(), AppError> {
+        self.playback.resume()
+    }
+
     fn stop_playback(&mut self) -> Result<(), AppError> {
         self.playback.stop()
+    }
+
+    fn playback_progress(&mut self) -> Option<PlaybackProgress> {
+        self.playback.progress()
     }
 
     fn playback_finished(&mut self) -> bool {

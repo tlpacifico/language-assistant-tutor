@@ -2,6 +2,8 @@ import { vi } from "vitest";
 
 import type { ArticleClient } from "../lib/article-client";
 import type {
+  ArticlePlayerView,
+  ArticleRecordingView,
   ArticleSnapshot,
   ArticleSummary,
   ArticleTurnView,
@@ -35,6 +37,7 @@ export function makeSnapshot(
     turns?: ArticleTurnView[];
     report?: ArticleSnapshot["report"];
     audio?: Partial<ArticleSnapshot["audio"]>;
+    recording?: Partial<ArticleSnapshot["recording"]>;
   } = {},
 ): ArticleSnapshot {
   return {
@@ -54,19 +57,47 @@ export function makeSnapshot(
       limitReached: false,
       error: null,
       usage: null,
+      recovery: null,
       ...overrides.session,
     },
     turns: overrides.turns ?? [
       makeTurn(1, "tutor", "What is the main argument?"),
     ],
     report: overrides.report ?? null,
-    audio: { playback: "idle", turnId: null, ...overrides.audio },
+    audio: {
+      sessionId: "session-1",
+      turnId: null,
+      versionId: null,
+      generation: 0,
+      sequence: 0,
+      state: "idle",
+      positionMs: 0,
+      durationMs: null,
+      bufferedMs: null,
+      source: null,
+      trigger: null,
+      failure: null,
+      ...overrides.audio,
+    },
+    recording: {
+      sessionId: "session-1",
+      turnId: "",
+      captureId: "",
+      sequence: 0,
+      state: "inactive",
+      elapsedMs: 0,
+      level: null,
+      available: true,
+      ...overrides.recording,
+    },
   };
 }
 
 /** Cliente falso: fotografias controladas e eventos emitidos à vontade (também fora de ordem). */
 export function fakeArticleClient(initial: ArticleSnapshot = makeSnapshot()) {
   const handlers = new Set<(snapshot: ArticleSnapshot) => void>();
+  const playerHandlers = new Set<(view: ArticlePlayerView) => void>();
+  const recordingHandlers = new Set<(view: ArticleRecordingView) => void>();
   let current = initial;
   const summaries: ArticleSummary[] = [
     {
@@ -92,11 +123,38 @@ export function fakeArticleClient(initial: ArticleSnapshot = makeSnapshot()) {
     retry: vi.fn(respond),
     finish: vi.fn(respond),
     correct: vi.fn(respond),
-    resume: vi.fn(respond),
+    resume: vi.fn((arg: unknown, _generation?: number) =>
+      typeof arg === "string"
+        ? Promise.resolve(current.audio)
+        : Promise.resolve(current),
+    ),
     delete: vi.fn(() => Promise.resolve()),
-    playTurn: vi.fn(() => Promise.resolve()),
-    stopVoice: vi.fn(() => Promise.resolve()),
-    speakTurn: vi.fn(() => Promise.resolve()),
+    preferences: vi.fn(() =>
+      Promise.resolve({ autoplay: true, speedX10: 10 }),
+    ),
+    savePreferences: vi.fn(
+      (input: { autoplay: boolean; speedX10: 8 | 10 | 12 }) =>
+        Promise.resolve(input),
+    ),
+    play: vi.fn(() => Promise.resolve(current.audio)),
+    pause: vi.fn(() => Promise.resolve(current.audio)),
+    stop: vi.fn(() => Promise.resolve(current.audio)),
+    focusView: vi.fn(() => Promise.resolve()),
+    blurView: vi.fn(() => Promise.resolve()),
+    subscribePlayer: vi.fn((handler: (view: ArticlePlayerView) => void) => {
+      playerHandlers.add(handler);
+      return Promise.resolve(() => {
+        playerHandlers.delete(handler);
+      });
+    }),
+    subscribeRecording: vi.fn(
+      (handler: (view: ArticleRecordingView) => void) => {
+        recordingHandlers.add(handler);
+        return Promise.resolve(() => {
+          recordingHandlers.delete(handler);
+        });
+      },
+    ),
     subscribe: vi.fn((handler: (snapshot: ArticleSnapshot) => void) => {
       handlers.add(handler);
       return Promise.resolve(() => {
@@ -114,6 +172,16 @@ export function fakeArticleClient(initial: ArticleSnapshot = makeSnapshot()) {
     /** Emite sem alterar o que os comandos devolvem (evento atrasado). */
     emitLate(snapshot: ArticleSnapshot) {
       handlers.forEach((handler) => handler(snapshot));
+    },
+    /** Emite um estado de reprodução; a fotografia seguinte reflete-o. */
+    emitPlayer(view: ArticlePlayerView) {
+      current = { ...current, audio: view };
+      playerHandlers.forEach((handler) => handler(view));
+    },
+    /** Emite um estado de gravação; a fotografia seguinte reflete-o. */
+    emitRecording(view: ArticleRecordingView) {
+      current = { ...current, recording: view };
+      recordingHandlers.forEach((handler) => handler(view));
     },
     set(snapshot: ArticleSnapshot) {
       current = snapshot;

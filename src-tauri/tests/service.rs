@@ -24,7 +24,7 @@ use serde_json::json;
 
 use language_assistant_tutor::artifacts::{reconcile, ArtifactStore, NORMALIZED_FILE};
 use language_assistant_tutor::audio::{
-    AudioEvent, AudioPort, AvailabilityAudio, CapturedAudio, RecordingTarget,
+    AudioEvent, AudioPort, AvailabilityAudio, CapturedAudio, PlaybackId, RecordingTarget,
 };
 use language_assistant_tutor::db::Database;
 use language_assistant_tutor::domain::{
@@ -251,14 +251,36 @@ impl AudioPort for FakeAudio {
         })
     }
 
-    fn play(&self, path: PathBuf) -> Result<(), AppError> {
+    fn start_playback(&self, path: PathBuf) -> Result<PlaybackId, AppError> {
         let mut state = self.state.lock().expect("estado do áudio");
         state.played.push(path.clone());
         state.playing = Some(path);
+        Ok(format!("playback-{}", state.played.len()))
+    }
+
+    fn append_chunk(&self, path: PathBuf, id: &PlaybackId) -> Result<PlaybackId, AppError> {
+        let mut state = self.state.lock().expect("estado do áudio");
+        state.played.push(path.clone());
+        state.playing = Some(path);
+        Ok(id.clone())
+    }
+
+    fn pause_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
         Ok(())
     }
 
-    fn stop_playback(&self) -> Result<(), AppError> {
+    fn resume_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn stop_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        let mut state = self.state.lock().expect("estado do áudio");
+        state.playing = None;
+        state.stops += 1;
+        Ok(())
+    }
+
+    fn stop_all_playback(&self) -> Result<(), AppError> {
         let mut state = self.state.lock().expect("estado do áudio");
         state.playing = None;
         state.stops += 1;
@@ -2582,6 +2604,32 @@ async fn failed_restart_discards_the_pending_health_handle() {
         after.last_error.expect("erro do reinício").code,
         error_code::BUSY
     );
+}
+
+#[tokio::test]
+async fn star_playback_finished_still_clears_only_its_own_id() {
+    let harness = Harness::new().await;
+    let snapshot = harness.record_once().await;
+    let recording = selected_recording(snapshot.current.as_ref().unwrap());
+    let selection = AudioSelection::Recording {
+        recording_id: recording.id.clone(),
+    };
+    harness.service.play_audio(selection.clone()).await.unwrap();
+    harness.service.play_audio(selection).await.unwrap();
+    harness
+        .service
+        .on_audio_event(AudioEvent::PlaybackFinished {
+            id: "playback-1".into(),
+        })
+        .await;
+    assert_eq!(harness.snapshot().playback, Some(PlaybackTarget::Response));
+    harness
+        .service
+        .on_audio_event(AudioEvent::PlaybackFinished {
+            id: "playback-2".into(),
+        })
+        .await;
+    assert_eq!(harness.snapshot().playback, None);
 }
 
 #[tokio::test]

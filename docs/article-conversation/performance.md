@@ -2,6 +2,11 @@
 
 Status on 2026-11-05: **instrumentation and measurement tool ready; real measurements still to do.** None of the values below was measured with real recordings; what exists is what the code now does and how to measure it.
 
+R1 adds no real-use measurements. Use the same [R0 baseline procedure](roadmap.md#r0--observe-the-current-experience)
+for stop-to-first-sound, cold and warm. The player's elapsed and buffered values
+describe playback progress. The diagnostic handoff duration measures the recording
+command, including the output stop.
+
 ## What is measured in each turn
 
 The service records, in closed local diagnostics operations (see [diagnostics](../diagnostics/validation.md)), only the duration and a stable code — never text, title, paths or audio:
@@ -13,7 +18,7 @@ The service records, in closed local diagnostics operations (see [diagnostics](.
 | `article_first_audio` | from the start of the synthesis until the first block delivered to the player |
 | `article_feedback` | from the report request until the result |
 
-The test `turn_metrics_use_closed_operations_with_durations_and_no_content` (in `src-tauri/tests/article_service.rs`) checks that only these operations appear, with duration, and that the content never reaches the record.
+The test `turn_metrics_use_closed_operations_with_durations_and_no_content` (in `src-tauri/tests/article_service.rs`) checks these four operations and the R1 playback start, stop and recording handoff. It verifies duration and absence of content.
 
 ## Measure the transcript and the voice
 

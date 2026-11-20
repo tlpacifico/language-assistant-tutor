@@ -76,10 +76,26 @@ impl AudioPort for Audio {
             )?,
         })
     }
-    fn play(&self, _: PathBuf) -> std::result::Result<(), AppError> {
+    fn start_playback(&self, _: PathBuf) -> std::result::Result<PlaybackId, AppError> {
+        Ok("playback".to_owned())
+    }
+    fn append_chunk(
+        &self,
+        _: PathBuf,
+        id: &PlaybackId,
+    ) -> std::result::Result<PlaybackId, AppError> {
+        Ok(id.clone())
+    }
+    fn pause_playback(&self, _: &PlaybackId) -> std::result::Result<(), AppError> {
         Ok(())
     }
-    fn stop_playback(&self) -> std::result::Result<(), AppError> {
+    fn resume_playback(&self, _: &PlaybackId) -> std::result::Result<(), AppError> {
+        Ok(())
+    }
+    fn stop_playback(&self, _: &PlaybackId) -> std::result::Result<(), AppError> {
+        Ok(())
+    }
+    fn stop_all_playback(&self) -> std::result::Result<(), AppError> {
         Ok(())
     }
     fn reopen(&self) -> std::result::Result<(), AppError> {

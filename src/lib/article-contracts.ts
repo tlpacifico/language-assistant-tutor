@@ -23,7 +23,19 @@ export type ArticleState =
 export type ArticleVersionSource = "automatic_sent" | "manual_review";
 export type ArticleSpeaker = "tutor" | "user";
 export type DimensionStatus = "clear" | "partial" | "insufficient_evidence";
-export type ArticlePlayback = "idle" | "playing" | "failed";
+
+export type PlayerState =
+  | "idle"
+  | "preparing"
+  | "playing"
+  | "paused"
+  | "buffering"
+  | "ended"
+  | "failed";
+export type PlayerSource = "tutor_voice" | "user_recording";
+export type PlaybackTrigger = "autoplay" | "explicit";
+export type PlayerOperation = "synthesis" | "output";
+export type RecordingState = "inactive" | "active" | "ended";
 
 export interface ArticleCommand {
   requestId: string;
@@ -66,6 +78,13 @@ export interface ArticleUsageView {
   estimatedCost: number | null;
 }
 
+export type ArticleRecovery = "retry_send" | "retry_feedback" | "re_record";
+
+export interface ArticlePreferences {
+  autoplay: boolean;
+  speedX10: 8 | 10 | 12;
+}
+
 export interface ArticleSessionView {
   id: string;
   title: string | null;
@@ -79,6 +98,7 @@ export interface ArticleSessionView {
   limitReached: boolean;
   error: ArticleError | null;
   usage: ArticleUsageView | null;
+  recovery: ArticleRecovery | null;
 }
 
 export interface ArticleVersionView {
@@ -120,16 +140,43 @@ export interface ArticleReport {
   improvements: string[];
 }
 
-export interface ArticleAudioView {
-  playback: ArticlePlayback;
+export interface PlayerFailure {
+  operation: PlayerOperation;
+  retryable: boolean;
+}
+
+export interface ArticlePlayerView {
+  sessionId: string;
   turnId: string | null;
+  versionId: string | null;
+  generation: number;
+  sequence: number;
+  state: PlayerState;
+  positionMs: number;
+  durationMs: number | null;
+  bufferedMs: number | null;
+  source: PlayerSource | null;
+  trigger: PlaybackTrigger | null;
+  failure: PlayerFailure | null;
+}
+
+export interface ArticleRecordingView {
+  sessionId: string;
+  turnId: string;
+  captureId: string;
+  sequence: number;
+  state: RecordingState;
+  elapsedMs: number;
+  level: number | null;
+  available: boolean;
 }
 
 export interface ArticleSnapshot {
   session: ArticleSessionView;
   turns: ArticleTurnView[];
   report: ArticleReport | null;
-  audio: ArticleAudioView;
+  audio: ArticlePlayerView;
+  recording: ArticleRecordingView;
 }
 
 export interface ArticleSummary {
@@ -153,3 +200,63 @@ export const ARTICLE_STATE_LABELS: Record<ArticleState, string> = {
   completed: "Concluída",
   paused: "Em pausa",
 };
+
+export type ArticleMergeMode = "event" | "snapshot";
+
+/**
+ * Funde uma vista de reprodução.
+ *
+ * Um evento aplica-se apenas com uma sequência estritamente superior; uma
+ * fotografia aplica-se com uma sequência igual ou superior. Vistas de outra
+ * sessão nunca são aceites.
+ */
+export function mergePlayer(
+  current: ArticlePlayerView,
+  next: ArticlePlayerView,
+  mode: ArticleMergeMode = "event",
+): ArticlePlayerView {
+  if (next.sessionId !== current.sessionId) {
+    return current;
+  }
+  const newer =
+    mode === "snapshot"
+      ? next.sequence >= current.sequence
+      : next.sequence > current.sequence;
+  return newer ? next : current;
+}
+
+/**
+ * Funde uma vista de gravação.
+ *
+ * Tal como na reprodução, um evento aplica-se apenas com uma sequência
+ * estritamente superior e uma fotografia com uma sequência igual ou superior.
+ * Além disso, um evento `active` (início ou progresso) de uma captura antiga
+ * nunca regride a captura mais recente: quando a vista atual já está `active`,
+ * exige-se a mesma `captureId`. `inactive` e `ended` aplicam-se sempre quando
+ * mais recentes.
+ */
+export function mergeRecording(
+  current: ArticleRecordingView,
+  next: ArticleRecordingView,
+  mode: ArticleMergeMode = "event",
+): ArticleRecordingView {
+  if (next.sessionId !== current.sessionId) {
+    return current;
+  }
+  const newer =
+    mode === "snapshot"
+      ? next.sequence >= current.sequence
+      : next.sequence > current.sequence;
+  if (!newer) {
+    return current;
+  }
+  if (
+    mode === "event" &&
+    next.state === "active" &&
+    current.state === "active" &&
+    next.captureId !== current.captureId
+  ) {
+    return current;
+  }
+  return next;
+}

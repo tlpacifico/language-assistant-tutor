@@ -31,7 +31,7 @@ describe("ArticleConversation", () => {
   it("mostra comentário e pergunta em sequência, sem editor nem correções entre turnos", async () => {
     setup(makeSnapshot({ turns: dialogue, session: { answers: 1 } }));
     const tutor = screen.getAllByTestId("turn-tutor")[1];
-    const paragraphs = within(tutor).getAllByText(/./);
+    const paragraphs = [...tutor.querySelectorAll("p")];
     expect(paragraphs.map((p) => p.textContent)).toEqual([
       "Good point.",
       "Why does that matter?",
@@ -70,7 +70,7 @@ describe("ArticleConversation", () => {
     expect(
       screen.queryByRole("button", { name: "Gravar resposta" }),
     ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Parar gravação" }));
+    await user.click(screen.getByRole("button", { name: "Parar e enviar" }));
     expect(fake.client.stopRecording).toHaveBeenCalledWith(
       expect.objectContaining({ expectedVersion: 4 }),
     );
@@ -98,9 +98,10 @@ describe("ArticleConversation", () => {
     rerender(
       <ArticleConversation client={fake.client} initial={limited} />,
     );
+    // No limite, «Gravar resposta» é substituído por «Terminar e ver feedback».
     expect(
-      screen.getByRole("button", { name: "Gravar resposta" }),
-    ).toBeDisabled();
+      screen.queryByRole("button", { name: "Gravar resposta" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(
       /Limite da conversa atingido/,
     );
@@ -109,12 +110,13 @@ describe("ArticleConversation", () => {
     ).toBeEnabled();
   });
 
-  it("mostra o erro recuperável com foco e permite repetir", async () => {
+  it("mostra o erro recuperável e permite repetir", async () => {
     const user = userEvent.setup();
     const { fake } = setup(
       makeSnapshot({
         session: {
           state: "recoverable_error",
+          recovery: "retry_send",
           error: {
             code: "AI_NETWORK",
             message: "Falha de rede; o custo pode ser desconhecido.",
@@ -125,8 +127,10 @@ describe("ArticleConversation", () => {
     );
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("Falha de rede");
-    await waitFor(() => expect(alert).toHaveFocus());
-    await user.click(screen.getByRole("button", { name: "Repetir" }));
+    expect(screen.getByRole("heading", { level: 2 })).toHaveFocus();
+    await user.click(
+      screen.getByRole("button", { name: "Tentar enviar novamente" }),
+    );
     expect(fake.client.retry).toHaveBeenCalledTimes(1);
   });
 
@@ -142,7 +146,7 @@ describe("ArticleConversation", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Microfone indisponível.");
     expect(
-      screen.queryByRole("button", { name: "Parar gravação" }),
+      screen.queryByRole("button", { name: "Parar e enviar" }),
     ).not.toBeInTheDocument();
   });
 
@@ -151,11 +155,11 @@ describe("ArticleConversation", () => {
     const { fake } = setup(
       makeSnapshot({
         turns: dialogue,
-        audio: { playback: "playing", turnId: "turn-3" },
+        audio: { state: "playing", turnId: "turn-3", generation: 1 },
       }),
     );
-    await user.click(screen.getByRole("button", { name: "Parar voz" }));
-    expect(fake.client.stopVoice).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Parar" }));
+    expect(fake.client.stop).toHaveBeenCalledWith("session-1", 1);
     expect(screen.getByText("Why does that matter?")).toBeInTheDocument();
   });
 
@@ -164,12 +168,16 @@ describe("ArticleConversation", () => {
     const { fake } = setup(
       makeSnapshot({
         turns: dialogue,
-        audio: { playback: "failed", turnId: "turn-3" },
+        audio: {
+          state: "failed",
+          turnId: "turn-3",
+          failure: { operation: "synthesis", retryable: true },
+        },
       }),
     );
     expect(screen.getByText("Why does that matter?")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Repetir voz" }));
-    expect(fake.client.speakTurn).toHaveBeenCalledWith("session-1", "turn-3");
+    await user.click(screen.getByRole("button", { name: "Gerar voz novamente" }));
+    expect(fake.client.play).toHaveBeenCalledWith("session-1", "turn-3");
     // Nenhum comando que chame o fornecedor de texto.
     expect(fake.client.retry).not.toHaveBeenCalled();
     expect(fake.client.finish).not.toHaveBeenCalled();
@@ -213,6 +221,7 @@ describe("ArticleConversation", () => {
   it("revoga a autorização e pede-a de novo antes de continuar", async () => {
     const user = userEvent.setup();
     const { fake } = setup();
+    await waitFor(() => expect(fake.client.focusView).toHaveBeenCalled());
     fake.set(
       makeSnapshot({
         session: { state: "draft", authorization: null, version: 4 },
@@ -239,6 +248,22 @@ describe("ArticleConversation", () => {
     );
   });
 
+  it.each(["snapshot", "focusView"] as const)(
+    "mantém as atualizações da conversa quando %s falha",
+    async (operation) => {
+      const initial = makeSnapshot();
+      const fake = fakeArticleClient(initial);
+      fake.client[operation].mockRejectedValueOnce(new Error("IPC"));
+      render(<ArticleConversation client={fake.client} initial={initial} />);
+      await screen.findByRole("alert");
+      act(() => fake.emit(makeSnapshot({ session: { state: "transcribing", version: 4 } })));
+      expect(screen.getByText("A transcrever a resposta…")).toBeInTheDocument();
+      act(() => fake.emit(makeSnapshot({ session: { state: "ready", version: 5 } })));
+      expect(screen.getByRole("button", { name: "Gravar resposta" })).toBeEnabled();
+      expect(screen.queryByText("A transcrever a resposta…")).not.toBeInTheDocument();
+    },
+  );
+
   it("pede texto manual quando a transcrição falhou", async () => {
     const user = userEvent.setup();
     const { fake } = setup(
@@ -250,6 +275,12 @@ describe("ArticleConversation", () => {
         ],
       }),
     );
+    const original = within(screen.getByTestId("turn-user"));
+    expect(original.getByText("Transcrição indisponível.")).toBeInTheDocument();
+    const play = original.getByRole("button", { name: "Ouvir" });
+    await waitFor(() => expect(play).toBeEnabled());
+    await user.click(play);
+    expect(fake.client.play).toHaveBeenCalledWith("session-1", "turn-2");
     const send = screen.getByRole("button", { name: "Enviar texto" });
     expect(send).toBeDisabled();
     await user.type(
@@ -305,4 +336,117 @@ describe("ArticleConversation", () => {
     });
     expect(onBusy).toHaveBeenLastCalledWith(false);
   });
+
+  it("missing_original_is_labelled_unavailable", () => {
+    setup(
+      makeSnapshot({
+        turns: [
+          makeTurn(1, "tutor", "Question?"),
+          makeTurn(2, "user", "My answer.", { audioAvailable: false }),
+        ],
+      }),
+    );
+    expect(screen.getByText("Áudio indisponível")).toBeInTheDocument();
+    const userTurn = screen.getByTestId("turn-user");
+    expect(
+      within(userTurn).queryByRole("button", { name: "Ouvir" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("historical_playback_is_not_started_while_awaiting_the_tutor_or_draft", () => {
+    const turns = [
+      makeTurn(1, "tutor", "Question?"),
+      makeTurn(2, "user", "My answer."),
+    ];
+    const { fake } = setup(
+      makeSnapshot({ session: { state: "awaiting_tutor" }, turns }),
+    );
+    expect(screen.queryByRole("button", { name: "Ouvir" })).not.toBeInTheDocument();
+
+    act(() => {
+      fake.emit(
+        makeSnapshot({ session: { state: "draft", authorization: null }, turns }),
+      );
+    });
+    expect(screen.queryByRole("button", { name: "Ouvir" })).not.toBeInTheDocument();
+  });
+
+  it("transcript_placeholder_is_not_fabricated_text", () => {
+    setup(
+      makeSnapshot({
+        session: { state: "transcribing" },
+        turns: [
+          makeTurn(1, "tutor", "Question?"),
+          makeTurn(2, "user", ""),
+        ],
+      }),
+    );
+    expect(screen.getByText("A transcrever…")).toBeInTheDocument();
+    const userTurn = screen.getByTestId("turn-user");
+    expect(within(userTurn).queryByText(/remote|work|answer|focus/i)).not.toBeInTheDocument();
+  });
+
+  it("failed_send_keeps_the_saved_answer_and_offers_resend", async () => {
+    const user = userEvent.setup();
+    const { fake } = setup(
+      makeSnapshot({
+        session: {
+          state: "recoverable_error",
+          recovery: "retry_send",
+          error: {
+            code: "AI_NETWORK",
+            message: "Falha de rede.",
+            retryable: true,
+          },
+        },
+        turns: [
+          makeTurn(1, "tutor", "Question?"),
+          makeTurn(2, "user", "Remote work helps people focus."),
+        ],
+      }),
+    );
+    expect(
+      screen.getByText("Remote work helps people focus."),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Tentar enviar novamente" }),
+    );
+    expect(fake.client.retry).toHaveBeenCalledTimes(1);
+    expect(fake.client.startRecording).not.toHaveBeenCalled();
+  });
+
+  it("autoplay_and_speed_save_through_the_client", async () => {
+    const user = userEvent.setup();
+    const { fake } = setup(makeSnapshot());
+    await user.click(await screen.findByText("Preferências de áudio"));
+    const autoplay = await screen.findByRole("checkbox", {
+      name: "Reproduzir automaticamente",
+    });
+    expect(autoplay).toBeChecked();
+    await user.click(autoplay);
+    await waitFor(() =>
+      expect(fake.client.savePreferences).toHaveBeenCalledWith({
+        autoplay: false,
+        speedX10: 10,
+      }),
+    );
+
+    await user.click(screen.getByRole("radio", { name: "1.2×" }));
+    await waitFor(() =>
+      expect(fake.client.savePreferences).toHaveBeenCalledWith({
+        autoplay: false,
+        speedX10: 12,
+      }),
+    );
+  });
+});
+
+it("starts a new take directly when persisted recovery calls for recording again", async () => {
+  const user = userEvent.setup();
+  const { fake } = setup(makeSnapshot({
+    session: { state: "recoverable_error", recovery: "re_record" },
+  }));
+  await user.click(screen.getByRole("button", { name: "Gravar novamente" }));
+  expect(fake.client.startRecording).toHaveBeenCalledTimes(1);
+  expect(fake.client.retry).not.toHaveBeenCalled();
 });

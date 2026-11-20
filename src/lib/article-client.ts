@@ -14,11 +14,16 @@ import type {
   ArticleConsent,
   ArticleCorrection,
   ArticleCreate,
+  ArticlePlayerView,
+  ArticlePreferences,
+  ArticleRecordingView,
   ArticleSnapshot,
   ArticleSummary,
 } from "./article-contracts";
 
 export const ARTICLE_SNAPSHOT_EVENT = "article://snapshot";
+export const ARTICLE_PLAYER_EVENT = "article://player";
+export const ARTICLE_RECORDING_EVENT = "article://recording";
 
 export interface ArticleClient {
   /** Destino configurado, mostrado antes de autorizar. */
@@ -34,14 +39,33 @@ export interface ArticleClient {
   retry(command: ArticleCommand): Promise<ArticleSnapshot>;
   finish(command: ArticleCommand): Promise<ArticleSnapshot>;
   correct(correction: ArticleCorrection): Promise<ArticleSnapshot>;
+  /** Retoma uma conversa guardada. */
   resume(command: ArticleCommand): Promise<ArticleSnapshot>;
+  /** Retoma a reprodução atual, limitada à geração indicada. */
+  resume(sessionId: string, generation: number): Promise<ArticlePlayerView>;
   delete(command: ArticleCommand): Promise<void>;
-  /** Ouve a gravação de uma resposta (turno do utilizador) já guardada. */
-  playTurn(sessionId: string, turnId: string): Promise<void>;
-  /** Interrompe a voz do tutor sem apagar texto nem estado. */
-  stopVoice(): Promise<void>;
-  /** Repete a voz de uma fala do tutor, sem nova chamada ao fornecedor de texto. */
-  speakTurn(sessionId: string, turnId: string): Promise<void>;
+  /** Preferências do leitor (reprodução automática e velocidade). */
+  preferences(): Promise<ArticlePreferences>;
+  /** Guarda as preferências e devolve a versão validada. */
+  savePreferences(input: ArticlePreferences): Promise<ArticlePreferences>;
+  /** Reproduz uma fala (tutor) ou a gravação de uma resposta, do início. */
+  play(sessionId: string, turnId: string): Promise<ArticlePlayerView>;
+  /** Pausa a reprodução atual, limitada à geração indicada. */
+  pause(sessionId: string, generation: number): Promise<ArticlePlayerView>;
+  /** Para a reprodução atual, limitada à geração indicada. */
+  stop(sessionId: string, generation: number): Promise<ArticlePlayerView>;
+  /** Regista a sessão e o token da vista focada. */
+  focusView(sessionId: string, token: string): Promise<void>;
+  /** Limpa o foco apenas quando o token coincide. */
+  blurView(token: string): Promise<void>;
+  /** Ouve o estado de reprodução; devolve a remoção do listener. */
+  subscribePlayer(
+    handler: (view: ArticlePlayerView) => void,
+  ): Promise<() => void>;
+  /** Ouve o estado de gravação; devolve a remoção do listener. */
+  subscribeRecording(
+    handler: (view: ArticleRecordingView) => void,
+  ): Promise<() => void>;
   /** Recebe cada fotografia publicada; devolve a remoção do listener. */
   subscribe(handler: (snapshot: ArticleSnapshot) => void): Promise<() => void>;
 }
@@ -71,19 +95,43 @@ export function createArticleClient(): ArticleClient {
     finish: (command) => invoke<ArticleSnapshot>("article_finish", { command }),
     correct: (correction) =>
       invoke<ArticleSnapshot>("article_correct", { correction }),
-    resume: (command) => invoke<ArticleSnapshot>("article_resume", { command }),
+    resume: ((
+      sessionIdOrCommand: string | ArticleCommand,
+      generation?: number,
+    ) =>
+      typeof sessionIdOrCommand === "string"
+        ? invoke<ArticlePlayerView>("article_player_resume", {
+            sessionId: sessionIdOrCommand,
+            generation,
+          })
+        : invoke<ArticleSnapshot>("article_resume", {
+            command: sessionIdOrCommand,
+          })) as ArticleClient["resume"],
     async delete(command) {
       await invoke<void>("article_delete", { command });
     },
-    async playTurn(sessionId, turnId) {
-      await invoke<void>("article_play_turn", { sessionId, turnId });
-    },
-    async stopVoice() {
-      await invoke<void>("article_stop_voice");
-    },
-    async speakTurn(sessionId, turnId) {
-      await invoke<void>("article_speak_turn", { sessionId, turnId });
-    },
+    preferences: () => invoke<ArticlePreferences>("article_preferences_load"),
+    savePreferences: (input) =>
+      invoke<ArticlePreferences>("article_preferences_save", {
+        preferences: input,
+      }),
+    play: (sessionId, turnId) =>
+      invoke<ArticlePlayerView>("article_player_play", { sessionId, turnId }),
+    pause: (sessionId, generation) =>
+      invoke<ArticlePlayerView>("article_player_pause", { sessionId, generation }),
+    stop: (sessionId, generation) =>
+      invoke<ArticlePlayerView>("article_player_stop", { sessionId, generation }),
+    focusView: (sessionId, token) =>
+      invoke<void>("article_view_focus", { sessionId, token }),
+    blurView: (token) => invoke<void>("article_view_blur", { token }),
+    subscribePlayer: (handler) =>
+      listen<ArticlePlayerView>(ARTICLE_PLAYER_EVENT, (event) =>
+        handler(event.payload),
+      ),
+    subscribeRecording: (handler) =>
+      listen<ArticleRecordingView>(ARTICLE_RECORDING_EVENT, (event) =>
+        handler(event.payload),
+      ),
     async subscribe(handler) {
       return listen<ArticleSnapshot>(ARTICLE_SNAPSHOT_EVENT, (event) =>
         handler(event.payload),

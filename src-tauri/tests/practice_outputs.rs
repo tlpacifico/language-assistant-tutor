@@ -18,7 +18,7 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 use language_assistant_tutor::{
     ai::*,
     artifacts::{reconcile_rewrite_audio, ArtifactStore},
-    audio::{AudioPort, AvailabilityAudio, CapturedAudio, RecordingTarget},
+    audio::{AudioPort, AvailabilityAudio, CapturedAudio, PlaybackId, RecordingTarget},
     db::Database,
     domain::{error_code, AppError, ComponentState, ComponentStatus, PlaybackTarget},
     interview::{AudioSelection, InterviewSnapshot, ReviewOrigin},
@@ -115,11 +115,29 @@ impl AudioPort for Audio {
             original,
         })
     }
-    fn play(&self, path: PathBuf) -> std::result::Result<(), AppError> {
+    fn start_playback(&self, path: PathBuf) -> std::result::Result<PlaybackId, AppError> {
         self.0.lock().unwrap().played.push(path);
+        Ok("playback".to_owned())
+    }
+    fn append_chunk(
+        &self,
+        path: PathBuf,
+        id: &PlaybackId,
+    ) -> std::result::Result<PlaybackId, AppError> {
+        self.0.lock().unwrap().played.push(path);
+        Ok(id.clone())
+    }
+    fn pause_playback(&self, _id: &PlaybackId) -> std::result::Result<(), AppError> {
         Ok(())
     }
-    fn stop_playback(&self) -> std::result::Result<(), AppError> {
+    fn resume_playback(&self, _id: &PlaybackId) -> std::result::Result<(), AppError> {
+        Ok(())
+    }
+    fn stop_playback(&self, _id: &PlaybackId) -> std::result::Result<(), AppError> {
+        self.0.lock().unwrap().stops += 1;
+        Ok(())
+    }
+    fn stop_all_playback(&self) -> std::result::Result<(), AppError> {
         self.0.lock().unwrap().stops += 1;
         Ok(())
     }

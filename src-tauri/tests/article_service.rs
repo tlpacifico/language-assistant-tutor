@@ -18,18 +18,20 @@ use language_assistant_tutor::ai::{
     NormalizedUsage, RemoteCompletion, OPENCODE_GO_BASE_URL,
 };
 use language_assistant_tutor::article::{
-    ArticleCommand, ArticleConsent, ArticleCreate, ArticleSnapshot, ArticleSpeaker, ArticleState,
-    ARTICLE_NOTICE_VERSION,
+    begin_entry, finish_entry, read_cache, voice_key, ArticleCommand, ArticleConsent,
+    ArticleCreate, ArticlePreferences, ArticleSnapshot, ArticleSpeaker, ArticleState,
+    ARTICLE_NOTICE_VERSION, ENGINE_ID,
 };
 use language_assistant_tutor::artifacts::ArtifactStore;
 use language_assistant_tutor::audio::{
-    AudioPort, AvailabilityAudio, CapturedAudio, RecordingTarget,
+    AudioEvent, AudioPort, AvailabilityAudio, CapturedAudio, PlaybackId, PlaybackProgress,
+    RecordingTarget,
 };
 use language_assistant_tutor::db::Database;
 use language_assistant_tutor::domain::{
-    error_code, AppError, CaptureMeta, ComponentState, TranscriptStatus,
+    error_code, AppError, CaptureMeta, ComponentState, PlaybackTarget, TranscriptStatus,
 };
-use language_assistant_tutor::interview::StartSession;
+use language_assistant_tutor::interview::{AudioSelection, StartSession};
 use language_assistant_tutor::service::{
     AppService, LaunchedWorker, ServicePaths, WorkerControl, WorkerLauncher,
 };
@@ -56,6 +58,18 @@ fn write_wav(path: &Path) {
     writer.finalize().expect("fechar WAV de teste");
 }
 
+#[derive(Clone, Default)]
+struct OrderLog(Arc<Mutex<Vec<&'static str>>>);
+
+impl OrderLog {
+    fn push(&self, step: &'static str) {
+        self.0.lock().unwrap().push(step);
+    }
+    fn steps(&self) -> Vec<&'static str> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
 #[derive(Default)]
 struct FakeAudio {
     capture: Mutex<Option<RecordingTarget>>,
@@ -63,9 +77,29 @@ struct FakeAudio {
     plays: Mutex<Vec<PathBuf>>,
     appends: Mutex<Vec<PathBuf>>,
     stops: Mutex<usize>,
+    last_id: Mutex<Option<PlaybackId>>,
+    /// Quando presente, `pause_playback` bloqueia até receber um sinal, para
+    /// simular um dispositivo lento que detém o coordenador serial.
+    pause_gate: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    /// Quantas vezes `pause_playback` foi invocado (antes do bloqueio).
+    pause_attempts: Mutex<usize>,
+    /// Quando ligado, `start_playback` falha com `DEVICE_UNAVAILABLE`.
+    start_fail: Mutex<bool>,
+    /// Quando ligado, `start_capture` falha com `DEVICE_UNAVAILABLE`.
+    capture_fail: Mutex<bool>,
+    /// Quando ligado, `stop_playback`/`stop_all_playback` falham.
+    stop_fail: Mutex<bool>,
+    /// Registo ordenado dos passos de áudio e do auxiliar.
+    order: OrderLog,
 }
 
 impl FakeAudio {
+    fn with_order(order: OrderLog) -> Self {
+        Self {
+            order,
+            ..Self::default()
+        }
+    }
     fn starts(&self) -> usize {
         *self.starts.lock().unwrap()
     }
@@ -78,6 +112,35 @@ impl FakeAudio {
     fn stops(&self) -> usize {
         *self.stops.lock().unwrap()
     }
+    /// A identidade da última reprodução iniciada, para simular o fim.
+    fn last_id(&self) -> PlaybackId {
+        self.last_id
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("reprodução iniciada")
+    }
+    fn pause_attempts(&self) -> usize {
+        *self.pause_attempts.lock().unwrap()
+    }
+    /// Retém a próxima pausa, devolvendo o remetente que a liberta.
+    fn hold_pause(&self) -> std::sync::mpsc::Sender<()> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        *self.pause_gate.lock().unwrap() = Some(rx);
+        tx
+    }
+    /// Faz a próxima reprodução falhar como se o dispositivo estivesse ausente.
+    fn fail_start(&self) {
+        *self.start_fail.lock().unwrap() = true;
+    }
+    /// Faz a próxima captura falhar como se o microfone estivesse ausente.
+    fn fail_capture(&self) {
+        *self.capture_fail.lock().unwrap() = true;
+    }
+    /// Faz a próxima paragem da saída falhar.
+    fn fail_stop(&self) {
+        *self.stop_fail.lock().unwrap() = true;
+    }
 }
 
 impl AudioPort for FakeAudio {
@@ -88,6 +151,14 @@ impl AudioPort for FakeAudio {
         }
     }
     fn start_capture(&self, target: RecordingTarget) -> Result<(), AppError> {
+        if *self.capture_fail.lock().unwrap() {
+            return Err(AppError::new(
+                error_code::DEVICE_UNAVAILABLE,
+                "micrófone indisponível.",
+                true,
+            ));
+        }
+        self.order.push("start_capture");
         write_wav(&target.directory.join("original.wav"));
         *self.starts.lock().unwrap() += 1;
         *self.capture.lock().unwrap() = Some(target);
@@ -111,15 +182,54 @@ impl AudioPort for FakeAudio {
             },
         })
     }
-    fn play(&self, path: PathBuf) -> Result<(), AppError> {
+    fn start_playback(&self, path: PathBuf) -> Result<PlaybackId, AppError> {
+        if *self.start_fail.lock().unwrap() {
+            return Err(AppError::new(
+                error_code::DEVICE_UNAVAILABLE,
+                "dispositivo de saída indisponível.",
+                true,
+            ));
+        }
+        let id = uuid::Uuid::new_v4().to_string();
         self.plays.lock().unwrap().push(path);
-        Ok(())
+        *self.last_id.lock().unwrap() = Some(id.clone());
+        Ok(id)
     }
-    fn append(&self, path: PathBuf) -> Result<(), AppError> {
+    fn append_chunk(&self, path: PathBuf, id: &PlaybackId) -> Result<PlaybackId, AppError> {
         self.appends.lock().unwrap().push(path);
+        Ok(id.clone())
+    }
+    fn pause_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        *self.pause_attempts.lock().unwrap() += 1;
+        if let Some(gate) = self.pause_gate.lock().unwrap().take() {
+            let _ = gate.recv();
+        }
         Ok(())
     }
-    fn stop_playback(&self) -> Result<(), AppError> {
+    fn resume_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn stop_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        if *self.stop_fail.lock().unwrap() {
+            return Err(AppError::new(
+                error_code::DEVICE_UNAVAILABLE,
+                "saída indisponível.",
+                true,
+            ));
+        }
+        self.order.push("stop");
+        *self.stops.lock().unwrap() += 1;
+        Ok(())
+    }
+    fn stop_all_playback(&self) -> Result<(), AppError> {
+        if *self.stop_fail.lock().unwrap() {
+            return Err(AppError::new(
+                error_code::DEVICE_UNAVAILABLE,
+                "saída indisponível.",
+                true,
+            ));
+        }
+        self.order.push("stop");
         *self.stops.lock().unwrap() += 1;
         Ok(())
     }
@@ -131,10 +241,18 @@ impl AudioPort for FakeAudio {
 #[derive(Default)]
 struct FakeWorker {
     requests: Mutex<Vec<WorkerRequest>>,
+    busy: Mutex<bool>,
     cancels: Mutex<usize>,
+    order: OrderLog,
 }
 
 impl FakeWorker {
+    fn with_order(order: OrderLog) -> Self {
+        Self {
+            order,
+            ..Self::default()
+        }
+    }
     fn transcriptions(&self) -> Vec<WorkerRequest> {
         self.requests
             .lock()
@@ -162,7 +280,13 @@ impl FakeWorker {
 }
 
 impl WorkerControl for FakeWorker {
+    fn is_busy(&self) -> bool {
+        *self.busy.lock().unwrap()
+    }
     fn submit(&self, request: WorkerRequest) -> Result<(), AppError> {
+        if self.is_busy() {
+            return Err(AppError::busy("O auxiliar está ocupado."));
+        }
         self.requests.lock().unwrap().push(request);
         Ok(())
     }
@@ -179,6 +303,7 @@ impl WorkerControl for FakeWorker {
         true
     }
     fn cancel(&self) -> Result<(), AppError> {
+        self.order.push("cancel");
         *self.cancels.lock().unwrap() += 1;
         Ok(())
     }
@@ -294,6 +419,7 @@ struct Harness {
     worker: Arc<FakeWorker>,
     transport: Arc<FakeTransport>,
     service: Arc<AppService>,
+    order: OrderLog,
 }
 
 fn build_service(
@@ -351,8 +477,9 @@ impl Harness {
         )
         .unwrap();
         let database = Database::open(database_path.clone()).expect("abrir a base");
-        let audio = Arc::new(FakeAudio::default());
-        let worker = Arc::new(FakeWorker::default());
+        let order = OrderLog::default();
+        let audio = Arc::new(FakeAudio::with_order(order.clone()));
+        let worker = Arc::new(FakeWorker::with_order(order.clone()));
         let transport = Arc::new(FakeTransport::default());
         let service = build_service(
             directory.path(),
@@ -372,6 +499,7 @@ impl Harness {
             worker,
             transport,
             service,
+            order,
         }
     }
 
@@ -409,6 +537,10 @@ impl Harness {
     /// Conversa autorizada, com a pergunta de abertura do tutor, pronta a gravar.
     async fn ready(&self) -> ArticleSnapshot {
         let created = self.create().await;
+        self.service
+            .article_view_focus(&created.session.id, "harness")
+            .await
+            .unwrap();
         let consent = self.consent(&created);
         self.service.article_authorize(consent).await.unwrap();
         self.service.article_settle().await;
@@ -498,7 +630,8 @@ async fn audio_is_saved_first_and_the_send_follows_only_the_transcript() {
         .unwrap();
     assert_eq!(stopped.session.state, ArticleState::Transcribing);
     // O áudio já está guardado no disco antes de qualquer envio.
-    assert_eq!(stopped.turns.len(), 1, "o turno sem texto não aparece");
+    assert_eq!(stopped.turns.len(), 2, "a gravação aguarda transcrição");
+    assert!(stopped.turns[1].version.text.is_empty());
     let id = ready.session.id.clone();
     let original = h
         .directory
@@ -839,10 +972,28 @@ async fn a_late_result_after_deleting_is_discarded() {
         .unwrap();
     h.wait_for_calls(1).await;
     let pending = h.snapshot(&id).await;
+
+    // Uma entrada de cache de voz vive na pasta da sessão e desaparece com ela.
+    let session_dir = h.directory.path().join("articles").join(&id);
+    let key = voice_key("Why does that matter?", "af_heart", 10, ENGINE_ID);
+    let cache_dir = begin_entry(&session_dir, &key).unwrap();
+    write_wav(&cache_dir.join("chunk-0000.wav"));
+    finish_entry(
+        &cache_dir,
+        "Why does that matter?",
+        "af_heart",
+        10,
+        ENGINE_ID,
+        &[(0, 500)],
+    )
+    .unwrap();
+    assert!(read_cache(&session_dir, &key).is_some());
+
     h.service.article_delete(h.cmd(&pending)).await.unwrap();
     gate.notify_one();
     h.service.article_settle().await;
     assert!(h.service.article_snapshot(&id).await.is_err());
+    assert!(!session_dir.exists(), "a cache de voz sai com a sessão");
     let turns: i64 = h
         .database
         .with_connection(|c| {
@@ -1048,6 +1199,28 @@ async fn send_chunk(h: &Harness, request: &WorkerRequest, index: u32, path: Path
         .await;
 }
 
+/// Envia um bloco e escreve o WAV na pasta do pedido, para a cache fechar.
+async fn send_chunk_file(h: &Harness, request: &WorkerRequest, index: u32) {
+    let path = chunk_path(request, index);
+    write_wav(&path);
+    send_chunk(h, request, index, path).await;
+}
+
+/// Progresso audível da reprodução atual, para a máquina passar a `playing`.
+async fn progress(h: &Harness, position_ms: u64, buffered_ms: u64) {
+    let id = h.audio.last_id();
+    h.service
+        .on_audio_event(AudioEvent::PlaybackProgress {
+            id,
+            progress: PlaybackProgress {
+                position_ms,
+                buffered_ms,
+                paused: false,
+            },
+        })
+        .await;
+}
+
 async fn finish_stream(h: &Harness, request: &WorkerRequest, chunks: u32) {
     h.service
         .on_worker_event(WorkerEvent {
@@ -1068,13 +1241,13 @@ async fn finish_stream(h: &Harness, request: &WorkerRequest, chunks: u32) {
         .await;
 }
 
-async fn playback(h: &Harness, id: &str) -> language_assistant_tutor::article::ArticlePlayback {
-    h.snapshot(id).await.audio.playback
+async fn playback(h: &Harness, id: &str) -> language_assistant_tutor::article::PlayerState {
+    h.snapshot(id).await.audio.state
 }
 
 #[tokio::test]
 async fn a_new_tutor_turn_is_spoken_in_ordered_chunks_and_bad_chunks_stop_the_voice() {
-    use language_assistant_tutor::article::ArticlePlayback;
+    use language_assistant_tutor::article::PlayerState;
     let h = Harness::new().await;
     let ready = h.ready().await;
     let id = ready.session.id.clone();
@@ -1085,24 +1258,30 @@ async fn a_new_tutor_turn_is_spoken_in_ordered_chunks_and_bad_chunks_stop_the_vo
         .as_str()
         .unwrap()
         .contains("main argument"));
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
+    // Antes de qualquer progresso audível, a reprodução está `preparing`.
+    assert_eq!(playback(&h, &id).await, PlayerState::Preparing);
 
     send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
     send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
-    assert_eq!(
-        h.audio.appends(),
-        vec![chunk_path(&request, 0), chunk_path(&request, 1)]
-    );
+    // O primeiro bloco inicia a reprodução; o segundo acrescenta à fila.
+    assert_eq!(h.audio.plays(), vec![chunk_path(&request, 0)]);
+    assert_eq!(h.audio.appends(), vec![chunk_path(&request, 1)]);
+    // Progresso audível: passa a `playing`.
+    progress(&h, 200, 800).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
     // Duplicado: inofensivo, não toca duas vezes nem pára a voz.
     send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
-    assert_eq!(h.audio.appends().len(), 2);
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
+    assert_eq!(h.audio.appends().len(), 1);
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
 
+    let stops = h.audio.stops();
     // Fora de ordem ou fora da pasta do pedido: a voz falha e o auxiliar é parado.
     send_chunk(&h, &request, 5, chunk_path(&request, 5)).await;
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Failed);
-    assert_eq!(h.audio.appends().len(), 2);
+    assert_eq!(playback(&h, &id).await, PlayerState::Failed);
+    assert_eq!(h.audio.appends().len(), 1);
+    assert_eq!(h.audio.plays().len(), 1);
     assert!(h.worker.cancels() >= 1);
+    assert_eq!(h.audio.stops(), stops + 1);
     // O texto continua visível.
     assert!(h.snapshot(&id).await.turns[0]
         .version
@@ -1112,16 +1291,13 @@ async fn a_new_tutor_turn_is_spoken_in_ordered_chunks_and_bad_chunks_stop_the_vo
 
 #[tokio::test]
 async fn an_outside_path_is_refused_without_playing_it() {
-    use language_assistant_tutor::article::ArticlePlayback;
+    use language_assistant_tutor::article::PlayerState;
     let h = Harness::new().await;
     let ready = h.ready().await;
     let request = h.worker.streams()[0].clone();
     send_chunk(&h, &request, 0, PathBuf::from(r"C:\Windows\chunk-0000.wav")).await;
     assert!(h.audio.appends().is_empty());
-    assert_eq!(
-        playback(&h, &ready.session.id).await,
-        ArticlePlayback::Failed
-    );
+    assert_eq!(playback(&h, &ready.session.id).await, PlayerState::Failed);
 }
 
 #[tokio::test]
@@ -1155,7 +1331,7 @@ async fn opening_listing_or_resuming_never_starts_the_voice() {
 
 #[tokio::test]
 async fn stopping_the_voice_clears_the_queue_and_late_chunks_are_dropped() {
-    use language_assistant_tutor::article::ArticlePlayback;
+    use language_assistant_tutor::article::PlayerState;
     let h = Harness::new().await;
     let ready = h.ready().await;
     let id = ready.session.id.clone();
@@ -1166,11 +1342,12 @@ async fn stopping_the_voice_clears_the_queue_and_late_chunks_are_dropped() {
     h.service.article_stop_voice().await.unwrap();
     assert_eq!(h.worker.cancels(), 1);
     assert!(h.audio.stops() > stops);
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Idle);
+    assert_eq!(playback(&h, &id).await, PlayerState::Idle);
 
     // Um bloco tardio do pedido cancelado não toca.
     send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
-    assert_eq!(h.audio.appends().len(), 1);
+    assert!(h.audio.appends().is_empty());
+    assert_eq!(h.audio.plays().len(), 1);
     // Parar sem voz ativa é inofensivo.
     h.service.article_stop_voice().await.unwrap();
     assert_eq!(h.worker.cancels(), 1);
@@ -1188,12 +1365,12 @@ async fn starting_to_record_stops_the_voice_first() {
         .unwrap();
     assert_eq!(h.worker.cancels(), 1);
     send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
-    assert_eq!(h.audio.appends().len(), 1, "o bloco tardio não toca");
+    assert!(h.audio.appends().is_empty(), "o bloco tardio não toca");
 }
 
 #[tokio::test]
 async fn a_failed_voice_keeps_the_text_and_repeats_without_the_text_provider() {
-    use language_assistant_tutor::article::ArticlePlayback;
+    use language_assistant_tutor::article::PlayerState;
     let h = Harness::new().await;
     let ready = h.ready().await;
     let id = ready.session.id.clone();
@@ -1208,7 +1385,7 @@ async fn a_failed_voice_keeps_the_text_and_repeats_without_the_text_provider() {
             },
         })
         .await;
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Failed);
+    assert_eq!(playback(&h, &id).await, PlayerState::Failed);
     let calls = h.transport.calls().len();
     let tutor = h.snapshot(&id).await.turns[0].id.clone();
     assert!(h.snapshot(&id).await.turns[0]
@@ -1217,35 +1394,148 @@ async fn a_failed_voice_keeps_the_text_and_repeats_without_the_text_provider() {
         .contains("main argument"));
 
     h.service.article_speak_turn(&id, &tutor).await.unwrap();
-    assert_eq!(h.worker.streams().len(), 2, "nova síntese, nova pasta");
-    assert_ne!(
-        h.worker.streams()[0].params["outputDir"],
-        h.worker.streams()[1].params["outputDir"]
+    assert_eq!(
+        h.worker.streams().len(),
+        2,
+        "nova síntese, a mesma entrada da cache regenerada"
     );
     assert_eq!(h.transport.calls().len(), calls, "sem nova chamada IA");
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
+    assert_eq!(playback(&h, &id).await, PlayerState::Preparing);
     // Só falas do tutor da conversa ativa se repetem.
     assert!(h.service.article_speak_turn(&id, "missing").await.is_err());
 }
 
 #[tokio::test]
 async fn a_momentarily_empty_queue_is_not_the_end_of_the_request() {
-    use language_assistant_tutor::article::ArticlePlayback;
-    use language_assistant_tutor::audio::AudioEvent;
+    use language_assistant_tutor::article::PlayerState;
     let h = Harness::new().await;
     let ready = h.ready().await;
     let id = ready.session.id.clone();
     let request = h.worker.streams()[0].clone();
-    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
-    // A fila esvazia antes do 2.º bloco: continua a tocar.
-    h.service.on_audio_event(AudioEvent::PlaybackFinished).await;
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
-    send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
+    send_chunk_file(&h, &request, 0).await;
+    progress(&h, 200, 400).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
+    // A fila esvazia antes do 2.º bloco: `buffering`, não o fim do pedido.
+    let first_id = h.audio.last_id();
+    h.service
+        .on_audio_event(AudioEvent::PlaybackFinished { id: first_id })
+        .await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Buffering);
+    // O bloco seguinte retoma a fila.
+    send_chunk_file(&h, &request, 1).await;
+    progress(&h, 300, 800).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
     finish_stream(&h, &request, 2).await;
     // Só termina quando a síntese acabou e a fila voltou a esvaziar.
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
-    h.service.on_audio_event(AudioEvent::PlaybackFinished).await;
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Idle);
+    let last_id = h.audio.last_id();
+    h.service
+        .on_audio_event(AudioEvent::PlaybackFinished { id: last_id })
+        .await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Ended);
+}
+
+#[tokio::test]
+async fn starting_article_playback_clears_star_playback_state() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    h.record(&ready).await;
+    h.transcript("Remote work helps people focus.").await;
+    let replied = h.snapshot(&id).await;
+    let user_turn = replied
+        .turns
+        .iter()
+        .find(|t| t.speaker == ArticleSpeaker::User)
+        .expect("resposta do utilizador")
+        .id
+        .clone();
+
+    // Reprodução STAR ativa (um treino legado ouvido pela interface).
+    let attempt = "8a1f4c78-2a4b-4f0e-9b6b-1e6b0f2e4d11";
+    let dir = h
+        .directory
+        .path()
+        .join("phase1")
+        .join("attempts")
+        .join(attempt);
+    std::fs::create_dir_all(&dir).expect("pasta do treino");
+    write_wav(&dir.join("original.wav"));
+    let playing = h
+        .service
+        .play_audio(AudioSelection::Legacy {
+            attempt_id: attempt.to_owned(),
+        })
+        .await
+        .expect("ouvir o treino legado");
+    assert_eq!(playing.playback, Some(PlaybackTarget::Response));
+
+    // Ouvir a resposta do artigo substitui a reprodução do STAR: o estado do
+    // STAR deixa de apontar para a reprodução que perdeu o dispositivo.
+    h.service
+        .article_play_turn(&id, &user_turn)
+        .await
+        .expect("ouvir a resposta do artigo");
+    assert_eq!(
+        h.service.snapshot().playback,
+        None,
+        "a reprodução do STAR é limpa quando o artigo toma o dispositivo"
+    );
+}
+
+#[tokio::test]
+async fn a_star_selection_replaces_an_article_playback() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+    // Primeiro bloco: a voz do artigo fica em reprodução.
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    progress(&h, 200, 400).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
+    let old_playback = h.audio.last_id();
+    let old_generation = h.snapshot(&id).await.audio.generation;
+
+    // Reprodução STAR (um treino legado) pára a voz do artigo.
+    let attempt = "9b2e5d89-3b5c-4f1f-aa7c-2f7c1e3f5e22";
+    let dir = h
+        .directory
+        .path()
+        .join("phase1")
+        .join("attempts")
+        .join(attempt);
+    std::fs::create_dir_all(&dir).expect("pasta do treino");
+    write_wav(&dir.join("original.wav"));
+    let playing = h
+        .service
+        .play_audio(AudioSelection::Legacy {
+            attempt_id: attempt.to_owned(),
+        })
+        .await
+        .expect("ouvir o treino legado");
+
+    assert!(
+        h.worker.cancels() >= 1,
+        "a síntese da voz do artigo é cancelada"
+    );
+    assert_eq!(
+        playback(&h, &id).await,
+        PlayerState::Idle,
+        "a voz do artigo pára quando o STAR reproduz"
+    );
+    assert_eq!(playing.playback, Some(PlaybackTarget::Response));
+    h.service
+        .article_player_stop(&id, old_generation)
+        .await
+        .unwrap();
+    h.service
+        .on_audio_event(AudioEvent::PlaybackFinished { id: old_playback })
+        .await;
+    assert_eq!(
+        h.service.snapshot().playback,
+        Some(PlaybackTarget::Response),
+        "o STAR fica com a reprodução pedida"
+    );
 }
 
 #[tokio::test]
@@ -1273,6 +1563,13 @@ async fn turn_metrics_use_closed_operations_with_durations_and_no_content() {
     let replied = h.snapshot(&id).await;
     h.service.article_finish(h.cmd(&replied)).await.unwrap();
     h.service.article_settle().await; // article_feedback
+                                      // Controlo explícito do leitor: article_play_start / article_play_stop.
+    let tutor = h.snapshot(&id).await.turns[0].id.clone();
+    let view = h.service.article_player_play(&id, &tutor).await.unwrap();
+    h.service
+        .article_player_stop(&id, view.generation)
+        .await
+        .unwrap();
 
     diag.flush().unwrap();
     let export = diag.export(dir.path()).unwrap();
@@ -1294,6 +1591,9 @@ async fn turn_metrics_use_closed_operations_with_durations_and_no_content() {
         vec![
             "article_feedback",
             "article_first_audio",
+            "article_play_start",
+            "article_play_stop",
+            "article_record_handoff",
             "article_reply",
             "article_transcribe"
         ]
@@ -1302,6 +1602,16 @@ async fn turn_metrics_use_closed_operations_with_durations_and_no_content() {
     // isso cada operação exige pelo menos um evento bem-sucedido e todos têm duração.
     for event in &mine {
         assert!(event["durationMs"].is_u64(), "{event}");
+        for field in [
+            "text",
+            "transcript",
+            "audioPath",
+            "level",
+            "elapsedMs",
+            "credential",
+        ] {
+            assert!(event.get(field).is_none(), "{event}");
+        }
     }
     for operation in &operations {
         assert!(
@@ -1457,4 +1767,1431 @@ async fn a_stale_stop_after_the_audio_closed_does_not_leave_the_microphone_stuck
         .article_start_recording(h.cmd(&retried))
         .await
         .expect("o microfone voltou a estar livre");
+}
+
+// -- leitor de artigos: cache, pausa, autoplay, foco e geração ------------------
+
+#[tokio::test]
+async fn replacing_a_busy_synthesis_waits_for_worker_release_and_honours_stop() {
+    for stop in [false, true] {
+        let h = Harness::new().await;
+        let ready = h.ready().await;
+        let id = &ready.session.id;
+        let first = h.worker.streams()[0].clone();
+        *h.worker.busy.lock().unwrap() = true;
+        let mut prefs = h.service.article_preferences_load().await.unwrap();
+        prefs.speed_x10 = 12;
+        h.service.article_preferences_save(prefs).await.unwrap();
+        let view = h
+            .service
+            .article_player_play(id, &ready.turns[0].id)
+            .await
+            .unwrap();
+        assert_eq!(
+            view.state,
+            language_assistant_tutor::article::PlayerState::Preparing
+        );
+        assert_eq!(h.worker.streams().len(), 1);
+        if stop {
+            h.service
+                .article_player_stop(id, view.generation)
+                .await
+                .unwrap();
+        }
+        *h.worker.busy.lock().unwrap() = false;
+        finish_stream(&h, &first, 0).await;
+        assert_eq!(h.worker.streams().len(), if stop { 1 } else { 2 });
+    }
+}
+
+#[tokio::test]
+async fn play_reuses_a_complete_cache_without_a_worker_request() {
+    use language_assistant_tutor::article::{PlayerSource, PlayerState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let tutor = ready.turns[0].id.clone();
+    let request = h.worker.streams()[0].clone();
+    // Conclui a síntese automática para escrever a entrada da cache.
+    send_chunk_file(&h, &request, 0).await;
+    finish_stream(&h, &request, 1).await;
+    assert_eq!(h.worker.streams().len(), 1);
+
+    // Reproduzir de novo reutiliza a cache completa, sem nova síntese.
+    let view = h.service.article_player_play(&id, &tutor).await.unwrap();
+    assert_eq!(h.worker.streams().len(), 1, "sem novo pedido ao auxiliar");
+    assert_eq!(view.source, Some(PlayerSource::TutorVoice));
+    assert_eq!(view.state, PlayerState::Preparing);
+    assert_eq!(view.duration_ms, Some(500), "duração conhecida da cache");
+}
+
+#[tokio::test]
+async fn a_cache_miss_synthesizes_without_a_text_request() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let tutor = ready.turns[0].id.clone();
+    // Para a voz antes de concluir: a entrada fica incompleta.
+    h.service.article_stop_voice().await.unwrap();
+    let calls = h.transport.calls().len();
+    let streams = h.worker.streams().len();
+
+    let view = h.service.article_player_play(&id, &tutor).await.unwrap();
+    assert_eq!(h.worker.streams().len(), streams + 1, "síntese local nova");
+    assert_eq!(
+        h.transport.calls().len(),
+        calls,
+        "sem chamada ao fornecedor de texto"
+    );
+    assert_eq!(view.state, PlayerState::Preparing);
+}
+
+#[tokio::test]
+async fn a_corrupt_cache_entry_falls_back_to_a_local_synthesis() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let tutor = ready.turns[0].id.clone();
+    let text = ready.turns[0].version.text.clone();
+    h.service.article_stop_voice().await.unwrap();
+
+    let session_dir = h.directory.path().join("articles").join(&id);
+    let key = voice_key(&text, "af_heart", 10, ENGINE_ID);
+    let cache_dir = begin_entry(&session_dir, &key).unwrap();
+    write_wav(&cache_dir.join("chunk-0000.wav"));
+    finish_entry(&cache_dir, &text, "af_heart", 10, ENGINE_ID, &[(0, 500)]).unwrap();
+    assert!(read_cache(&session_dir, &key).is_some());
+    std::fs::remove_file(cache_dir.join("chunk-0000.wav")).unwrap();
+    assert!(read_cache(&session_dir, &key).is_none());
+
+    let calls = h.transport.calls().len();
+    let streams = h.worker.streams().len();
+    let view = h.service.article_player_play(&id, &tutor).await.unwrap();
+    assert_eq!(
+        h.worker.streams().len(),
+        streams + 1,
+        "cache corrompida cai na síntese"
+    );
+    assert_eq!(h.transport.calls().len(), calls, "sem texto");
+    assert_eq!(view.state, PlayerState::Preparing);
+}
+
+#[tokio::test]
+async fn pause_then_resume_keep_generation_and_position() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    progress(&h, 400, 800).await;
+    let view = h.snapshot(&id).await.audio;
+    assert_eq!(view.state, PlayerState::Playing);
+    let generation = view.generation;
+    let position = view.position_ms;
+
+    let paused = h
+        .service
+        .article_player_pause(&id, generation)
+        .await
+        .unwrap();
+    assert_eq!(paused.state, PlayerState::Paused);
+    assert_eq!(paused.generation, generation);
+    assert_eq!(paused.position_ms, position);
+
+    let resumed = h
+        .service
+        .article_player_resume(&id, generation)
+        .await
+        .unwrap();
+    assert_eq!(resumed.state, PlayerState::Playing);
+    assert_eq!(resumed.generation, generation);
+    assert_eq!(resumed.position_ms, position);
+}
+
+#[tokio::test]
+async fn pause_while_synthesizing_is_not_ended() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+
+    let generation = h.snapshot(&id).await.audio.generation;
+    let paused = h
+        .service
+        .article_player_pause(&id, generation)
+        .await
+        .unwrap();
+    assert_eq!(paused.state, PlayerState::Paused);
+
+    // A síntese termina enquanto a reprodução está em pausa.
+    send_chunk_file(&h, &request, 0).await;
+    send_chunk_file(&h, &request, 1).await;
+    finish_stream(&h, &request, 2).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Paused);
+    assert!(h.audio.plays().is_empty());
+    let resumed = h
+        .service
+        .article_player_resume(&id, generation)
+        .await
+        .unwrap();
+    assert_eq!(h.audio.plays(), vec![chunk_path(&request, 0)]);
+    assert_eq!(h.audio.appends(), vec![chunk_path(&request, 1)]);
+    assert_eq!(resumed.position_ms, paused.position_ms);
+    let playback_id = h.audio.last_id();
+    progress(&h, 50, 100).await;
+    h.service
+        .on_audio_event(AudioEvent::PlaybackFinished { id: playback_id })
+        .await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Ended);
+}
+
+#[tokio::test]
+async fn a_stale_finished_event_does_not_stop_a_new_item() {
+    use language_assistant_tutor::article::{PlayerSource, PlayerState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    h.record(&ready).await;
+    h.transcript("First answer.").await;
+    let first = h.snapshot(&id).await;
+    h.record(&first).await;
+    h.transcript("Second answer.").await;
+    let second = h.snapshot(&id).await;
+    let users: Vec<_> = second
+        .turns
+        .iter()
+        .filter(|t| t.speaker == ArticleSpeaker::User)
+        .map(|t| t.id.clone())
+        .collect();
+    assert_eq!(users.len(), 2);
+
+    h.service.article_player_play(&id, &users[0]).await.unwrap();
+    let first_id = h.audio.last_id();
+    h.service.article_player_play(&id, &users[1]).await.unwrap();
+    let second_id = h.audio.last_id();
+    assert_ne!(first_id, second_id);
+
+    // A substituição fica audivelmente a tocar.
+    progress(&h, 300, 500).await;
+    let playing = h.snapshot(&id).await.audio;
+    assert_eq!(playing.state, PlayerState::Playing);
+    assert_eq!(playing.position_ms, 300);
+
+    // O fim tardio do item antigo não pára nem regride a substituição.
+    h.service
+        .on_audio_event(AudioEvent::PlaybackFinished { id: first_id })
+        .await;
+    let view = h.snapshot(&id).await.audio;
+    assert_eq!(view.turn_id.as_deref(), Some(users[1].as_str()));
+    assert_eq!(view.source, Some(PlayerSource::UserRecording));
+    assert_eq!(view.state, PlayerState::Playing);
+    assert_eq!(view.position_ms, 300);
+}
+
+#[tokio::test]
+async fn a_late_chunk_after_stop_is_not_played() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    assert_eq!(h.audio.plays().len(), 1);
+
+    h.service.article_stop_voice().await.unwrap();
+    let plays = h.audio.plays().len();
+    let appends = h.audio.appends().len();
+    send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
+    assert_eq!(h.audio.plays().len(), plays);
+    assert_eq!(h.audio.appends().len(), appends);
+    assert_eq!(
+        h.snapshot(&id).await.audio.state,
+        language_assistant_tutor::article::PlayerState::Idle
+    );
+}
+
+#[tokio::test]
+async fn restart_during_generation_reuses_its_ordered_prefix() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let tutor = ready.turns[0].id.clone();
+    let request = h.worker.streams()[0].clone();
+    send_chunk_file(&h, &request, 0).await;
+    send_chunk_file(&h, &request, 1).await;
+    assert_eq!(h.audio.plays(), vec![chunk_path(&request, 0)]);
+    assert_eq!(h.audio.appends(), vec![chunk_path(&request, 1)]);
+
+    // Reinicia durante a geração: reutiliza o prefixo ordenado, sem nova síntese.
+    let view = h.service.article_player_play(&id, &tutor).await.unwrap();
+    assert_eq!(h.worker.streams().len(), 1, "sem nova síntese");
+    assert_eq!(view.state, PlayerState::Preparing);
+    assert_eq!(
+        h.audio.plays(),
+        vec![chunk_path(&request, 0), chunk_path(&request, 0)]
+    );
+    assert_eq!(
+        h.audio.appends(),
+        vec![chunk_path(&request, 1), chunk_path(&request, 1)]
+    );
+
+    // O bloco restante é aceite uma vez.
+    send_chunk_file(&h, &request, 2).await;
+    assert_eq!(h.audio.appends().len(), 3);
+    finish_stream(&h, &request, 3).await;
+}
+
+#[tokio::test]
+async fn position_does_not_regress_when_a_drain_restarts_playback() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+
+    send_chunk_file(&h, &request, 0).await;
+    progress(&h, 500, 500).await;
+    assert_eq!(h.snapshot(&id).await.audio.position_ms, 500);
+
+    // A fila esvazia antes do 2.º bloco.
+    let first_id = h.audio.last_id();
+    h.service
+        .on_audio_event(AudioEvent::PlaybackFinished { id: first_id })
+        .await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Buffering);
+
+    // O bloco seguinte continua a rendição: a posição não regride ao zero do
+    // dispositivo novo.
+    send_chunk_file(&h, &request, 1).await;
+    progress(&h, 300, 500).await;
+    let view = h.snapshot(&id).await.audio;
+    assert_eq!(view.position_ms, 800, "posição continua na rendição");
+    assert_eq!(view.buffered_ms, Some(1000));
+
+    // O fim da rendição fecha com a soma total, não com a posição local.
+    finish_stream(&h, &request, 2).await;
+    let view = h.snapshot(&id).await.audio;
+    assert_eq!(view.duration_ms, Some(1000));
+    assert_eq!(view.buffered_ms, Some(1000));
+}
+
+#[tokio::test]
+async fn an_explicit_restart_starts_the_position_at_zero() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let tutor = ready.turns[0].id.clone();
+    let request = h.worker.streams()[0].clone();
+
+    send_chunk_file(&h, &request, 0).await;
+    progress(&h, 500, 500).await;
+    assert_eq!(h.snapshot(&id).await.audio.position_ms, 500);
+
+    // Reinicia a mesma fala do início: a posição, a preparação e a duração
+    // voltam ao estado inicial.
+    let view = h.service.article_player_play(&id, &tutor).await.unwrap();
+    assert_eq!(view.state, PlayerState::Preparing);
+    assert_eq!(view.position_ms, 0, "o reinício começa do início");
+    assert_eq!(view.buffered_ms, None, "a preparação volta ao início");
+    assert_eq!(view.duration_ms, None, "a duração volta a desconhecida");
+
+    // O progresso seguinte é a posição local do dispositivo, sem desvio.
+    progress(&h, 100, 500).await;
+    assert_eq!(h.snapshot(&id).await.audio.position_ms, 100);
+}
+
+#[tokio::test]
+async fn a_new_selection_replaces_the_previous_article_playback() {
+    use language_assistant_tutor::article::PlayerSource;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    h.record(&ready).await;
+    h.transcript("First answer.").await;
+    let first = h.snapshot(&id).await;
+    h.record(&first).await;
+    h.transcript("Second answer.").await;
+    let second = h.snapshot(&id).await;
+    let users: Vec<_> = second
+        .turns
+        .iter()
+        .filter(|t| t.speaker == ArticleSpeaker::User)
+        .map(|t| t.id.clone())
+        .collect();
+
+    let view1 = h.service.article_player_play(&id, &users[0]).await.unwrap();
+    let id1 = h.audio.last_id();
+    assert_eq!(view1.turn_id.as_deref(), Some(users[0].as_str()));
+    assert_eq!(view1.source, Some(PlayerSource::UserRecording));
+
+    let view2 = h.service.article_player_play(&id, &users[1]).await.unwrap();
+    let id2 = h.audio.last_id();
+    assert_eq!(view2.turn_id.as_deref(), Some(users[1].as_str()));
+    assert_ne!(id1, id2);
+    assert!(view2.generation > view1.generation);
+}
+
+#[tokio::test]
+async fn autoplay_runs_once_only_for_a_fresh_turn_in_the_active_view() {
+    let h = Harness::new().await;
+    let created = h.create().await;
+    let id = created.session.id.clone();
+    h.service.article_view_focus(&id, "token-1").await.unwrap();
+    h.service
+        .article_authorize(h.consent(&created))
+        .await
+        .unwrap();
+    h.service.article_settle().await;
+    assert_eq!(h.worker.streams().len(), 1, "a abertura toca uma vez");
+    let ready = h.snapshot(&id).await;
+    assert_eq!(ready.session.state, ArticleState::Ready);
+
+    // Reabrir, retomar e reler nunca voltam a tocar.
+    h.service.article_resume(h.cmd(&ready)).await.unwrap();
+    h.service.article_snapshot(&id).await.unwrap();
+    h.service.article_list().await.unwrap();
+    h.service.article_settle().await;
+    assert_eq!(h.worker.streams().len(), 1, "autoplay apenas uma vez");
+}
+
+#[tokio::test]
+async fn autoplay_never_plays_a_turn_that_arrived_while_the_view_was_away() {
+    let h = Harness::new().await;
+    let created = h.create().await;
+    let id = created.session.id.clone();
+    h.service.article_view_focus(&id, "token-1").await.unwrap();
+    h.service.article_view_blur("token-1").await.unwrap();
+    // A vista está ausente: a abertura que chega não toca.
+    h.service
+        .article_authorize(h.consent(&created))
+        .await
+        .unwrap();
+    h.service.article_settle().await;
+    assert_eq!(
+        h.worker.streams().len(),
+        0,
+        "sem voz enquanto a vista está ausente"
+    );
+    assert_eq!(h.snapshot(&id).await.session.state, ArticleState::Ready);
+}
+
+#[tokio::test]
+async fn disabling_autoplay_stops_automatic_voice_but_not_an_explicit_replay() {
+    use language_assistant_tutor::article::{PlaybackTrigger, PlayerState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let tutor = ready.turns[0].id.clone();
+    let request = h.worker.streams()[0].clone();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    progress(&h, 200, 400).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
+
+    // Desligar a reprodução automática pára apenas a voz automática.
+    h.service
+        .article_preferences_save(ArticlePreferences {
+            autoplay: false,
+            speed_x10: 10,
+        })
+        .await
+        .unwrap();
+    assert_eq!(playback(&h, &id).await, PlayerState::Idle);
+
+    // Volta a ligar e inicia uma repetição explícita.
+    h.service
+        .article_preferences_save(ArticlePreferences {
+            autoplay: true,
+            speed_x10: 10,
+        })
+        .await
+        .unwrap();
+    let view = h.service.article_player_play(&id, &tutor).await.unwrap();
+    assert_eq!(view.state, PlayerState::Preparing);
+    assert_eq!(view.trigger, Some(PlaybackTrigger::Explicit));
+
+    // Desligar (true -> false) não pára a repetição explícita em curso.
+    h.service
+        .article_preferences_save(ArticlePreferences {
+            autoplay: false,
+            speed_x10: 10,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        playback(&h, &id).await,
+        PlayerState::Preparing,
+        "a repetição explícita continua ativa"
+    );
+}
+
+#[tokio::test]
+async fn a_speed_change_uses_the_matching_cache_entry() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    h.service
+        .article_preferences_save(ArticlePreferences {
+            autoplay: true,
+            speed_x10: 12,
+        })
+        .await
+        .unwrap();
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let tutor = ready.turns[0].id.clone();
+    let request = h.worker.streams()[0].clone();
+    let speed = request.params["speed"].as_f64().unwrap();
+    assert!(
+        (speed - 1.2).abs() < 0.0001,
+        "velocidade 1.2× no pedido: {speed}"
+    );
+
+    send_chunk_file(&h, &request, 0).await;
+    finish_stream(&h, &request, 1).await;
+    h.service.article_stop_voice().await.unwrap();
+    let streams = h.worker.streams().len();
+
+    // Mesma velocidade: a cache a 1.2× é reutilizada.
+    let view = h.service.article_player_play(&id, &tutor).await.unwrap();
+    assert_eq!(
+        h.worker.streams().len(),
+        streams,
+        "cache a 1.2× reutilizada"
+    );
+    assert_eq!(view.duration_ms, Some(500));
+
+    // Velocidade 1.0×: outra chave, cache falha e sintetiza de novo.
+    h.service
+        .article_preferences_save(ArticlePreferences {
+            autoplay: true,
+            speed_x10: 10,
+        })
+        .await
+        .unwrap();
+    let view = h.service.article_player_play(&id, &tutor).await.unwrap();
+    assert_eq!(h.worker.streams().len(), streams + 1, "síntese nova a 1.0×");
+    assert_eq!(view.state, PlayerState::Preparing);
+}
+
+#[tokio::test]
+async fn a_user_recording_ignores_the_tutor_speed() {
+    use language_assistant_tutor::article::PlayerSource;
+    let h = Harness::new().await;
+    h.service
+        .article_preferences_save(ArticlePreferences {
+            autoplay: true,
+            speed_x10: 12,
+        })
+        .await
+        .unwrap();
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    h.record(&ready).await;
+    h.transcript("My answer.").await;
+    let snapshot = h.snapshot(&id).await;
+    let user = snapshot
+        .turns
+        .iter()
+        .find(|t| t.speaker == ArticleSpeaker::User)
+        .unwrap()
+        .id
+        .clone();
+    let streams = h.worker.streams().len();
+
+    let view = h.service.article_player_play(&id, &user).await.unwrap();
+    assert_eq!(view.source, Some(PlayerSource::UserRecording));
+    assert_eq!(
+        h.worker.streams().len(),
+        streams,
+        "sem síntese para a gravação"
+    );
+    let plays = h.audio.plays();
+    assert!(plays
+        .iter()
+        .any(|p| p.ends_with(format!("articles/{id}/{user}/original.wav"))));
+}
+
+#[tokio::test]
+async fn an_old_focus_token_cannot_clear_a_newer_view() {
+    let h = Harness::new().await;
+    let created = h.create().await;
+    let id = created.session.id.clone();
+    h.service.article_view_focus(&id, "token-1").await.unwrap();
+    h.service.article_view_focus(&id, "token-2").await.unwrap();
+    h.service.article_view_blur("token-1").await.unwrap();
+
+    // A vista mais recente (token-2) continua focada: a autoplay ainda acontece.
+    h.service
+        .article_authorize(h.consent(&created))
+        .await
+        .unwrap();
+    h.service.article_settle().await;
+    assert_eq!(
+        h.worker.streams().len(),
+        1,
+        "a vista mais recente continua focada"
+    );
+}
+
+#[tokio::test]
+async fn deleting_finishing_or_revoking_cancels_pending_player_work() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+
+    // Terminar.
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams().last().cloned().unwrap();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    progress(&h, 200, 400).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
+    let generation = h.snapshot(&id).await.audio.generation;
+    let cancels = h.worker.cancels();
+    h.service.article_finish(h.cmd(&ready)).await.unwrap();
+    assert!(h.worker.cancels() > cancels, "terminar cancela a síntese");
+    let after = h.snapshot(&id).await.audio;
+    assert_eq!(after.state, PlayerState::Idle);
+    assert!(after.generation > generation, "terminar invalida a geração");
+    // Um bloco tardio não toca.
+    let appends = h.audio.appends().len();
+    send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
+    assert_eq!(h.audio.appends().len(), appends, "o bloco tardio não toca");
+
+    // Eliminar.
+    let ready = h.ready().await;
+    let request = h.worker.streams().last().cloned().unwrap();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    let cancels = h.worker.cancels();
+    h.service.article_delete(h.cmd(&ready)).await.unwrap();
+    assert!(h.worker.cancels() > cancels, "eliminar cancela a síntese");
+    // Um bloco tardio não toca depois de eliminar.
+    let appends = h.audio.appends().len();
+    send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
+    assert_eq!(h.audio.appends().len(), appends, "o bloco tardio não toca");
+
+    // Revogar.
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams().last().cloned().unwrap();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    let generation = h.snapshot(&id).await.audio.generation;
+    let cancels = h.worker.cancels();
+    h.service.article_revoke(h.cmd(&ready)).await.unwrap();
+    assert!(h.worker.cancels() > cancels, "revogar cancela a síntese");
+    let after = h.snapshot(&id).await.audio;
+    assert!(after.generation > generation, "revogar invalida a geração");
+}
+
+#[tokio::test]
+async fn reopening_an_older_session_uses_defaults_and_never_plays() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    progress(&h, 200, 400).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
+
+    // Recria o esquema anterior à tabela de preferências, mantendo a conversa.
+    rusqlite::Connection::open(&h.database_path)
+        .unwrap()
+        .execute_batch("DROP TABLE article_preferences; PRAGMA user_version=5;")
+        .unwrap();
+    let audio = Arc::new(FakeAudio::default());
+    let worker = Arc::new(FakeWorker::default());
+    let transport = Arc::new(FakeTransport::default());
+    // Reabrir: o leitor começa `idle`.
+    let restarted = build_service(
+        h.directory.path(),
+        &h.database_path,
+        &h.manifest,
+        audio.clone(),
+        worker.clone(),
+        transport.clone(),
+    );
+    restarted.start().await;
+    let snapshot = restarted.article_snapshot(&id).await.unwrap();
+    assert_eq!(snapshot.audio.state, PlayerState::Idle);
+    assert_eq!(snapshot.audio.generation, 0);
+    assert_eq!(
+        restarted.article_preferences_load().await.unwrap(),
+        ArticlePreferences {
+            autoplay: true,
+            speed_x10: 10,
+        }
+    );
+    assert!(audio.plays.lock().unwrap().is_empty());
+    assert!(worker.streams().is_empty());
+    assert!(transport.calls().is_empty());
+}
+
+// -- revisão: autoplay obsoleta, foco, saída e geração --------------------------
+
+#[tokio::test]
+async fn stale_autoplay_does_not_start_after_autoplay_is_disabled() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let tutor = ready.turns[0].id.clone();
+    let gate = h.transport.hold_next();
+    h.record(&ready).await;
+    h.transcript_event("My answer.").await;
+    h.wait_for_calls(2).await;
+
+    let waiting = h.snapshot(&id).await;
+    assert_eq!(waiting.session.state, ArticleState::AwaitingTutor);
+    assert!(h.service.article_player_play(&id, &tutor).await.is_err());
+    h.service
+        .article_preferences_save(ArticlePreferences {
+            autoplay: false,
+            speed_x10: 10,
+        })
+        .await
+        .unwrap();
+    gate.notify_one();
+    h.service.article_settle().await;
+
+    assert_eq!(h.snapshot(&id).await.session.state, ArticleState::Ready);
+    assert_eq!(
+        h.worker.streams().len(),
+        1,
+        "a resposta chegou sem nova síntese"
+    );
+}
+
+#[tokio::test]
+async fn stale_autoplay_does_not_start_after_the_view_blurs() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let gate = h.transport.hold_next();
+    h.record(&ready).await;
+    h.transcript_event("My answer.").await;
+    h.wait_for_calls(2).await;
+
+    h.service.article_view_blur("harness").await.unwrap();
+    gate.notify_one();
+    h.service.article_settle().await;
+
+    assert_eq!(h.snapshot(&id).await.session.state, ArticleState::Ready);
+    assert_eq!(h.worker.streams().len(), 1, "sem autoplay depois do blur");
+}
+
+#[tokio::test]
+async fn blur_stops_the_focused_session_playback() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    progress(&h, 200, 400).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
+
+    h.service.article_view_blur("harness").await.unwrap();
+    assert_eq!(playback(&h, &id).await, PlayerState::Idle);
+    assert!(h.worker.cancels() >= 1, "o blur cancela a síntese");
+}
+
+#[tokio::test]
+async fn focusing_another_session_stops_the_previous_player_even_without_a_prior_focus() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let created = h.create().await;
+    let id = created.session.id.clone();
+    // Autoriza sem focar: a abertura não toca sozinha.
+    h.service
+        .article_authorize(h.consent(&created))
+        .await
+        .unwrap();
+    h.service.article_settle().await;
+    let ready = h.snapshot(&id).await;
+    assert_eq!(ready.session.state, ArticleState::Ready);
+    let tutor = ready.turns[0].id.clone();
+
+    // Reproduz explicitamente sem focar: o leitor pertence a esta sessão.
+    h.service.article_player_play(&id, &tutor).await.unwrap();
+    let request = h.worker.streams().last().cloned().unwrap();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    progress(&h, 200, 400).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
+
+    // Outra sessão toma o foco: a reprodução anterior pára, mesmo sem um foco
+    // anterior registado.
+    h.service
+        .article_view_focus("other-session", "token")
+        .await
+        .unwrap();
+    assert_eq!(playback(&h, &id).await, PlayerState::Idle);
+}
+
+#[tokio::test]
+async fn completion_after_a_drain_restart_stays_buffering_until_audio_ends() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+    send_chunk_file(&h, &request, 0).await;
+    progress(&h, 500, 500).await;
+    // A fila esvazia.
+    let first_id = h.audio.last_id();
+    h.service
+        .on_audio_event(AudioEvent::PlaybackFinished { id: first_id })
+        .await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Buffering);
+    // O bloco seguinte retoma a fila.
+    send_chunk_file(&h, &request, 1).await;
+    // A síntese termina antes de qualquer tick: continua `buffering`, não `ended`.
+    finish_stream(&h, &request, 2).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Buffering);
+    assert_eq!(h.snapshot(&id).await.audio.duration_ms, Some(1000));
+    // Um tick audível passa a `playing`.
+    progress(&h, 300, 500).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
+    assert_eq!(h.snapshot(&id).await.audio.position_ms, 800);
+    // O fim da fila conclui a rendição.
+    let last_id = h.audio.last_id();
+    h.service
+        .on_audio_event(AudioEvent::PlaybackFinished { id: last_id })
+        .await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Ended);
+}
+
+#[tokio::test]
+async fn active_prefix_reuse_is_scoped_to_the_same_session() {
+    use language_assistant_tutor::article::{ArticleMutation, PlayerState};
+    let h = Harness::new().await;
+    // Sessão A com uma síntese em curso e um prefixo já entregue.
+    let a = h.ready().await;
+    let request_a = h.worker.streams()[0].clone();
+    send_chunk_file(&h, &request_a, 0).await;
+    // Elimina A diretamente na base, sem passar pela limpeza do serviço: a
+    // síntese de A continua viva em memória.
+    h.database
+        .apply_article(&h.cmd(&a), ArticleMutation::Delete)
+        .unwrap();
+
+    // Sessão B com o mesmo artigo (a abertura tem o mesmo texto).
+    let b = h.create().await;
+    let b_id = b.session.id.clone();
+    h.service.article_authorize(h.consent(&b)).await.unwrap();
+    h.service.article_settle().await;
+    let b_snapshot = h.snapshot(&b_id).await;
+    let b_turn = b_snapshot.turns[0].id.clone();
+    let streams = h.worker.streams().len();
+
+    // Reproduzir a abertura de B não reutiliza o prefixo da sessão A.
+    let view = h.service.article_player_play(&b_id, &b_turn).await.unwrap();
+    assert_eq!(
+        h.worker.streams().len(),
+        streams + 1,
+        "síntese nova para a sessão B"
+    );
+    assert_eq!(view.state, PlayerState::Preparing);
+}
+
+#[tokio::test]
+async fn finish_forces_a_stop_before_waiting_for_a_pending_play() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    progress(&h, 200, 400).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
+    let generation = h.snapshot(&id).await.audio.generation;
+
+    // Uma pausa pendente detém o coordenador serial.
+    let release = h.audio.hold_pause();
+    let service = Arc::clone(&h.service);
+    let pause = tokio::spawn({
+        let id = id.clone();
+        async move {
+            let _ = service.article_player_pause(&id, generation).await;
+        }
+    });
+    for _ in 0..200 {
+        if h.audio.pause_attempts() >= 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert_eq!(h.audio.pause_attempts(), 1, "a pausa ficou pendente");
+
+    // Terminar pára o dispositivo antes de esperar pelo coordenador.
+    let finish = {
+        let service = Arc::clone(&h.service);
+        let cmd = h.cmd(&ready);
+        tokio::spawn(async move {
+            let _ = service.article_finish(cmd).await;
+        })
+    };
+    for _ in 0..200 {
+        if h.audio.stops() > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(h.audio.stops() > 0, "o dispositivo parou antes de esperar");
+
+    // Liberta a pausa e o término; o resultado tardio fica invalidado.
+    drop(release);
+    pause.await.unwrap();
+    finish.await.unwrap();
+    let after = h.snapshot(&id).await.audio;
+    assert_eq!(after.state, PlayerState::Idle);
+    assert!(after.generation > generation, "a geração foi invalidada");
+}
+
+#[tokio::test]
+async fn a_completion_with_more_chunks_than_accepted_is_not_cached_as_complete() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let text = ready.turns[0].version.text.clone();
+    let request = h.worker.streams()[0].clone();
+    send_chunk_file(&h, &request, 0).await;
+    // O auxiliar reporta mais blocos do que os aceites: rendição incompleta.
+    finish_stream(&h, &request, 2).await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Failed);
+    let session_dir = h.directory.path().join("articles").join(&id);
+    let key = voice_key(&text, "af_heart", 10, ENGINE_ID);
+    assert!(
+        read_cache(&session_dir, &key).is_none(),
+        "sem cache completa"
+    );
+}
+
+#[tokio::test]
+async fn autoplay_respects_the_shared_audio_owner() {
+    let h = Harness::new().await;
+    let created = h.create().await;
+    let id = created.session.id.clone();
+    h.service.article_view_focus(&id, "token").await.unwrap();
+    // O STAR detém o áudio (gravação em curso).
+    h.service
+        .start_session(StartSession {
+            mode: Default::default(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+            category: None,
+            count: 1,
+        })
+        .await
+        .unwrap();
+    let star = h.service.snapshot();
+    let question = star.current.as_ref().unwrap().question.id.clone();
+    let selection = star.current_answer.as_ref().unwrap().selection_version;
+    h.service
+        .start_recording(question, selection)
+        .await
+        .unwrap();
+
+    // A abertura do artigo não toca enquanto o STAR grava.
+    h.service
+        .article_authorize(h.consent(&created))
+        .await
+        .unwrap();
+    h.service.article_settle().await;
+    assert_eq!(
+        h.worker.streams().len(),
+        0,
+        "a autoplay respeita o dono do áudio"
+    );
+    assert_eq!(h.snapshot(&id).await.session.state, ArticleState::Ready);
+}
+
+#[tokio::test]
+async fn play_errors_do_not_expose_paths() {
+    use language_assistant_tutor::article::ArticleSpeaker;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    h.record(&ready).await;
+    h.transcript("My answer.").await;
+    let snapshot = h.snapshot(&id).await;
+    let user = snapshot
+        .turns
+        .iter()
+        .find(|t| t.speaker == ArticleSpeaker::User)
+        .unwrap()
+        .id
+        .clone();
+    // Corrompe o original para provocar INVALID_AUDIO.
+    let original = h
+        .directory
+        .path()
+        .join("articles")
+        .join(&id)
+        .join(&user)
+        .join("original.wav");
+    std::fs::write(&original, b"not a wav").unwrap();
+
+    let error = h.service.article_player_play(&id, &user).await.unwrap_err();
+    assert_eq!(error.code, error_code::INVALID_AUDIO);
+    assert!(
+        !error.message.contains('\\'),
+        "sem caminho: {}",
+        error.message
+    );
+    assert!(
+        !error.message.contains(':'),
+        "sem unidade: {}",
+        error.message
+    );
+    assert!(
+        !error.message.contains("original.wav"),
+        "sem ficheiro: {}",
+        error.message
+    );
+}
+
+#[tokio::test]
+async fn an_output_failure_cancels_the_pending_synthesis() {
+    use language_assistant_tutor::article::{PlayerOperation, PlayerState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+    // O dispositivo falha ao iniciar a reprodução do primeiro bloco.
+    h.audio.fail_start();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+
+    // A falha de saída cancela a síntese pendente e é rotulada `Output`.
+    assert!(h.worker.cancels() >= 1, "a síntese pendente é cancelada");
+    let view = h.snapshot(&id).await.audio;
+    assert_eq!(view.state, PlayerState::Failed);
+    assert_eq!(
+        view.failure.as_ref().map(|f| f.operation),
+        Some(PlayerOperation::Output)
+    );
+
+    // Um bloco tardio não toca.
+    let appends = h.audio.appends().len();
+    send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
+    assert_eq!(h.audio.appends().len(), appends, "o bloco tardio não toca");
+}
+
+#[tokio::test]
+async fn a_cached_play_device_failure_is_labelled_output() {
+    use language_assistant_tutor::article::{PlayerOperation, PlayerState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let tutor = ready.turns[0].id.clone();
+    // Conclui a síntese automática para a cache ficar completa.
+    let request = h.worker.streams()[0].clone();
+    send_chunk_file(&h, &request, 0).await;
+    finish_stream(&h, &request, 1).await;
+    h.service.article_stop_voice().await.unwrap();
+
+    // O dispositivo falha ao reproduzir a entrada da cache.
+    h.audio.fail_start();
+    let error = h
+        .service
+        .article_player_play(&id, &tutor)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, error_code::DEVICE_UNAVAILABLE);
+    let view = h.snapshot(&id).await.audio;
+    assert_eq!(view.state, PlayerState::Failed);
+    assert_eq!(
+        view.failure.as_ref().map(|f| f.operation),
+        Some(PlayerOperation::Output)
+    );
+}
+
+// -- «Responder agora» e o ciclo de vida da gravação --------------------------
+
+#[tokio::test]
+async fn respond_now_stops_output_before_capture() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    h.service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    assert_eq!(h.order.steps(), vec!["stop", "cancel", "start_capture"]);
+}
+
+#[tokio::test]
+async fn a_capture_failure_does_not_restore_voice() {
+    use language_assistant_tutor::article::{ArticleRecovery, PlayerState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let streams = h.worker.streams().len();
+    let plays = h.audio.plays().len();
+
+    h.audio.fail_capture();
+    let error = h
+        .service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, error_code::DEVICE_UNAVAILABLE);
+
+    // A voz não volta: sem nova síntese nem reprodução, e o leitor fica inativo.
+    assert_eq!(h.worker.streams().len(), streams, "sem nova síntese");
+    assert_eq!(h.audio.plays().len(), plays, "sem nova reprodução");
+    assert_eq!(h.snapshot(&id).await.audio.state, PlayerState::Idle);
+    // A falha fica recuperável: gravar de novo.
+    let after = h.snapshot(&id).await;
+    assert_eq!(after.session.state, ArticleState::RecoverableError);
+    assert_eq!(after.session.recovery, Some(ArticleRecovery::ReRecord));
+}
+
+#[tokio::test]
+async fn a_duplicate_respond_now_starts_one_capture_and_one_turn() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let start = h.cmd(&ready);
+    let first = h
+        .service
+        .article_start_recording(start.clone())
+        .await
+        .unwrap();
+    let second = h.service.article_start_recording(start).await.unwrap();
+    assert_eq!(h.audio.starts(), 1, "uma só captura");
+    let turns: i64 = h
+        .database
+        .with_connection(|c| {
+            Ok(c.query_row(
+                "SELECT count(*) FROM article_turns WHERE speaker = 'user'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap())
+        })
+        .unwrap();
+    assert_eq!(turns, 1, "um só turno do utilizador");
+    assert_eq!(first.session.version, second.session.version);
+}
+
+#[tokio::test]
+async fn recording_events_carry_capture_identity_and_sequence() {
+    use language_assistant_tutor::article::{ArticleRecordingView, RecordingState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let events: Arc<Mutex<Vec<ArticleRecordingView>>> = Default::default();
+    let sink = events.clone();
+    h.service
+        .subscribe_article_recording(Arc::new(move |view: &ArticleRecordingView| {
+            sink.lock().unwrap().push(view.clone());
+        }));
+
+    h.service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    let first = events.lock().unwrap().clone();
+    assert_eq!(first.len(), 1, "o reconhecimento publica um evento");
+    let view = &first[0];
+    assert_eq!(view.state, RecordingState::Active);
+    assert_eq!(view.session_id, id);
+    assert!(!view.capture_id.is_empty(), "capture_id novo");
+    assert!(!view.turn_id.is_empty());
+    assert_eq!(view.sequence, 1);
+    assert_eq!(view.elapsed_ms, 0);
+    assert_eq!(view.level, None);
+
+    // O progresso da captura atual avança a sequência, mantendo a identidade.
+    h.service
+        .on_audio_event(AudioEvent::CaptureProgress {
+            recording_id: Some(view.turn_id.clone()),
+            elapsed_ms: 120,
+            level: Some(0.4),
+        })
+        .await;
+    let second = events.lock().unwrap().clone();
+    assert_eq!(second.len(), 2);
+    assert_eq!(second[1].capture_id, view.capture_id);
+    assert_eq!(second[1].sequence, 2);
+    assert_eq!(second[1].state, RecordingState::Active);
+}
+
+#[tokio::test]
+async fn a_resubscription_gets_the_current_recording_or_inactive() {
+    use language_assistant_tutor::article::RecordingState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+
+    assert_eq!(
+        h.snapshot(&id).await.recording.state,
+        RecordingState::Inactive
+    );
+
+    let started = h
+        .service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    let active = h.snapshot(&id).await.recording;
+    assert_eq!(active.state, RecordingState::Active);
+    assert!(!active.capture_id.is_empty());
+    assert!(!active.turn_id.is_empty());
+
+    h.service
+        .article_stop_recording(h.cmd(&started))
+        .await
+        .unwrap();
+    let ended = h.snapshot(&id).await.recording;
+    assert_eq!(ended.state, RecordingState::Ended);
+    assert_eq!(ended.elapsed_ms, 500, "o tempo final vem da captura");
+    assert_eq!(ended.level, None);
+
+    h.transcript("Remote work helps people focus.").await;
+    assert_eq!(
+        h.snapshot(&id).await.recording.state,
+        RecordingState::Inactive
+    );
+}
+
+#[tokio::test]
+async fn a_late_active_event_cannot_revive_a_finished_capture() {
+    use language_assistant_tutor::article::{ArticleRecordingView, RecordingState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let events: Arc<Mutex<Vec<ArticleRecordingView>>> = Default::default();
+    let sink = events.clone();
+    h.service
+        .subscribe_article_recording(Arc::new(move |view: &ArticleRecordingView| {
+            sink.lock().unwrap().push(view.clone());
+        }));
+    let started = h
+        .service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    let old_turn_id = events.lock().unwrap()[0].turn_id.clone();
+
+    h.service
+        .article_stop_recording(h.cmd(&started))
+        .await
+        .unwrap();
+    assert_eq!(
+        events.lock().unwrap().last().unwrap().state,
+        RecordingState::Ended
+    );
+    let len = events.lock().unwrap().len();
+    let sequence = events.lock().unwrap().last().unwrap().sequence;
+
+    // Um progresso tardio da captura já terminada não revive a gravação.
+    h.service
+        .on_audio_event(AudioEvent::CaptureProgress {
+            recording_id: Some(old_turn_id),
+            elapsed_ms: 999,
+            level: Some(0.9),
+        })
+        .await;
+    let now = events.lock().unwrap().clone();
+    assert_eq!(now.len(), len, "sem novo evento");
+    assert_eq!(now.last().unwrap().sequence, sequence);
+    assert_eq!(now.last().unwrap().state, RecordingState::Ended);
+}
+
+#[tokio::test]
+async fn recording_progress_uses_native_elapsed_and_real_level() {
+    use language_assistant_tutor::article::{ArticleRecordingView, RecordingState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let events: Arc<Mutex<Vec<ArticleRecordingView>>> = Default::default();
+    let sink = events.clone();
+    h.service
+        .subscribe_article_recording(Arc::new(move |view: &ArticleRecordingView| {
+            sink.lock().unwrap().push(view.clone());
+        }));
+    h.service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    let turn_id = events.lock().unwrap()[0].turn_id.clone();
+
+    h.service
+        .on_audio_event(AudioEvent::CaptureProgress {
+            recording_id: Some(turn_id),
+            elapsed_ms: 2500,
+            level: Some(0.75),
+        })
+        .await;
+    let view = events.lock().unwrap().last().unwrap().clone();
+    assert_eq!(view.elapsed_ms, 2500);
+    assert_eq!(view.level, Some(0.75));
+    assert_eq!(view.state, RecordingState::Active);
+}
+
+#[tokio::test]
+async fn microphone_loss_keeps_the_recoverable_recording_without_a_new_take() {
+    use language_assistant_tutor::article::{ArticleRecordingView, RecordingState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let events: Arc<Mutex<Vec<ArticleRecordingView>>> = Default::default();
+    let sink = events.clone();
+    h.service
+        .subscribe_article_recording(Arc::new(move |view: &ArticleRecordingView| {
+            sink.lock().unwrap().push(view.clone());
+        }));
+    h.service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    let turn_id = events.lock().unwrap()[0].turn_id.clone();
+
+    // O microfone cai a meio: áudio parcial recuperável.
+    let partial = CapturedAudio {
+        id: turn_id.clone(),
+        original: h
+            .directory
+            .path()
+            .join("articles")
+            .join(&id)
+            .join(&turn_id)
+            .join("original.wav"),
+        meta: CaptureMeta {
+            sample_rate: 48_000,
+            channels: 1,
+            duration_ms: 300,
+            bytes: 1440,
+            incomplete: true,
+        },
+    };
+    h.service
+        .on_audio_event(AudioEvent::CaptureInterrupted {
+            recording_id: Some(turn_id),
+            capture: Some(partial),
+            error: AppError::new(error_code::CAPTURE_INTERRUPTED, "microfone perdido.", true),
+        })
+        .await;
+
+    // A gravação recuperável fica guardada e não obriga a uma nova gravação:
+    // segue para revisão, com o áudio disponível e a vista em Inactive.
+    let after = h.snapshot(&id).await;
+    assert_eq!(after.session.state, ArticleState::NeedsReview);
+    assert_eq!(after.session.recovery, None);
+    assert!(after
+        .turns
+        .iter()
+        .any(|t| t.speaker == ArticleSpeaker::User && t.audio_available));
+    assert_eq!(after.recording.state, RecordingState::Inactive);
+}
+
+#[tokio::test]
+async fn meter_values_are_not_persisted_or_logged() {
+    use language_assistant_tutor::article::{ArticleRecordingView, RecordingState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let events: Arc<Mutex<Vec<ArticleRecordingView>>> = Default::default();
+    let sink = events.clone();
+    h.service
+        .subscribe_article_recording(Arc::new(move |view: &ArticleRecordingView| {
+            sink.lock().unwrap().push(view.clone());
+        }));
+    let started = h
+        .service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap();
+    let turn_id = events.lock().unwrap()[0].turn_id.clone();
+
+    // Progresso com nível e tempo reais: chegam à vista em memória…
+    h.service
+        .on_audio_event(AudioEvent::CaptureProgress {
+            recording_id: Some(turn_id),
+            elapsed_ms: 987_654,
+            level: Some(0.625),
+        })
+        .await;
+    assert_eq!(
+        events.lock().unwrap().last().unwrap().level,
+        Some(0.625),
+        "o nível real chega à vista"
+    );
+
+    // …mas nunca são persistidos: a fotografia da base reconstrói sempre a
+    // gravação como `Inactive`, sem nível nem tempo. O registo estruturado de
+    // diagnóstico só guarda operação/código/duração (`record_metric`), nunca o
+    // nível nem o tempo da gravação — coberto também pelo teste
+    // `turn_metrics_use_closed_operations_with_durations_and_no_content`.
+    h.service
+        .article_stop_recording(h.cmd(&started))
+        .await
+        .unwrap();
+    h.transcript("Remote work helps people focus.").await;
+    let persisted = h.database.article_snapshot(&id).unwrap();
+    assert_eq!(persisted.recording.state, RecordingState::Inactive);
+    assert_eq!(persisted.recording.level, None);
+    assert_eq!(persisted.recording.elapsed_ms, 0);
+}
+
+#[tokio::test]
+async fn a_failed_output_stop_does_not_start_capture() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+
+    h.audio.fail_stop();
+    let error = h
+        .service
+        .article_start_recording(h.cmd(&ready))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, error_code::DEVICE_UNAVAILABLE);
+    assert_eq!(h.audio.starts(), 0, "a captura nunca começa");
+    assert_eq!(
+        h.snapshot(&id).await.session.state,
+        ArticleState::Ready,
+        "a conversa continua por gravar"
+    );
+}
+
+#[tokio::test]
+async fn a_replay_queued_before_revocation_cannot_start_voice_after_it() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let turn = ready.turns[0].id.clone();
+    h.service.article_revoke(h.cmd(&ready)).await.unwrap();
+    let streams = h.worker.streams().len();
+    let plays = h.audio.plays().len();
+    let error = h.service.article_player_play(&id, &turn).await.unwrap_err();
+    assert_eq!(error.code, error_code::INVALID_INPUT);
+    assert_eq!(h.worker.streams().len(), streams);
+    assert_eq!(h.audio.plays().len(), plays);
+}
+
+#[tokio::test]
+async fn a_missing_original_is_unavailable_without_selecting_the_player() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    h.record(&ready).await;
+    h.transcript("A saved answer.").await;
+    let reply = h.snapshot(&id).await;
+    let turn = &reply.turns[1];
+    assert!(turn.audio_available);
+    std::fs::remove_file(
+        h.directory
+            .path()
+            .join("articles")
+            .join(&id)
+            .join(&turn.id)
+            .join("original.wav"),
+    )
+    .unwrap();
+    let before = h.snapshot(&id).await;
+    assert!(!before.turns[1].audio_available);
+    assert!(h.service.article_player_play(&id, &turn.id).await.is_err());
+    assert_eq!(h.snapshot(&id).await.audio, before.audio);
+    assert!(h.audio.plays().is_empty());
 }
