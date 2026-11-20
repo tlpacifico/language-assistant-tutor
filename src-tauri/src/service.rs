@@ -77,7 +77,7 @@ mod article;
 mod interview;
 mod practice;
 
-pub use article::ArticleListener;
+pub use article::{ArticleListener, ArticlePlayerListener};
 
 /// Falha de SQLite simulada nos testes, injetada em pontos concretos do arranque
 /// da captura de preparação. Nunca é usada pelo caminho real.
@@ -437,6 +437,7 @@ pub struct AppService {
     article: Mutex<article::ArticleRuntime>,
     article_transport: Arc<dyn crate::ai::ArticleTransport>,
     article_listener: Mutex<Option<ArticleListener>>,
+    article_player_listener: Mutex<Option<ArticlePlayerListener>>,
 }
 
 impl AppService {
@@ -479,6 +480,7 @@ impl AppService {
             article: Mutex::new(article::ArticleRuntime::default()),
             article_transport: Arc::new(crate::ai::ArticleHttpTransport::default()),
             article_listener: Mutex::new(None),
+            article_player_listener: Mutex::new(None),
         }
     }
 
@@ -1073,8 +1075,9 @@ impl AppService {
                     state.playback_id = None;
                 });
             }
-            AudioEvent::PlaybackProgress { .. } => {
-                // O progresso é consumido pelo leitor de artigos (tarefas 6 e 7).
+            AudioEvent::PlaybackProgress { id, progress } => {
+                // O progresso é consumido pelo leitor de artigos (≤4 Hz).
+                self.article_playback_progress(&id, progress).await;
             }
             AudioEvent::CaptureProgress { .. } => {
                 // O progresso da captura é consumido pelo leitor de artigos

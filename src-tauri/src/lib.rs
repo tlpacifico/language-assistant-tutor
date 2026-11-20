@@ -50,6 +50,9 @@ pub const INTERVIEW_SNAPSHOT_EVENT: &str = "interview://snapshot";
 /// Evento com a fotografia persistida da conversa sobre um artigo.
 pub const ARTICLE_SNAPSHOT_EVENT: &str = "article://snapshot";
 
+/// Evento com o estado de reprodução de um artigo.
+pub const ARTICLE_PLAYER_EVENT: &str = "article://player";
+
 /// Arranque real do auxiliar a partir da configuração pessoal.
 ///
 /// A configuração é lida uma vez no arranque; corrigir `audio.json` exige
@@ -150,6 +153,20 @@ pub fn run() {
                 }
             }));
 
+            let player_handle = app.handle().clone();
+            service.subscribe_article_player(Arc::new(move |view: &article::ArticlePlayerView| {
+                if player_handle
+                    .emit(ARTICLE_PLAYER_EVENT, view.clone())
+                    .is_err()
+                {
+                    diagnostics::record(diagnostics::Event::new(
+                        "rust",
+                        "snapshot_publish",
+                        "UNEXPECTED",
+                    ));
+                }
+            }));
+
             let audio_service = Arc::clone(&service);
             tauri::async_runtime::spawn(async move {
                 while let Some(event) = audio_receiver.recv().await {
@@ -192,6 +209,10 @@ pub fn run() {
             article_commands::article_preferences_save,
             article_commands::article_retry,
             article_commands::article_play_turn,
+            article_commands::article_player_play,
+            article_commands::article_player_pause,
+            article_commands::article_player_resume,
+            article_commands::article_player_stop,
             article_commands::article_resume,
             article_commands::article_revoke,
             article_commands::article_snapshot,
@@ -200,6 +221,8 @@ pub fn run() {
             article_commands::article_submit_text,
             article_commands::article_start_recording,
             article_commands::article_stop_recording,
+            article_commands::article_view_focus,
+            article_commands::article_view_blur,
             commands::interview_snapshot,
             commands::interview_list_questions,
             commands::interview_create_question,

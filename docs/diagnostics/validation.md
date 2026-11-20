@@ -86,3 +86,7 @@ The operations `article_transcribe`, `article_reply`, `article_first_audio` and 
 ## Article player preferences — 2026-11-20
 
 The commands `article_preferences_load` and `article_preferences_save` were added to the closed `COMMANDS` list; they record only the command name, never the preference values.
+
+## Article player controls — 2026-11-20
+
+The commands `article_player_play`, `article_player_pause`, `article_player_resume`, `article_player_stop`, `article_view_focus` and `article_view_blur` were added to the closed `COMMANDS` list, and the operations `article_play_start` and `article_play_stop` to the closed `OPERATIONS` list. They record only a stable code (e.g. `STALE_SOURCE`) and a duration, never text, paths, positions, levels or event payloads. The compatibility commands `article_play_turn`, `article_speak_turn` and `article_stop_voice` remain until the React client stops calling them.

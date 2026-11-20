@@ -10,8 +10,8 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::article::{
-    ArticleCommand, ArticleConsent, ArticleCorrection, ArticleCreate, ArticlePreferences,
-    ArticleSnapshot, ArticleSummary,
+    ArticleCommand, ArticleConsent, ArticleCorrection, ArticleCreate, ArticlePlayerView,
+    ArticlePreferences, ArticleSnapshot, ArticleSummary,
 };
 use crate::domain::AppError;
 use crate::service::AppService;
@@ -95,6 +95,60 @@ pub async fn article_play_turn(
     service: State<'_, Arc<AppService>>,
 ) -> Result<(), AppError> {
     service.article_play_turn(&session_id, &turn_id).await
+}
+
+/// Reproduz uma fala (tutor) ou a gravação de uma resposta, do início.
+#[tauri::command]
+pub async fn article_player_play(
+    session_id: String,
+    turn_id: String,
+    service: State<'_, Arc<AppService>>,
+) -> Result<ArticlePlayerView, AppError> {
+    service.article_player_play(&session_id, &turn_id).await
+}
+
+#[tauri::command]
+pub async fn article_player_pause(
+    session_id: String,
+    generation: u64,
+    service: State<'_, Arc<AppService>>,
+) -> Result<ArticlePlayerView, AppError> {
+    service.article_player_pause(&session_id, generation).await
+}
+
+#[tauri::command]
+pub async fn article_player_resume(
+    session_id: String,
+    generation: u64,
+    service: State<'_, Arc<AppService>>,
+) -> Result<ArticlePlayerView, AppError> {
+    service.article_player_resume(&session_id, generation).await
+}
+
+#[tauri::command]
+pub async fn article_player_stop(
+    session_id: String,
+    generation: u64,
+    service: State<'_, Arc<AppService>>,
+) -> Result<ArticlePlayerView, AppError> {
+    service.article_player_stop(&session_id, generation).await
+}
+
+#[tauri::command]
+pub async fn article_view_focus(
+    session_id: String,
+    token: String,
+    service: State<'_, Arc<AppService>>,
+) -> Result<(), AppError> {
+    service.article_view_focus(&session_id, &token).await
+}
+
+#[tauri::command]
+pub async fn article_view_blur(
+    token: String,
+    service: State<'_, Arc<AppService>>,
+) -> Result<(), AppError> {
+    service.article_view_blur(&token).await
 }
 
 /// Para a voz do tutor sem perder texto nem estado.

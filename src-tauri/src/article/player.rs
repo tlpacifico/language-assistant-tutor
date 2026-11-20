@@ -182,11 +182,6 @@ impl PlayerRuntime {
         self.view.clone()
     }
 
-    /// Nome do serviço para a mesma vista (com `duration_ms` só quando completa).
-    pub fn player_view(&self) -> ArticlePlayerView {
-        self.view()
-    }
-
     pub fn generation(&self) -> u64 {
         self.view.generation
     }

@@ -494,6 +494,8 @@ fn safe_operation(operation: &str) -> &str {
         "article_reply",
         "article_first_audio",
         "article_feedback",
+        "article_play_start",
+        "article_play_stop",
     ];
     if OPERATIONS.contains(&operation) || COMMANDS.contains(&operation) {
         operation
@@ -512,6 +514,10 @@ const COMMANDS: &[&str] = &[
     "article_list",
     "article_retry",
     "article_play_turn",
+    "article_player_play",
+    "article_player_pause",
+    "article_player_resume",
+    "article_player_stop",
     "article_preferences_load",
     "article_preferences_save",
     "article_resume",
@@ -522,6 +528,8 @@ const COMMANDS: &[&str] = &[
     "article_submit_text",
     "article_start_recording",
     "article_stop_recording",
+    "article_view_focus",
+    "article_view_blur",
     "interview_abandon_practice",
     "interview_advance_session",
     "interview_ai_accept_ai_consent",
