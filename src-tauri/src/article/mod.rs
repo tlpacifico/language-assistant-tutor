@@ -4,12 +4,14 @@
 //! áudio nem de rede; `types` espelha `src/lib/article-contracts.ts` e
 //! `state` valida as transições e o consentimento.
 
+mod cache;
 mod mutation;
 mod player;
 mod state;
 mod types;
 mod voice;
 
+pub use cache::*;
 pub use mutation::*;
 pub use player::*;
 pub use state::*;

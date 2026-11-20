@@ -18,8 +18,9 @@ use language_assistant_tutor::ai::{
     NormalizedUsage, RemoteCompletion, OPENCODE_GO_BASE_URL,
 };
 use language_assistant_tutor::article::{
-    ArticleCommand, ArticleConsent, ArticleCreate, ArticleSnapshot, ArticleSpeaker, ArticleState,
-    ARTICLE_NOTICE_VERSION,
+    begin_entry, finish_entry, read_cache, voice_key, ArticleCommand, ArticleConsent,
+    ArticleCreate, ArticleSnapshot, ArticleSpeaker, ArticleState, ARTICLE_NOTICE_VERSION,
+    ENGINE_ID,
 };
 use language_assistant_tutor::artifacts::ArtifactStore;
 use language_assistant_tutor::audio::{
@@ -860,10 +861,28 @@ async fn a_late_result_after_deleting_is_discarded() {
         .unwrap();
     h.wait_for_calls(1).await;
     let pending = h.snapshot(&id).await;
+
+    // Uma entrada de cache de voz vive na pasta da sessão e desaparece com ela.
+    let session_dir = h.directory.path().join("articles").join(&id);
+    let key = voice_key("Why does that matter?", "af_heart", 10, ENGINE_ID);
+    let cache_dir = begin_entry(&session_dir, &key).unwrap();
+    write_wav(&cache_dir.join("chunk-0000.wav"));
+    finish_entry(
+        &cache_dir,
+        "Why does that matter?",
+        "af_heart",
+        10,
+        ENGINE_ID,
+        &[(0, 500)],
+    )
+    .unwrap();
+    assert!(read_cache(&session_dir, &key).is_some());
+
     h.service.article_delete(h.cmd(&pending)).await.unwrap();
     gate.notify_one();
     h.service.article_settle().await;
     assert!(h.service.article_snapshot(&id).await.is_err());
+    assert!(!session_dir.exists(), "a cache de voz sai com a sessão");
     let turns: i64 = h
         .database
         .with_connection(|c| {

@@ -1,11 +1,15 @@
-//! Voz incremental do tutor: protocolo de blocos, validação da sequência e
-//! reprodução em fila com cancelamento.
+//! Voz incremental do tutor: protocolo de blocos, validação da sequência,
+//! reprodução em fila com cancelamento e cache local de voz.
 
 use std::path::{Path, PathBuf};
 
+use hound::{SampleFormat, WavSpec, WavWriter};
 use serde_json::json;
 
-use language_assistant_tutor::article::{ChunkRejection, ChunkSequence};
+use language_assistant_tutor::article::{
+    begin_entry, clear_entry, finish_entry, read_cache, remove_incomplete, voice_key,
+    ChunkRejection, ChunkSequence, ENGINE_ID,
+};
 use language_assistant_tutor::worker::protocol::{
     decode_response, encode_request, parse_result, SynthesizeStreamParams, WorkerOp,
     WorkerResponse, WorkerResult,
@@ -167,4 +171,163 @@ fn shared_stream_examples_match_the_rust_protocol() {
         parse_result(WorkerOp::SynthesizeStream, value).unwrap(),
         WorkerResult::SynthesisStream(_)
     ));
+}
+
+// -- cache local de voz ------------------------------------------------------
+
+/// Escreve um bloco WAV PCM16 de 24 kHz com `frames` amostras.
+fn write_chunk(dir: &Path, index: u32, frames: u32) -> PathBuf {
+    let spec = WavSpec {
+        channels: 1,
+        sample_rate: 24_000,
+        bits_per_sample: 16,
+        sample_format: SampleFormat::Int,
+    };
+    let path = dir.join(format!("chunk-{index:04}.wav"));
+    let mut writer = WavWriter::create(&path, spec).expect("criar bloco WAV");
+    for _ in 0..frames {
+        writer.write_sample(0i16).expect("escrever amostra");
+    }
+    writer.finalize().expect("fechar bloco WAV");
+    path
+}
+
+/// 2 400 amostras a 24 kHz: 100 ms exatos.
+const FRAMES_100MS: u32 = 2_400;
+
+#[test]
+fn cache_key_changes_with_text_voice_speed_and_engine() {
+    let base = voice_key("text", "af_heart", 10, ENGINE_ID);
+    assert_eq!(base.len(), 64);
+    assert!(base
+        .bytes()
+        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+    assert_ne!(base, voice_key("other", "af_heart", 10, ENGINE_ID), "texto");
+    assert_ne!(base, voice_key("text", "af_bella", 10, ENGINE_ID), "voz");
+    assert_ne!(
+        base,
+        voice_key("text", "af_heart", 12, ENGINE_ID),
+        "velocidade"
+    );
+    assert_ne!(
+        base,
+        voice_key("text", "af_heart", 10, "outro-motor"),
+        "motor"
+    );
+}
+
+#[test]
+fn an_entry_without_a_complete_manifest_is_not_reused() {
+    let session = tempfile::tempdir().unwrap();
+    let session_dir = session.path();
+    let key = voice_key("text", "af_heart", 10, ENGINE_ID);
+    let entry = begin_entry(session_dir, &key).unwrap();
+    write_chunk(&entry, 0, FRAMES_100MS);
+    // Sem manifesto: não é reutilizada.
+    assert!(read_cache(session_dir, &key).is_none());
+
+    // Manifesto incompleto: também não é reutilizada.
+    let manifest = json!({
+        "version": 1,
+        "key": key,
+        "voice": "af_heart",
+        "speedX10": 10,
+        "engine": ENGINE_ID,
+        "textSha256": "x".repeat(64),
+        "complete": false,
+        "chunks": [{ "index": 0, "durationMs": 100 }]
+    });
+    std::fs::write(entry.join("manifest.json"), manifest.to_string()).unwrap();
+    assert!(read_cache(session_dir, &key).is_none());
+}
+
+#[test]
+fn corrupt_or_missing_chunk_invalidates_the_entry() {
+    let session = tempfile::tempdir().unwrap();
+    let session_dir = session.path();
+    let key = voice_key("text", "af_heart", 10, ENGINE_ID);
+    let entry = begin_entry(session_dir, &key).unwrap();
+    write_chunk(&entry, 0, FRAMES_100MS);
+    finish_entry(&entry, "text", "af_heart", 10, ENGINE_ID, &[(0, 100)]).unwrap();
+
+    let cached = read_cache(session_dir, &key).expect("entrada completa");
+    assert_eq!(cached.chunks.len(), 1);
+    assert_eq!(cached.chunks[0].index, 0);
+    assert_eq!(cached.chunks[0].duration_ms, 100);
+    assert_eq!(cached.chunks[0].path, entry.join("chunk-0000.wav"));
+    assert_eq!(cached.total_duration_ms(), 100);
+
+    // Bloco corrompido: a entrada deixa de ser reutilizável.
+    std::fs::write(entry.join("chunk-0000.wav"), b"nao e um wav").unwrap();
+    assert!(read_cache(session_dir, &key).is_none());
+
+    // Bloco em falta também invalida a leitura.
+    std::fs::remove_file(entry.join("chunk-0000.wav")).unwrap();
+    assert!(read_cache(session_dir, &key).is_none());
+
+    // Concluir com um bloco em falta devolve erro sem deixar manifesto completo.
+    let entry = begin_entry(session_dir, &key).unwrap();
+    write_chunk(&entry, 0, FRAMES_100MS);
+    std::fs::remove_file(entry.join("chunk-0000.wav")).unwrap();
+    assert!(finish_entry(&entry, "text", "af_heart", 10, ENGINE_ID, &[(0, 100)]).is_err());
+    assert!(read_cache(session_dir, &key).is_none());
+}
+
+#[test]
+fn a_key_outside_the_cache_directory_is_refused() {
+    let session = tempfile::tempdir().unwrap();
+    let session_dir = session.path();
+    for bad in [
+        "curto".to_string(),
+        "../escape".to_string(),
+        "Z".repeat(64),
+        format!("{}g", "a".repeat(63)),
+    ] {
+        let error = begin_entry(session_dir, &bad).unwrap_err();
+        assert_eq!(error.code, "INVALID_INPUT", "{bad}");
+        assert!(read_cache(session_dir, &bad).is_none(), "{bad}");
+    }
+    // A pasta `voice-cache/` nunca foi criada por uma chave recusada.
+    assert!(!session_dir.join("voice-cache").exists());
+}
+
+#[test]
+fn a_partial_entry_is_removed_before_regeneration() {
+    let session = tempfile::tempdir().unwrap();
+    let session_dir = session.path();
+    let key = voice_key("text", "af_heart", 10, ENGINE_ID);
+
+    // Entrada parcial (bloco sem manifesto completo): não é reutilizada.
+    let entry = begin_entry(session_dir, &key).unwrap();
+    write_chunk(&entry, 0, FRAMES_100MS);
+    assert!(read_cache(session_dir, &key).is_none());
+
+    // A limpeza remove a entrada parcial.
+    remove_incomplete(session_dir).unwrap();
+    assert!(!session_dir.join("voice-cache").join(&key).exists());
+
+    // Regenerar começa do zero: a pasta nova está vazia e completa normalmente.
+    let entry = begin_entry(session_dir, &key).unwrap();
+    assert!(!entry.join("chunk-0000.wav").exists());
+    write_chunk(&entry, 0, FRAMES_100MS);
+    finish_entry(&entry, "text", "af_heart", 10, ENGINE_ID, &[(0, 100)]).unwrap();
+    assert!(read_cache(session_dir, &key).is_some());
+}
+
+#[test]
+fn clear_entry_removes_one_entry_and_a_missing_one_is_ok() {
+    let session = tempfile::tempdir().unwrap();
+    let session_dir = session.path();
+    let key = voice_key("text", "af_heart", 10, ENGINE_ID);
+    let entry = begin_entry(session_dir, &key).unwrap();
+    write_chunk(&entry, 0, FRAMES_100MS);
+    finish_entry(&entry, "text", "af_heart", 10, ENGINE_ID, &[(0, 100)]).unwrap();
+    assert!(read_cache(session_dir, &key).is_some());
+
+    clear_entry(session_dir, &key).unwrap();
+    assert!(!session_dir.join("voice-cache").join(&key).exists());
+    assert!(read_cache(session_dir, &key).is_none());
+
+    // Remover uma entrada ausente é um sucesso.
+    clear_entry(session_dir, &key).unwrap();
 }
