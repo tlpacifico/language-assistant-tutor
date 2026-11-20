@@ -1,12 +1,11 @@
 # Article conversation player — R1 design
 
-Date: 2026-11-20. Status: **proposed specification, awaiting review; not implemented**.
+Date: 2026-11-20. Status: **R1 implemented; manual acceptance pending**.
 
 The user requested a specification after the [roadmap](../../article-conversation/roadmap.md).
-This document specifies R1, the first recommended implementation slice. It does
-not approve the implementation, accept the existing article mode or start phase 5.
-The product direction comes from the conversation; defaults explicitly identified
-below are design proposals, not choices already approved by the user.
+This document specifies R1, the first implementation slice. See the
+[validation record](../../article-conversation/validation.md#r1--article-player-and-chat)
+for its checks and pending acceptance. Later milestones remain proposals.
 
 ## 1. Purpose and scope
 
@@ -232,8 +231,8 @@ sessions must load with defaults and no automatic playback or inference.
 
 ## 9. Acceptance matrix
 
-Automated checks and manual acceptance are separate. Every criterion is currently
-**pending**; this specification records no implementation or performance result.
+Manual acceptance remains **pending** for every criterion. The validation
+record holds the implementation evidence.
 
 | ID | Criterion | Verification |
 | --- | --- | --- |
@@ -270,9 +269,8 @@ Specification review on 2026-11-20: an independent builder check found no blocki
 product questions for planning. Local Markdown links and whitespace were checked.
 This is document verification, not implementation verification or user approval.
 
-After review of this specification, prepare only the R1 technical implementation
-plan. Resolve exact event fields, audio APIs, cache storage/migration and test
-placement there, without expanding to subsequent roadmap milestones.
+The technical plan specifies the event fields, audio APIs, cache, migration and
+test placement for R1.
 
 - [Roadmap](../../article-conversation/roadmap.md)
 - [R1 technical implementation plan](../plans/2026-11-20-article-player-implementation.md)

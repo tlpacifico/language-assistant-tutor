@@ -2,10 +2,9 @@
 
 Date: 2026-11-20.
 
-Status: **proposed roadmap; implementation not started**. This document captures
-the improvements discussed with the user in this chat. The user requested the
-roadmap; this is not approval of a detailed implementation design, manual
-acceptance of existing features, or authorization to start phase 5.
+Status: **R1 implemented; manual acceptance pending**. This document captures
+the improvements discussed with the user. R0 measurements and later milestones
+remain pending.
 
 ## Outcomes and boundaries
 
@@ -25,12 +24,12 @@ This is a product roadmap, not a technical plan for every milestone. Specify
 contracts, migrations and implementation tasks only for the next selected
 milestone. There are no delivery-date or performance promises before measurement.
 
-## Starting point
+## Starting point before R1
 
 The existing implementation provides short tutor comments and questions,
 incremental voice blocks, automatic transcript sending, four feedback dimensions
 with validated quotes, and post-session text correction in preserved branches.
-The current UI exposes only the active branch. Spoken retries in this mode,
+The UI exposed only the active branch. Spoken retries in this mode,
 mid-conversation correction and general per-message playback controls are gaps.
 Priority improvements in reports are currently free-form strings.
 
@@ -41,8 +40,8 @@ Existing instrumentation and the real-recording benchmark are documented in
 
 ## Delivery sequence
 
-All milestones below are **proposed / not started**. Dependencies describe the
-recommended delivery order, not permission to implement subsequent work.
+Dependencies describe the recommended delivery order. The R1 verification
+results are in the [validation record](validation.md#r1--article-player-and-chat).
 
 | Milestone | Priority | Outcome | Depends on |
 | --- | --- | --- | --- |
@@ -58,10 +57,8 @@ Recommended first implementation slice after the baseline: R1. R2 follows as the
 first pedagogical improvement. Bring R5 forward if measurements identify audio
 waiting as the main obstacle to completing a conversation.
 
-R1 now has a [proposed specification](../superpowers/specs/2026-11-20-article-player-design.md)
-dated 2026-11-20 and an [implementation plan](../superpowers/plans/2026-11-20-article-player-implementation.md)
-for the next milestone only. Specification and planning do not change its
-implementation status.
+R1 is documented in the [specification](../superpowers/specs/2026-11-20-article-player-design.md)
+and the [implementation plan](../superpowers/plans/2026-11-20-article-player-implementation.md).
 
 ## R0 — Observe the current experience
 

@@ -10,7 +10,7 @@
 
 **Spec:** [Article conversation player — R1 design](../specs/2026-11-20-article-player-design.md). Roadmap: [R1](../../article-conversation/roadmap.md#r1--conversation-controls-and-chat).
 
-**Status:** proposed plan, not executed. Writing it does not start implementation, accept the article mode, measure performance or start phase 5. Execution method chosen on 2026-11-20: **subagent-driven** (one subagent per task with a fresh review), to be used only after the user confirms the plan and authorizes the start.
+**Tasks 1–11 implemented.** The initial execution used task-by-task delegation. The continuation completed the UI and verification, with one independent review of the whole R1 change. See the [R1 validation record](../../article-conversation/validation.md#r1--article-player-and-chat) for automated evidence and the pending manual criteria.
 
 ## Global constraints
 
@@ -338,7 +338,7 @@ pub fn peak_level(samples: &[i16]) -> f32 {
 - [ ] Add `star_playback_finished_still_clears_only_its_own_id`, `practice_playback_is_not_stopped_by_a_stale_article_id`, `a_star_selection_replaces_an_article_playback` and `reopening_an_older_session_uses_defaults_and_never_plays`; run `cargo test --manifest-path src-tauri/Cargo.toml --test service --test practice_service --test audio --test article_migration`.
 - [ ] Update the diagnostics closed lists and their documentation; assert no new event carries text, transcripts, audio paths, credentials or meter values. Rerun `cargo test --manifest-path src-tauri/Cargo.toml --test diagnostics` (or the existing diagnostics tests).
 - [ ] Run `.\scripts\verify.ps1` and record the actual check count and test counts in `docs/article-conversation/validation.md`, separating automated evidence from pending manual acceptance. Do not mark any R1 criterion accepted.
-- [ ] Update `docs/article-conversation/setup.md` with migration 6, the preferences table and the `voice-cache` layout; `performance.md` with the statement that R1 adds no measurement and keeps the R0 baseline for stop-to-first-sound; `roadmap.md` to link this plan; the spec status to «proposed specification; technical plan available, implementation not started».
+- [ ] Update `docs/article-conversation/setup.md` with migration 6, the preferences table and the `voice-cache` layout, and link the implementation from `roadmap.md` and the spec. Record in `performance.md` that R1 adds no measurement and keeps the R0 baseline procedure for stop-to-first-sound.
 - [ ] Run the documented release build without bundling and a smoke start/stop with temporary data; record exit codes. Do not build an installer and do not start phase 5.
 
 ## Acceptance coverage

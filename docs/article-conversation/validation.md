@@ -49,3 +49,38 @@ None of this used a real microphone, real Kokoro voice, real protected credentia
 4. Usefulness and fidelity of the feedback, and real cost (paid requests require your authorization).
 5. Correction of an old answer and regeneration of the report.
 6. Visual validation of the Articles page (desktop and mobile).
+
+## R1 — Article player and chat
+
+The R1 implementation follows the [design](../superpowers/specs/2026-11-20-article-player-design.md) and [technical plan](../superpowers/plans/2026-11-20-article-player-implementation.md). Manual acceptance remains pending.
+
+### Verification on 2026-11-20
+
+- `scripts/verify.ps1` completed **8/8 checks** with exit 0 in 232.2 s. It passed TypeScript, Vite, Rust formatting, Clippy, **432 Rust tests**, **188 Vitest tests** (24 files), **56 Python tests** (2 model tests deselected) and `pip check`.
+- The focused post-review battery passed **93 Rust tests** across `article_player`, `article_service` and `article_voice`. The Articles interface passed **68 tests**.
+- The controlled Chromium rehearsal verified the open article panel and recording bar at **800×600, 1024×768, 1440×900 and 390×844**. The stop button was visible and clickable. The bar did not overlap the chat or article, and the page had no horizontal overflow or JavaScript errors.
+- The isolated no-bundle release build completed with exit 0. Its WebView2 window opened a synthetic completed conversation in a temporary data directory. Alt+P paused and resumed a silent WAV through native playback. Ctrl+Enter had no effect in that completed state. The window closed with exit 0.
+- The regular `npm.cmd run tauri -- build --no-bundle` build also completed with exit 0. Cargo took 1 min 48 s and produced `src-tauri/target/release/language-assistant-tutor.exe`.
+
+The rehearsals used controlled or synthetic data. Real recording, listening to Kokoro, paid inference, installer validation and performance measurements remain pending.
+
+### R1 acceptance criteria
+
+| ID | Automated evidence | Manual acceptance |
+| --- | --- | --- |
+| R1-01 | Playwright layout rehearsal at 800×600, 1024×768, 1440×900 and 390×844 with a long chat, open article panel and controlled recording state | Pending |
+| R1-02 | `ArticlePlayerBar` action matrix and `ArticleConversation` consent, recording, review and limit tests | Pending |
+| R1-03 | `article_service` verifies the output-stop, cancel and capture order, duplicate requests and refusal to capture after an output-stop failure | Pending real speaker-to-microphone handoff |
+| R1-04 | `audio`, `article_player` and `article_service` cover scoped controls, position and resuming after synthesis completed during a pause | Pending real listening |
+| R1-05 | `ArticlePlayerBar` and `article_player` distinguish playback states and known versus unknown duration | Pending real streaming |
+| R1-06 | `article_voice` and `article_service` verify full-cache reuse, rejection of missing or corrupt audio, and local regeneration without a new text request | Pending real Kokoro replay and reopen |
+| R1-07 | `audio` and `article_service` verify native elapsed time, bounded level, capture identity and recovery. React hides the meter when capture ends | Pending real silence, speech and device removal |
+| R1-08 | `ArticleConversation` verifies the placeholder and actual transcript. `article_service` checks persistence before external requests | Pending real transcription |
+| R1-09 | `ArticleChat` checks reading position, jumps, heading focus, primary action focus and quiet progress updates | Pending keyboard and assistive technology use |
+| R1-10 | `article_migration`, `article_service` and `ArticleConversation` verify defaults, persistence, speed selection, and suppression of autoplay after disable or blur | Pending real listening at all three speeds |
+| R1-11 | `ArticleShortcuts` covers recording and pause/resume, editable and modal targets, repeat and IME suppression. The WebView2 rehearsal checks pause/resume and the inactive recording shortcut | Pending shortcuts with real recording |
+| R1-12 | `article_service`, `article_repository` and React cover typed recovery and distinct voice, send, feedback and capture actions | Pending real network and audio failures |
+| R1-13 | Rust tests cover stale identities between STAR, practice and articles. `useArticlePlayback` covers sequences, late subscriptions, snapshots and unmount | Pending device use across modes |
+| R1-14 | `article_service` covers finish, revoke, delete and silent reopen. React defers replay until the view has focus and reconciles messages saved before subscription | Pending abrupt close and reopen |
+| R1-15 | `article_migration`, `article_repository` and diagnostics tests cover migration rollback, content preservation and closed metrics | Pending use with real sources |
+| R1-16 | Controlled five-answer service test with correction, regeneration and reopen | Pending full run with real microphone, Kokoro and authorized paid inference |

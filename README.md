@@ -213,6 +213,8 @@ On 2026-11-05 the **article conversation** was implemented (new mode, outside th
 
 On 2026-11-05 the release [v0.3.0](docs/releases/v0.3.0.md) was published, with the article conversation (NSIS/MSI installers and portable with hashes in the document; portable smoke with exit code 0). The article conversation has no manual acceptance, installation of the packages remains to be validated and phase 5 was not started.
 
+The article conversation player (R1) adds a persistent control bar, per-message audio playback, **Responder agora**, microphone feedback, local playback preferences and keyboard controls. See [usage](docs/article-conversation/setup.md) and the [R1 validation record](docs/article-conversation/validation.md#r1--article-player-and-chat).
+
 On 2026-11-06 the repository went from private to public, under the MIT license.
 
 ## License
