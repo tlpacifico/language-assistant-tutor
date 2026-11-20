@@ -85,7 +85,7 @@ describe("primaryAction", () => {
       kind: "stop",
       label: "Parar e enviar",
       disabled: false,
-      shortcut: null,
+      shortcut: "Ctrl+Enter",
     });
 
     expect(primaryAction(session({ state: "transcribing" }), player())).toEqual({
@@ -169,14 +169,14 @@ describe("ArticlePlayerBar", () => {
     renderBar({
       player: { state: "preparing", source: "tutor_voice", turnId: "turn-1", bufferedMs: 5000 },
     });
-    expect(screen.queryByRole("button", { name: "Pausar" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/A reproduzir áudio/)).not.toBeInTheDocument();
     expect(screen.getByText(/A preparar o restante áudio…/)).toBeInTheDocument();
 
     // A tocar mostra «Pausar», distinto da preparação.
     const second = renderBar({
       player: { state: "playing", source: "tutor_voice", turnId: "turn-1" },
     });
-    expect(second.getByRole("button", { name: "Pausar" })).toBeInTheDocument();
+    expect(second.getByText(/A reproduzir áudio/)).toBeInTheDocument();
   });
 
   it("paused_offers_continue_with_the_same_position", () => {

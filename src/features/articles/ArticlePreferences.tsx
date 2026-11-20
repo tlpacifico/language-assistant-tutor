@@ -22,7 +22,7 @@ export default function ArticlePreferences({
 }) {
   return (
     <fieldset className="article__preferences">
-      <legend>Preferências de áudio</legend>
+      <legend>Reprodução da voz do tutor</legend>
       <label className="article__preferences-toggle">
         <input
           type="checkbox"

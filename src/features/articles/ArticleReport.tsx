@@ -46,6 +46,7 @@ function DimensionCard({
   dimension,
   turns,
   player,
+  mediaDisabled,
   onPlay,
   onPause,
   onResume,
@@ -56,6 +57,7 @@ function DimensionCard({
   dimension: ArticleDimension;
   turns: ArticleTurnView[];
   player: ArticlePlayerView;
+  mediaDisabled: boolean;
   onPlay: (turnId: string) => void;
   onPause: () => void;
   onResume: () => void;
@@ -86,6 +88,7 @@ function DimensionCard({
               <ArticleTurnControls
                 turn={turn}
                 player={player}
+                disabled={mediaDisabled}
                 onPlay={onPlay}
                 onPause={onPause}
                 onResume={onResume}
@@ -108,6 +111,7 @@ export default function ArticleReport({
   report,
   turns,
   player,
+  mediaDisabled = false,
   onPlay,
   onPause,
   onResume,
@@ -116,6 +120,7 @@ export default function ArticleReport({
   report: Report;
   turns: ArticleTurnView[];
   player: ArticlePlayerView;
+  mediaDisabled?: boolean;
   onPlay: (turnId: string) => void;
   onPause: () => void;
   onResume: () => void;
@@ -136,6 +141,7 @@ export default function ArticleReport({
           dimension={report[key]}
           turns={turns}
           player={player}
+          mediaDisabled={mediaDisabled}
           onPlay={onPlay}
           onPause={onPause}
           onResume={onResume}

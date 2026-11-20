@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { toAppError } from "../../lib/app-error";
 import type { ArticleClient } from "../../lib/article-client";
@@ -39,6 +39,11 @@ export default function Articles({
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const alertRef = useRef<HTMLDivElement>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    workspaceRef.current?.scrollIntoView?.({ block: "start" });
+  }, [mode.kind]);
 
   const reload = useCallback(async () => {
     try {
@@ -125,7 +130,7 @@ export default function Articles({
 
   if (mode.kind === "open") {
     return (
-      <div className="article">
+      <div ref={workspaceRef} className="article article--open">
         <button
           type="button"
           disabled={busy}

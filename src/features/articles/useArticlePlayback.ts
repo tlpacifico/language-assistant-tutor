@@ -30,6 +30,7 @@ export interface ArticlePlaybackApi {
   resume: () => Promise<void>;
   stop: () => Promise<void>;
   pending: boolean;
+  ready: boolean;
   error: AppError | null;
 }
 
@@ -37,24 +38,43 @@ export function useArticlePlayback(
   client: ArticleClient,
   sessionId: string,
   initial: ArticleSnapshot,
+  onSnapshot?: (snapshot: ArticleSnapshot) => void,
 ): ArticlePlaybackApi {
   const [player, setPlayer] = useState(initial.audio);
   const [recording, setRecording] = useState(initial.recording);
   const [error, setError] = useState<AppError | null>(null);
   const [pending, setPending] = useState(false);
+  const [ready, setReady] = useState(false);
 
   const playerRef = useRef(initial.audio);
   const recordingRef = useRef(initial.recording);
   // Verdadeiro enquanto a vista está montada; usado pelas ações para nunca
   // aplicar estado depois da desmontagem.
   const mountedRef = useRef(true);
+  const focusedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     mountedRef.current = true;
+    setReady(false);
     const token = newRequestId();
-    let unlistenPlayer: (() => void) | null = null;
-    let unlistenRecording: (() => void) | null = null;
+    const unlisteners: (() => void)[] = [];
+
+    async function trackSubscription(subscription: Promise<() => void>) {
+      const unlisten = await subscription;
+      if (cancelled) {
+        unlisten();
+      } else {
+        unlisteners.push(unlisten);
+      }
+    }
+
+    function removeListeners() {
+      cancelled = true;
+      for (const unlisten of unlisteners.splice(0)) {
+        unlisten();
+      }
+    }
 
     const handlePlayer = (view: ArticlePlayerView) => {
       if (cancelled) {
@@ -80,26 +100,22 @@ export function useArticlePlayback(
     };
 
     void (async () => {
-      // (1) Instala os dois listeners primeiro.
-      const playerSub = client.subscribePlayer(handlePlayer);
-      const recordingSub = client.subscribeRecording(handleRecording);
-      // (2) Relê a fotografia para recuperar eventos publicados entre a
-      //     abertura (em `Articles.open`) e a subscrição.
-      const snapshotPromise = client.snapshot(sessionId).catch(() => null);
-
-      const [unP, unR] = await Promise.all([playerSub, recordingSub]);
-      if (cancelled) {
-        unP();
-        unR();
-        return;
-      }
-      unlistenPlayer = unP;
-      unlistenRecording = unR;
-
-      const snapshot = await snapshotPromise;
+      await Promise.all([
+        onSnapshot && trackSubscription(client.subscribe((snapshot) => {
+          if (!cancelled) onSnapshot(snapshot);
+        })),
+        trackSubscription(client.subscribePlayer(handlePlayer)),
+        trackSubscription(client.subscribeRecording(handleRecording)),
+      ]);
       if (cancelled) {
         return;
       }
+
+      const snapshot = await client.snapshot(sessionId);
+      if (cancelled) {
+        return;
+      }
+      onSnapshot?.(snapshot);
       if (snapshot) {
         const currentPlayer = playerRef.current;
         const nextPlayer = mergePlayer(currentPlayer, snapshot.audio, "snapshot");
@@ -125,17 +141,24 @@ export function useArticlePlayback(
       // já tiver sido desmontada enquanto o foco resolvia.
       if (cancelled) {
         void client.blurView(token).catch(() => undefined);
+        return;
       }
-    })().catch(() => undefined);
+      focusedRef.current = true;
+      setReady(true);
+    })().catch((failure) => {
+      if (!cancelled) {
+        setError(toAppError(failure));
+        removeListeners();
+      }
+    });
 
     return () => {
-      cancelled = true;
       mountedRef.current = false;
-      unlistenPlayer?.();
-      unlistenRecording?.();
+      focusedRef.current = false;
+      removeListeners();
       void client.blurView(token).catch(() => undefined);
     };
-  }, [client, sessionId]);
+  }, [client, sessionId, onSnapshot]);
 
   const runAction = useCallback(async (action: () => Promise<ArticlePlayerView>) => {
     setPending(true);
@@ -163,7 +186,9 @@ export function useArticlePlayback(
   }, []);
 
   const play = useCallback(
-    (turnId: string) => runAction(() => client.play(sessionId, turnId)),
+    (turnId: string) => focusedRef.current
+      ? runAction(() => client.play(sessionId, turnId))
+      : Promise.resolve(),
     [client, sessionId, runAction],
   );
   const pause = useCallback(
@@ -182,5 +207,5 @@ export function useArticlePlayback(
     return runAction(() => client.stop(sessionId, generation));
   }, [client, sessionId, runAction]);
 
-  return { player, recording, play, pause, resume, stop, pending, error };
+  return { player, recording, play, pause, resume, stop, pending, ready, error };
 }

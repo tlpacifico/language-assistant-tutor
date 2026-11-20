@@ -110,7 +110,7 @@ describe("ArticleConversation", () => {
     ).toBeEnabled();
   });
 
-  it("mostra o erro recuperável com foco e permite repetir", async () => {
+  it("mostra o erro recuperável e permite repetir", async () => {
     const user = userEvent.setup();
     const { fake } = setup(
       makeSnapshot({
@@ -127,7 +127,7 @@ describe("ArticleConversation", () => {
     );
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("Falha de rede");
-    await waitFor(() => expect(alert).toHaveFocus());
+    expect(screen.getByRole("heading", { level: 2 })).toHaveFocus();
     await user.click(
       screen.getByRole("button", { name: "Tentar enviar novamente" }),
     );
@@ -221,6 +221,7 @@ describe("ArticleConversation", () => {
   it("revoga a autorização e pede-a de novo antes de continuar", async () => {
     const user = userEvent.setup();
     const { fake } = setup();
+    await waitFor(() => expect(fake.client.focusView).toHaveBeenCalled());
     fake.set(
       makeSnapshot({
         session: { state: "draft", authorization: null, version: 4 },
@@ -395,6 +396,7 @@ describe("ArticleConversation", () => {
   it("autoplay_and_speed_save_through_the_client", async () => {
     const user = userEvent.setup();
     const { fake } = setup(makeSnapshot());
+    await user.click(await screen.findByText("Preferências de áudio"));
     const autoplay = await screen.findByRole("checkbox", {
       name: "Reproduzir automaticamente",
     });
@@ -415,4 +417,14 @@ describe("ArticleConversation", () => {
       }),
     );
   });
+});
+
+it("starts a new take directly when persisted recovery calls for recording again", async () => {
+  const user = userEvent.setup();
+  const { fake } = setup(makeSnapshot({
+    session: { state: "recoverable_error", recovery: "re_record" },
+  }));
+  await user.click(screen.getByRole("button", { name: "Gravar novamente" }));
+  expect(fake.client.startRecording).toHaveBeenCalledTimes(1);
+  expect(fake.client.retry).not.toHaveBeenCalled();
 });

@@ -8,6 +8,7 @@
  * gravação, a ação principal e a ação secundária «Terminar e ver feedback».
  */
 
+import { useCallback, useLayoutEffect, useRef, type Ref } from "react";
 import {
   ARTICLE_STATE_LABELS,
   type ArticlePlayerView,
@@ -18,12 +19,14 @@ import {
   canFinish,
   canReplayAudio,
   formatClock,
+  playbackActive,
   primaryAction,
   voiceRetryLabel,
   type PrimaryAction,
 } from "./player";
 
 function PrimaryButton({
+  buttonRef,
   action,
   busy,
   onRecord,
@@ -32,6 +35,7 @@ function PrimaryButton({
   onRetry,
   onResumeSession,
 }: {
+  buttonRef: Ref<HTMLButtonElement>;
   action: PrimaryAction;
   busy: boolean;
   onRecord: () => void;
@@ -55,17 +59,30 @@ function PrimaryButton({
             : onRetry;
   const disabled = action.disabled || busy;
   return (
-    <button type="button" disabled={disabled} onClick={onClick}>
+    <button ref={buttonRef} type="button" aria-disabled={disabled || undefined}
+      aria-keyshortcuts={action.shortcut ? "Control+Enter" : undefined}
+      onClick={() => { if (!disabled) onClick(); }}>
       {action.label}
     </button>
   );
 }
+
+const PLAYBACK_ANNOUNCEMENTS: Record<ArticlePlayerView["state"], string> = {
+  idle: "Reprodução parada.",
+  preparing: "A preparar áudio.",
+  playing: "A reproduzir áudio.",
+  paused: "Reprodução em pausa.",
+  buffering: "À espera de mais áudio.",
+  ended: "Reprodução concluída.",
+  failed: "Falha na reprodução.",
+};
 
 export default function ArticlePlayerBar({
   session,
   player,
   recording,
   busy,
+  mediaDisabled = false,
   onPlay,
   onPause,
   onResume,
@@ -80,6 +97,7 @@ export default function ArticlePlayerBar({
   player: ArticlePlayerView;
   recording: ArticleRecordingView;
   busy: boolean;
+  mediaDisabled?: boolean;
   onPlay: (turnId: string) => void;
   onPause: () => void;
   onResume: () => void;
@@ -94,33 +112,52 @@ export default function ArticlePlayerBar({
   const action = primaryAction(session, player);
   const stateText =
     action.kind === "none" ? action.label : ARTICLE_STATE_LABELS[state];
+  const statusRef = useRef<HTMLParagraphElement>(null);
+  const primaryRef = useRef<HTMLButtonElement>(null);
+  const trackPrimary = useCallback((button: HTMLButtonElement | null) => {
+    primaryRef.current = button;
+    if (button) return () => {
+      primaryRef.current = null;
+      if (document.activeElement === button) {
+        statusRef.current?.focus({ preventScroll: true });
+      }
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (primaryRef.current && document.activeElement === statusRef.current) {
+      primaryRef.current.focus({ preventScroll: true });
+    }
+  }, [action.kind]);
 
   const hasSelection = player.turnId !== null && player.state !== "idle";
   const showMedia = canReplayAudio(state) && hasSelection;
   const selectedLabel =
     player.source === "tutor_voice" ? "Pergunta do tutor" : "A sua resposta";
   const retryLabel = voiceRetryLabel(player);
-  const active =
-    player.state === "preparing" ||
-    player.state === "playing" ||
-    player.state === "paused" ||
-    player.state === "buffering";
+  const active = playbackActive(player);
   const knownDuration = player.durationMs !== null;
   const duration = player.durationMs ?? 0;
   const progress = duration > 0 ? Math.min(1, player.positionMs / duration) : 0;
 
   return (
     <section className="article__bar" aria-label="Controlos da conversa">
-      <p className="article__bar-state">{stateText}</p>
+      <p ref={statusRef} tabIndex={-1} className="article__bar-state">{stateText}</p>
+      <div className="article__visually-hidden" role="log" aria-label="Estado da reprodução"
+        aria-live="polite" aria-atomic="true">
+        {player.generation > 0 ? PLAYBACK_ANNOUNCEMENTS[player.state] : ""}
+      </div>
 
       {showMedia ? (
         <div className="article__bar-media">
-          <span className="article__bar-item">{selectedLabel}</span>
+          <span className="article__bar-item">
+            {selectedLabel} · {PLAYBACK_ANNOUNCEMENTS[player.state]}
+          </span>
 
           {player.state === "failed" && retryLabel ? (
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || mediaDisabled}
               onClick={() => onPlay(player.turnId ?? "")}
             >
               {retryLabel}
@@ -129,17 +166,17 @@ export default function ArticlePlayerBar({
 
           {active ? (
             <div className="article__bar-controls">
-              {player.state === "playing" ? (
-                <button type="button" disabled={busy} onClick={onPause}>
+              {player.state !== "paused" ? (
+                <button type="button" disabled={busy || mediaDisabled} onClick={onPause}>
                   Pausar
                 </button>
               ) : null}
               {player.state === "paused" ? (
-                <button type="button" disabled={busy} onClick={onResume}>
+                <button type="button" disabled={busy || mediaDisabled} onClick={onResume}>
                   Continuar
                 </button>
               ) : null}
-              <button type="button" disabled={busy} onClick={onStop}>
+              <button type="button" disabled={busy || mediaDisabled} onClick={onStop}>
                 Parar
               </button>
             </div>
@@ -208,6 +245,7 @@ export default function ArticlePlayerBar({
 
       <div className="article__bar-actions">
         <PrimaryButton
+          buttonRef={trackPrimary}
           action={action}
           busy={busy}
           onRecord={onRecord}

@@ -82,7 +82,7 @@ const PLAYBACK_ACTIVE: ArticlePlayerView["state"][] = [
   "buffering",
 ];
 
-function playbackActive(player: ArticlePlayerView): boolean {
+export function playbackActive(player: ArticlePlayerView): boolean {
   return PLAYBACK_ACTIVE.includes(player.state);
 }
 
@@ -120,13 +120,18 @@ export function primaryAction(
         shortcut: null,
       };
     case "recording":
-      return { kind: "stop", label: "Parar e enviar", disabled: false, shortcut: null };
+      return { kind: "stop", label: "Parar e enviar", disabled: false, shortcut: "Ctrl+Enter" };
     case "needs_review":
       return session.limitReached
         ? finish
         : { kind: "record", label: "Gravar novamente", disabled: false, shortcut: "Ctrl+Enter" };
     case "recoverable_error": {
       const label = recoveryLabel(session);
+      if (session.recovery === "re_record" && label) {
+        return session.limitReached
+          ? finish
+          : { kind: "record", label, disabled: false, shortcut: null };
+      }
       return label === null
         ? finish
         : { kind: "retry", label, disabled: false, shortcut: null };

@@ -10,10 +10,12 @@ import type {
   ArticlePlayerView,
   ArticleTurnView,
 } from "../../lib/article-contracts";
+import { playbackActive } from "./player";
 
 export default function ArticleTurnControls({
   turn,
   player,
+  disabled = false,
   onPlay,
   onPause,
   onResume,
@@ -21,6 +23,7 @@ export default function ArticleTurnControls({
 }: {
   turn: ArticleTurnView;
   player: ArticlePlayerView;
+  disabled?: boolean;
   onPlay: (turnId: string) => void;
   onPause: () => void;
   onResume: () => void;
@@ -33,19 +36,13 @@ export default function ArticleTurnControls({
   }
 
   const active = player.turnId === turn.id;
-  const playing = active && player.state === "playing";
   const paused = active && player.state === "paused";
-  const activeish =
-    active &&
-    (player.state === "preparing" ||
-      player.state === "playing" ||
-      player.state === "paused" ||
-      player.state === "buffering");
+  const activePlayback = active && playbackActive(player);
 
-  if (!activeish) {
+  if (!activePlayback) {
     return (
       <span className="article__turn-controls">
-        <button type="button" onClick={() => onPlay(turn.id)}>
+        <button type="button" disabled={disabled} onClick={() => onPlay(turn.id)}>
           Ouvir
         </button>
       </span>
@@ -54,17 +51,17 @@ export default function ArticleTurnControls({
 
   return (
     <span className="article__turn-controls">
-      {playing ? (
-        <button type="button" onClick={onPause}>
+      {!paused ? (
+        <button type="button" disabled={disabled} onClick={onPause}>
           Pausar
         </button>
       ) : null}
       {paused ? (
-        <button type="button" onClick={onResume}>
+        <button type="button" disabled={disabled} onClick={onResume}>
           Continuar
         </button>
       ) : null}
-      <button type="button" onClick={() => onRestart(turn.id)}>
+      <button type="button" disabled={disabled} onClick={() => onRestart(turn.id)}>
         Ouvir do início
       </button>
     </span>

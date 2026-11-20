@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import type { ArticleClient } from "../../lib/article-client";
 import {
   ARTICLE_NOTICE_VERSION,
-  ARTICLE_STATE_LABELS,
   MAX_ANSWER_CHARS,
   SUGGEST_FINISH_AFTER,
   type ArticlePlayerView,
@@ -17,9 +16,11 @@ import ArticlePlayerBar from "./ArticlePlayerBar";
 import ArticlePreferences from "./ArticlePreferences";
 import ArticleReport from "./ArticleReport";
 import ArticleTurnControls from "./ArticleTurnControls";
-import { canFinish, canReplayAudio } from "./player";
+import { canFinish, canReplayAudio, playbackActive, primaryAction } from "./player";
 import { useArticle } from "./useArticle";
 import { useArticlePlayback } from "./useArticlePlayback";
+import { useArticleShortcuts } from "./useArticleShortcuts";
+import { useFollowTail } from "./useFollowTail";
 
 /** Comentário e pergunta chegam num só turno, separados por uma linha em branco. */
 function paragraphs(text: string): string[] {
@@ -36,8 +37,10 @@ function isBusy(state: ArticleSnapshot["session"]["state"]): boolean {
 
 function Turn({
   turn,
+  anchor,
   player,
   state,
+  mediaDisabled,
   action,
   onPlay,
   onPause,
@@ -45,8 +48,10 @@ function Turn({
   onRestart,
 }: {
   turn: ArticleTurnView;
+  anchor?: string;
   player: ArticlePlayerView;
   state: ArticleState;
+  mediaDisabled: boolean;
   action?: React.ReactNode;
   onPlay: (turnId: string) => void;
   onPause: () => void;
@@ -58,6 +63,8 @@ function Turn({
   const active = player.turnId === turn.id;
   return (
     <li
+      id={anchor}
+      tabIndex={anchor ? -1 : undefined}
       data-testid={tutor ? "turn-tutor" : "turn-user"}
       aria-label={tutor ? "Tutor" : "Você"}
       className={`article__turn article__turn--${turn.speaker}${
@@ -80,6 +87,7 @@ function Turn({
         <ArticleTurnControls
           turn={turn}
           player={player}
+          disabled={mediaDisabled}
           onPlay={onPlay}
           onPause={onPause}
           onResume={onResume}
@@ -105,8 +113,8 @@ export default function ArticleConversation({
   initial: ArticleSnapshot;
   onBusyChange?: (busy: boolean) => void;
 }) {
-  const { snapshot, error, pending, run } = useArticle(client, initial);
-  const playback = useArticlePlayback(client, initial.session.id, initial);
+  const { snapshot, error, pending, capturePending, run, apply } = useArticle(initial);
+  const playback = useArticlePlayback(client, initial.session.id, initial, apply);
   const { session, turns, report } = snapshot;
   const [destination, setDestination] = useState<string | null>(null);
   const [consent, setConsent] = useState(false);
@@ -114,20 +122,22 @@ export default function ArticleConversation({
   const [correcting, setCorrecting] = useState<string | null>(null);
   const [corrected, setCorrected] = useState("");
   const [preferences, setPreferences] = useState<ArticlePreferencesView | null>(null);
-  const alertRef = useRef<HTMLDivElement>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const chatRef = useRef<HTMLDivElement>(null);
+  const panelId = useId();
+  const latestQuestionId = useId();
 
   const shownError = error ?? session.error ?? playback.error;
-  const busy = isBusy(session.state);
+  const busy = isBusy(session.state) || capturePending;
 
   useEffect(() => {
     onBusyChange?.(busy);
   }, [busy, onBusyChange]);
 
-  useEffect(() => {
-    if (shownError) {
-      alertRef.current?.focus();
-    }
-  }, [shownError?.message, shownError?.code]); // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+  }, [session.id]);
 
   useEffect(() => {
     if (session.state !== "draft") {
@@ -173,6 +183,27 @@ export default function ArticleConversation({
       t.speaker === "tutor" ||
       (state === "transcribing" && t.speaker === "user"),
   );
+  const latestQuestion = visibleTurns.filter((turn) => turn.speaker === "tutor").at(-1);
+  const follow = useFollowTail(chatRef, visibleTurns.map((turn) => turn.id));
+
+  function record() {
+    void run("startRecording", (command) => client.startRecording(command));
+  }
+  function stopRecording() {
+    void run("stopRecording", (command) => client.stopRecording(command));
+  }
+
+  const primary = primaryAction(session, playback.player);
+  const canPause = canReplayAudio(state) && playback.player.turnId !== null &&
+    playbackActive(playback.player);
+  useArticleShortcuts({
+    onRecord: pending || primary.disabled || !primary.shortcut
+      ? null
+      : primary.kind === "stop" ? stopRecording : record,
+    onPauseToggle: pending || playback.pending || !playback.ready || !canPause
+      ? null
+      : playback.player.state === "paused" ? playback.resume : playback.pause,
+  });
 
   const statusLines: string[] = [];
   if (session.limitReached) {
@@ -188,221 +219,245 @@ export default function ArticleConversation({
   return (
     <div className="article__conversation">
       <header>
-        <h2>{session.title ?? "Conversa sobre um artigo"}</h2>
-        <p className="practice__hint">
-          {ARTICLE_STATE_LABELS[state]}
-          {session.usage
-            ? ` · consumo: ${session.usage.inputTokens ?? "?"} tokens de entrada, ${session.usage.outputTokens ?? "?"} de saída`
-            : ""}
-        </p>
-        {preferences ? (
-          <ArticlePreferences
-            preferences={preferences}
-            onAutoplayChange={(autoplay) =>
-              void savePreferences({ ...preferences, autoplay })
-            }
-            onSpeedChange={(speedX10) =>
-              void savePreferences({ ...preferences, speedX10 })
-            }
-          />
-        ) : null}
-        <details>
-          <summary>Ver o artigo</summary>
-          <p lang="en" className="article__text">
-            {session.articleText}
+        <h2 ref={headingRef} tabIndex={-1}>{session.title ?? "Conversa sobre um artigo"}</h2>
+        {session.usage ? (
+          <p className="practice__hint">
+            Consumo: {session.usage.inputTokens ?? "?"} tokens de entrada, {session.usage.outputTokens ?? "?"} tokens de saída
           </p>
-        </details>
+        ) : null}
+        <div className="article__actions">
+          <button type="button" aria-expanded={panelOpen} aria-controls={panelId}
+            onClick={() => setPanelOpen(!panelOpen)}>
+            Ver o artigo
+          </button>
+          {latestQuestion ? (
+            <a href={`#${latestQuestionId}`} onClick={(event) => {
+              const question = document.getElementById(latestQuestionId);
+              if (question) {
+                event.preventDefault();
+                question.focus();
+              }
+            }}>
+              Ir para a última pergunta
+            </a>
+          ) : null}
+        </div>
+        {preferences ? (
+          <details className="article__audio-preferences">
+            <summary>Preferências de áudio</summary>
+            <ArticlePreferences
+              preferences={preferences}
+              onAutoplayChange={(autoplay) => savePreferences({ ...preferences, autoplay })}
+              onSpeedChange={(speedX10) => savePreferences({ ...preferences, speedX10 })}
+            />
+          </details>
+        ) : null}
       </header>
 
-      <ol aria-label="Conversa" className="article__turns">
-        {visibleTurns.map((turn) => (
-          <Turn
-            key={turn.id}
-            turn={turn}
-            player={playback.player}
-            state={state}
-            onPlay={(turnId) => void playback.play(turnId)}
-            onPause={() => void playback.pause()}
-            onResume={() => void playback.resume()}
-            onRestart={(turnId) => void playback.play(turnId)}
-            action={
-              state === "completed" &&
-              turn.speaker === "user" &&
-              !turn.fromPreviousBranch ? (
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={() => {
-                    setCorrecting(turn.id);
-                    setCorrected(turn.version.text);
-                  }}
-                >
-                  Corrigir esta resposta
-                </button>
-              ) : undefined
-            }
-          />
-        ))}
-      </ol>
+      <div className={panelOpen ? "article__reading article__reading--open" : "article__reading"}>
+        <aside id={panelId} role="region" aria-label="Artigo" hidden={!panelOpen}
+          tabIndex={panelOpen ? 0 : undefined} className="article__reading-panel">
+          <p lang="en" className="article__text">{session.articleText}</p>
+        </aside>
+        <div ref={chatRef} role="region" aria-label="Mensagens da conversa"
+          tabIndex={0} className="article__scroll" onScroll={follow.onScroll}>
+          <ol aria-label="Conversa" className="article__turns">
+            {visibleTurns.map((turn) => (
+              <Turn
+                key={turn.id}
+                anchor={turn.id === latestQuestion?.id ? latestQuestionId : undefined}
+                turn={turn}
+                player={playback.player}
+                state={state}
+                mediaDisabled={pending || !playback.ready}
+                onPlay={(turnId) => void playback.play(turnId)}
+                onPause={() => void playback.pause()}
+                onResume={() => void playback.resume()}
+                onRestart={(turnId) => void playback.play(turnId)}
+                action={
+                  state === "completed" &&
+                  turn.speaker === "user" &&
+                  !turn.fromPreviousBranch ? (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => {
+                        setCorrecting(turn.id);
+                        setCorrected(turn.version.text);
+                      }}
+                    >
+                      Corrigir esta resposta
+                    </button>
+                  ) : undefined
+                }
+              />
+            ))}
+          </ol>
 
-      {statusLines.length > 0 ? (
-        <div role="status" className="practice__hint">
-          {statusLines.map((line) => (
-            <p key={line}>{line}</p>
-          ))}
+          {statusLines.length > 0 ? (
+            <div role="status" className="practice__hint">
+              {statusLines.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+          ) : null}
+
+          {shownError ? (
+            <div
+              role="alert"
+              className="practice__notice practice__notice--error"
+            >
+              <p>{shownError.message}</p>
+            </div>
+          ) : null}
+
+          {state === "draft" ? (
+            <section className="practice__panel">
+              <p>A autorização foi revogada. Para continuar, autorize outra vez.</p>
+              <ArticleConsent
+                destination={destination}
+                checked={consent}
+                onChange={setConsent}
+              />
+              <button
+                type="button"
+                disabled={!consent || destination === null || pending}
+                onClick={() =>
+                  void run("authorize", (command) =>
+                    client.authorize({
+                      command,
+                      destination: destination ?? "",
+                      noticeVersion: ARTICLE_NOTICE_VERSION,
+                    }),
+                  )
+                }
+              >
+                Autorizar e continuar
+              </button>
+            </section>
+          ) : null}
+
+          {state === "needs_review" && lastUser ? (
+            <section className="practice__panel">
+              <label>
+                A sua resposta (a transcrição falhou)
+                <textarea
+                  rows={4}
+                  value={manual}
+                  onChange={(event) => setManual(event.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                disabled={
+                  pending ||
+                  manual.trim() === "" ||
+                  [...manual.trim()].length > MAX_ANSWER_CHARS
+                }
+                onClick={() =>
+                  void run("submitText", (command) =>
+                    client.submitText({
+                      command,
+                      turnId: lastUser.id,
+                      text: manual.trim(),
+                    }),
+                  ).then(() => setManual(""))
+                }
+              >
+                Enviar texto
+              </button>
+            </section>
+          ) : null}
+
+          {canRevoke ? (
+            <div className="article__actions">
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => void run("revoke", (command) => client.revoke(command))}
+              >
+                Revogar autorização
+              </button>
+            </div>
+          ) : null}
+
+          {correcting ? (
+            <section className="practice__panel">
+              <label>
+                Texto corrigido
+                <textarea
+                  rows={4}
+                  value={corrected}
+                  onChange={(event) => setCorrected(event.target.value)}
+                />
+              </label>
+              <p className="practice__hint">
+                Regenerar o relatório pode consumir a API. A conversa anterior e o
+                seu relatório ficam guardados.
+              </p>
+              <button
+                type="button"
+                disabled={pending || corrected.trim() === ""}
+                onClick={() =>
+                  void run("correct", (command) =>
+                    client.correct({
+                      command,
+                      turnId: correcting,
+                      text: corrected.trim(),
+                    }),
+                  ).then(() => setCorrecting(null))
+                }
+              >
+                Guardar correção
+              </button>{" "}
+              <button type="button" onClick={() => setCorrecting(null)}>
+                Cancelar
+              </button>
+            </section>
+          ) : null}
+
+          {state === "completed" ? (
+            report ? (
+              <ArticleReport
+                report={report}
+                turns={turns}
+                player={playback.player}
+                mediaDisabled={pending || !playback.ready}
+                onPlay={(turnId) => void playback.play(turnId)}
+                onPause={() => void playback.pause()}
+                onResume={() => void playback.resume()}
+                onRestart={(turnId) => void playback.play(turnId)}
+              />
+            ) : (
+              <p className="practice__hint">
+                Sem relatório: não há avaliação para mostrar porque não houve
+                respostas.
+              </p>
+            )
+          ) : null}
+
         </div>
+      </div>
+      {!follow.atEnd && follow.newCount > 0 ? (
+        <button type="button" onClick={() => {
+          follow.jumpToLatest();
+          chatRef.current?.focus({ preventScroll: true });
+        }}>
+          Nova resposta ↓ ({follow.newCount})
+        </button>
       ) : null}
-
-      {shownError ? (
-        <div
-          ref={alertRef}
-          tabIndex={-1}
-          role="alert"
-          className="practice__notice practice__notice--error"
-        >
-          <p>{shownError.message}</p>
-        </div>
-      ) : null}
-
-      {state === "draft" ? (
-        <section className="practice__panel">
-          <p>A autorização foi revogada. Para continuar, autorize outra vez.</p>
-          <ArticleConsent
-            destination={destination}
-            checked={consent}
-            onChange={setConsent}
-          />
-          <button
-            type="button"
-            disabled={!consent || destination === null || pending}
-            onClick={() =>
-              void run("authorize", (command) =>
-                client.authorize({
-                  command,
-                  destination: destination ?? "",
-                  noticeVersion: ARTICLE_NOTICE_VERSION,
-                }),
-              )
-            }
-          >
-            Autorizar e continuar
-          </button>
-        </section>
-      ) : null}
-
-      {state === "needs_review" && lastUser ? (
-        <section className="practice__panel">
-          <label>
-            A sua resposta (a transcrição falhou)
-            <textarea
-              rows={4}
-              value={manual}
-              onChange={(event) => setManual(event.target.value)}
-            />
-          </label>
-          <button
-            type="button"
-            disabled={
-              pending ||
-              manual.trim() === "" ||
-              [...manual.trim()].length > MAX_ANSWER_CHARS
-            }
-            onClick={() =>
-              void run("submitText", (command) =>
-                client.submitText({
-                  command,
-                  turnId: lastUser.id,
-                  text: manual.trim(),
-                }),
-              ).then(() => setManual(""))
-            }
-          >
-            Enviar texto
-          </button>
-        </section>
-      ) : null}
-
-      {canRevoke ? (
-        <div className="article__actions">
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => void run("revoke", (command) => client.revoke(command))}
-          >
-            Revogar autorização
-          </button>
-        </div>
-      ) : null}
-
-      {correcting ? (
-        <section className="practice__panel">
-          <label>
-            Texto corrigido
-            <textarea
-              rows={4}
-              value={corrected}
-              onChange={(event) => setCorrected(event.target.value)}
-            />
-          </label>
-          <p className="practice__hint">
-            Regenerar o relatório pode consumir a API. A conversa anterior e o
-            seu relatório ficam guardados.
-          </p>
-          <button
-            type="button"
-            disabled={pending || corrected.trim() === ""}
-            onClick={() =>
-              void run("correct", (command) =>
-                client.correct({
-                  command,
-                  turnId: correcting,
-                  text: corrected.trim(),
-                }),
-              ).then(() => setCorrecting(null))
-            }
-          >
-            Guardar correção
-          </button>{" "}
-          <button type="button" onClick={() => setCorrecting(null)}>
-            Cancelar
-          </button>
-        </section>
-      ) : null}
-
-      {state === "completed" ? (
-        report ? (
-          <ArticleReport
-            report={report}
-            turns={turns}
-            player={playback.player}
-            onPlay={(turnId) => void playback.play(turnId)}
-            onPause={() => void playback.pause()}
-            onResume={() => void playback.resume()}
-            onRestart={(turnId) => void playback.play(turnId)}
-          />
-        ) : (
-          <p className="practice__hint">
-            Sem relatório: não há avaliação para mostrar porque não houve
-            respostas.
-          </p>
-        )
-      ) : null}
-
       <ArticlePlayerBar
         session={session}
         player={playback.player}
         recording={playback.recording}
         busy={pending}
+        mediaDisabled={!playback.ready}
         onPlay={(turnId) => void playback.play(turnId)}
         onPause={() => void playback.pause()}
         onResume={() => void playback.resume()}
         onStop={() => void playback.stop()}
-        onRecord={() =>
-          void run("startRecording", (command) => client.startRecording(command))
-        }
-        onStopRecording={() =>
-          void run("stopRecording", (command) => client.stopRecording(command))
-        }
+        onRecord={record}
+        onStopRecording={stopRecording}
         onFinish={() => void run("finish", (command) => client.finish(command))}
         onRetry={() => void run("retry", (command) => client.retry(command))}
         onResumeSession={() =>

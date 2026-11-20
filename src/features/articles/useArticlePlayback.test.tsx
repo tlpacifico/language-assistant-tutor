@@ -273,7 +273,7 @@ describe("useArticlePlayback", () => {
     const { unmount } = render(
       <Probe client={fake.client} sessionId="session-1" initial={initial} />,
     );
-    expect(fake.client.snapshot).toHaveBeenCalledTimes(1);
+    expect(fake.client.snapshot).not.toHaveBeenCalled();
     unmount();
     expect(fake.client.blurView).toHaveBeenCalledTimes(1);
 
@@ -392,6 +392,44 @@ describe("useArticlePlayback", () => {
     expect(unR).toHaveBeenCalledTimes(1);
     expect(fake.client.focusView).not.toHaveBeenCalled();
     expect(screen.queryByTestId("player-state")).not.toBeInTheDocument();
+  });
+
+  it("removes each late listener even if the other subscription is still pending", async () => {
+    const initial = makeSnapshot();
+    const fake = fakeArticleClient(initial);
+    const playerSub = deferred<() => void>();
+    const recordingSub = deferred<() => void>();
+    fake.client.subscribePlayer.mockReturnValue(playerSub.promise);
+    fake.client.subscribeRecording.mockReturnValue(recordingSub.promise);
+    const { unmount } = render(
+      <Probe client={fake.client} sessionId="session-1" initial={initial} />,
+    );
+    unmount();
+
+    const removePlayer = vi.fn();
+    await act(async () => playerSub.resolve(removePlayer));
+    expect(removePlayer).toHaveBeenCalledTimes(1);
+
+    const removeRecording = vi.fn();
+    await act(async () => recordingSub.resolve(removeRecording));
+    expect(removeRecording).toHaveBeenCalledTimes(1);
+    expect(fake.client.snapshot).not.toHaveBeenCalled();
+    expect(fake.client.focusView).not.toHaveBeenCalled();
+  });
+
+  it("does not focus when the snapshot completes after unmount", async () => {
+    const initial = makeSnapshot();
+    const fake = fakeArticleClient(initial);
+    const snapshot = deferred<ArticleSnapshot>();
+    fake.client.snapshot.mockReturnValue(snapshot.promise);
+    const { unmount } = render(
+      <Probe client={fake.client} sessionId="session-1" initial={initial} />,
+    );
+    await waitFor(() => expect(fake.client.snapshot).toHaveBeenCalledTimes(1));
+    unmount();
+    await act(async () => snapshot.resolve(initial));
+    expect(fake.client.blurView).toHaveBeenCalledTimes(1);
+    expect(fake.client.focusView).not.toHaveBeenCalled();
   });
 
   it("a_focus_that_resolves_after_unmount_is_blurred", async () => {
