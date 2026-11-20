@@ -188,6 +188,8 @@ pub fn run() {
             article_commands::article_delete,
             article_commands::article_finish,
             article_commands::article_list,
+            article_commands::article_preferences_load,
+            article_commands::article_preferences_save,
             article_commands::article_retry,
             article_commands::article_play_turn,
             article_commands::article_resume,

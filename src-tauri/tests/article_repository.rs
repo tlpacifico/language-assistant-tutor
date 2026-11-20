@@ -2,9 +2,9 @@
 
 use language_assistant_tutor::ai::{build_article_body, AiSettingsView, ArticleAiTask};
 use language_assistant_tutor::article::{
-    ArticleCommand, ArticleCreate, ArticleError, ArticleMutation, ArticleSnapshot, ArticleSpeaker,
-    ArticleState, ArticleVersionSource, ARTICLE_NOTICE_VERSION, MAX_ANSWER_BYTES,
-    MAX_ARTICLE_BYTES, MAX_TUTOR_REPLY_BYTES,
+    ArticleCommand, ArticleCreate, ArticleError, ArticleMutation, ArticlePreferences,
+    ArticleRecovery, ArticleSnapshot, ArticleSpeaker, ArticleState, ArticleVersionSource,
+    ARTICLE_NOTICE_VERSION, MAX_ANSWER_BYTES, MAX_ARTICLE_BYTES, MAX_TUTOR_REPLY_BYTES,
 };
 use language_assistant_tutor::db::Database;
 
@@ -14,6 +14,10 @@ fn database() -> (tempfile::TempDir, Database) {
     let directory = tempfile::tempdir().expect("diretório temporário");
     let database = Database::open(directory.path().join("tutor.sqlite3")).expect("abrir");
     (directory, database)
+}
+
+fn reopen(directory: &tempfile::TempDir) -> Database {
+    Database::open(directory.path().join("tutor.sqlite3")).expect("reabrir a base")
 }
 
 fn create_input(request_id: &str) -> ArticleCreate {
@@ -801,4 +805,128 @@ fn purging_keeps_only_the_create_receipt_and_prunes_old_ones() {
         .unwrap();
     // `c1` (criação desta sessão) e `recent` ficam; passos intermédios e `old` saem.
     assert_eq!(ids, vec!["c1".to_string(), "recent".to_string()]);
+}
+
+#[test]
+fn preferences_are_read_back_and_reject_an_unknown_speed() {
+    let (_directory, database) = database();
+    let defaults = database.article_preferences().unwrap();
+    assert_eq!(
+        defaults,
+        ArticlePreferences {
+            autoplay: true,
+            speed_x10: 10,
+        }
+    );
+
+    let saved = database
+        .put_article_preferences(&ArticlePreferences {
+            autoplay: false,
+            speed_x10: 8,
+        })
+        .unwrap();
+    assert_eq!(
+        saved,
+        ArticlePreferences {
+            autoplay: false,
+            speed_x10: 8,
+        }
+    );
+    assert_eq!(database.article_preferences().unwrap(), saved);
+
+    let unknown = database.put_article_preferences(&ArticlePreferences {
+        autoplay: false,
+        speed_x10: 11,
+    });
+    assert_eq!(unknown.unwrap_err().code, "INVALID_INPUT");
+    // A recusa não escreve nada: os valores guardados mantêm-se.
+    assert_eq!(database.article_preferences().unwrap(), saved);
+}
+
+#[test]
+fn a_failed_send_exposes_retry_send_after_reopen() {
+    let (directory, mut flow) = Flow::new("Article.");
+    flow.authorize_and_ask();
+    flow.answer("u1", "My answer.");
+    flow.apply(ArticleMutation::Fail { error: failure() });
+    assert_eq!(
+        flow.snapshot.session.recovery,
+        Some(ArticleRecovery::RetrySend)
+    );
+    let id = flow.id();
+    drop(flow);
+    assert_eq!(
+        reopen(&directory)
+            .article_snapshot(&id)
+            .unwrap()
+            .session
+            .recovery,
+        Some(ArticleRecovery::RetrySend)
+    );
+}
+
+#[test]
+fn a_failed_feedback_exposes_retry_feedback() {
+    let (directory, mut flow) = Flow::new("Article.");
+    flow.authorize_and_ask();
+    flow.answer("u1", "My answer.");
+    flow.apply(ArticleMutation::AddTutorTurn {
+        text: "More?".into(),
+    });
+    flow.apply(ArticleMutation::Finish);
+    flow.apply(ArticleMutation::Fail { error: failure() });
+    assert_eq!(
+        flow.snapshot.session.recovery,
+        Some(ArticleRecovery::RetryFeedback)
+    );
+    let id = flow.id();
+    drop(flow);
+    assert_eq!(
+        reopen(&directory)
+            .article_snapshot(&id)
+            .unwrap()
+            .session
+            .recovery,
+        Some(ArticleRecovery::RetryFeedback)
+    );
+}
+
+#[test]
+fn a_capture_failure_exposes_re_record() {
+    let (directory, mut flow) = Flow::new("Article.");
+    flow.authorize_and_ask();
+    flow.start("u1");
+    flow.apply(ArticleMutation::Fail { error: failure() });
+    assert_eq!(
+        flow.snapshot.session.recovery,
+        Some(ArticleRecovery::ReRecord)
+    );
+    let id = flow.id();
+    drop(flow);
+    assert_eq!(
+        reopen(&directory)
+            .article_snapshot(&id)
+            .unwrap()
+            .session
+            .recovery,
+        Some(ArticleRecovery::ReRecord)
+    );
+}
+
+#[test]
+fn no_error_means_no_recovery_operation() {
+    let (directory, mut flow) = Flow::new("Article.");
+    flow.authorize_and_ask();
+    flow.answer("u1", "My answer.");
+    assert_eq!(flow.snapshot.session.recovery, None);
+    let id = flow.id();
+    drop(flow);
+    assert_eq!(
+        reopen(&directory)
+            .article_snapshot(&id)
+            .unwrap()
+            .session
+            .recovery,
+        None
+    );
 }

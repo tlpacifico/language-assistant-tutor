@@ -10,8 +10,8 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::article::{
-    ArticleCommand, ArticleConsent, ArticleCorrection, ArticleCreate, ArticleSnapshot,
-    ArticleSummary,
+    ArticleCommand, ArticleConsent, ArticleCorrection, ArticleCreate, ArticlePreferences,
+    ArticleSnapshot, ArticleSummary,
 };
 use crate::domain::AppError;
 use crate::service::AppService;
@@ -135,6 +135,21 @@ pub async fn article_list(
     service: State<'_, Arc<AppService>>,
 ) -> Result<Vec<ArticleSummary>, AppError> {
     service.article_list().await
+}
+
+#[tauri::command]
+pub async fn article_preferences_load(
+    service: State<'_, Arc<AppService>>,
+) -> Result<ArticlePreferences, AppError> {
+    service.article_preferences_load().await
+}
+
+#[tauri::command]
+pub async fn article_preferences_save(
+    preferences: ArticlePreferences,
+    service: State<'_, Arc<AppService>>,
+) -> Result<ArticlePreferences, AppError> {
+    service.article_preferences_save(preferences).await
 }
 
 #[tauri::command]

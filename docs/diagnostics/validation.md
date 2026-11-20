@@ -82,3 +82,7 @@ The regression tests first reproduced the failures: two React checks did not fin
 ## Article conversation — 2026-11-05
 
 The operations `article_transcribe`, `article_reply`, `article_first_audio` and `article_feedback` were added to the closed list (only `durationMs` and a stable code), as were the `article_*` commands and the codes `ARTICLE_DELETED`, `ARTICLE_REGENERATE` and `AI_INTERRUPTED`. A service test checks that only these operations appear, with duration, and that the article, the answers, the paths and the file names never reach the record. Distribution through an installer remains to be validated.
+
+## Article player preferences — 2026-11-20
+
+The commands `article_preferences_load` and `article_preferences_save` were added to the closed `COMMANDS` list; they record only the command name, never the preference values.

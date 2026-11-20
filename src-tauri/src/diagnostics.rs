@@ -512,6 +512,8 @@ const COMMANDS: &[&str] = &[
     "article_list",
     "article_retry",
     "article_play_turn",
+    "article_preferences_load",
+    "article_preferences_save",
     "article_resume",
     "article_revoke",
     "article_snapshot",

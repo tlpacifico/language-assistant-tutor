@@ -24,8 +24,8 @@ use crate::ai::{
 };
 use crate::article::{
     can_send_automatically, ArticleCommand, ArticleConsent, ArticleCorrection, ArticleCreate,
-    ArticleError, ArticleMutation, ArticleOutcome, ArticleRequestKind, ArticleSnapshot,
-    ArticleSpeaker, ArticleState, ArticleSummary, ARTICLE_NOTICE_VERSION,
+    ArticleError, ArticleMutation, ArticleOutcome, ArticlePreferences, ArticleRequestKind,
+    ArticleSnapshot, ArticleSpeaker, ArticleState, ArticleSummary, ARTICLE_NOTICE_VERSION,
 };
 use crate::article::{ArticleAudioView, ArticlePlayback, ChunkRejection, ChunkSequence};
 use crate::audio::RecordingTarget;
@@ -207,6 +207,21 @@ impl AppService {
     pub async fn article_list(&self) -> Result<Vec<ArticleSummary>, AppError> {
         let database = self.database()?;
         database_task(move || database.list_articles()).await
+    }
+
+    /// Preferências do leitor de artigos; nunca inicia trabalho externo.
+    pub async fn article_preferences_load(&self) -> Result<ArticlePreferences, AppError> {
+        let database = self.database()?;
+        database_task(move || database.article_preferences()).await
+    }
+
+    /// Guarda as preferências do leitor e devolve a versão validada.
+    pub async fn article_preferences_save(
+        &self,
+        preferences: ArticlePreferences,
+    ) -> Result<ArticlePreferences, AppError> {
+        let database = self.database()?;
+        database_task(move || database.put_article_preferences(&preferences)).await
     }
 
     // -- consentimento --------------------------------------------------------

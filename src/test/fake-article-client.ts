@@ -54,6 +54,7 @@ export function makeSnapshot(
       limitReached: false,
       error: null,
       usage: null,
+      recovery: null,
       ...overrides.session,
     },
     turns: overrides.turns ?? [
@@ -94,6 +95,13 @@ export function fakeArticleClient(initial: ArticleSnapshot = makeSnapshot()) {
     correct: vi.fn(respond),
     resume: vi.fn(respond),
     delete: vi.fn(() => Promise.resolve()),
+    preferences: vi.fn(() =>
+      Promise.resolve({ autoplay: true, speedX10: 10 }),
+    ),
+    savePreferences: vi.fn(
+      (input: { autoplay: boolean; speedX10: 8 | 10 | 12 }) =>
+        Promise.resolve(input),
+    ),
     playTurn: vi.fn(() => Promise.resolve()),
     stopVoice: vi.fn(() => Promise.resolve()),
     speakTurn: vi.fn(() => Promise.resolve()),

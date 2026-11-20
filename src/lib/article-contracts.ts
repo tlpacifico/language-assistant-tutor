@@ -66,6 +66,13 @@ export interface ArticleUsageView {
   estimatedCost: number | null;
 }
 
+export type ArticleRecovery = "retry_send" | "retry_feedback" | "re_record";
+
+export interface ArticlePreferences {
+  autoplay: boolean;
+  speedX10: 8 | 10 | 12;
+}
+
 export interface ArticleSessionView {
   id: string;
   title: string | null;
@@ -79,6 +86,7 @@ export interface ArticleSessionView {
   limitReached: boolean;
   error: ArticleError | null;
   usage: ArticleUsageView | null;
+  recovery: ArticleRecovery | null;
 }
 
 export interface ArticleVersionView {

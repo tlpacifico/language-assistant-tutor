@@ -14,6 +14,7 @@ import type {
   ArticleConsent,
   ArticleCorrection,
   ArticleCreate,
+  ArticlePreferences,
   ArticleSnapshot,
   ArticleSummary,
 } from "./article-contracts";
@@ -36,6 +37,10 @@ export interface ArticleClient {
   correct(correction: ArticleCorrection): Promise<ArticleSnapshot>;
   resume(command: ArticleCommand): Promise<ArticleSnapshot>;
   delete(command: ArticleCommand): Promise<void>;
+  /** Preferências do leitor (reprodução automática e velocidade). */
+  preferences(): Promise<ArticlePreferences>;
+  /** Guarda as preferências e devolve a versão validada. */
+  savePreferences(input: ArticlePreferences): Promise<ArticlePreferences>;
   /** Ouve a gravação de uma resposta (turno do utilizador) já guardada. */
   playTurn(sessionId: string, turnId: string): Promise<void>;
   /** Interrompe a voz do tutor sem apagar texto nem estado. */
@@ -75,6 +80,11 @@ export function createArticleClient(): ArticleClient {
     async delete(command) {
       await invoke<void>("article_delete", { command });
     },
+    preferences: () => invoke<ArticlePreferences>("article_preferences_load"),
+    savePreferences: (input) =>
+      invoke<ArticlePreferences>("article_preferences_save", {
+        preferences: input,
+      }),
     async playTurn(sessionId, turnId) {
       await invoke<void>("article_play_turn", { sessionId, turnId });
     },

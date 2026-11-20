@@ -119,6 +119,26 @@ pub struct ArticleUsageView {
     pub estimated_cost: Option<f64>,
 }
 
+/// Operação de recuperação local sugerida pela origem da falha guardada.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArticleRecovery {
+    RetrySend,
+    RetryFeedback,
+    ReRecord,
+}
+
+/// Preferências do leitor de artigos: reprodução automática e velocidade.
+///
+/// A velocidade é guardada em décimos (`speed_x10`) e serializada em camelCase;
+/// só são aceites 8 (0.8×), 10 (1.0×) e 12 (1.2×).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticlePreferences {
+    pub autoplay: bool,
+    pub speed_x10: u8,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArticleSessionView {
@@ -134,6 +154,9 @@ pub struct ArticleSessionView {
     pub limit_reached: bool,
     pub error: Option<ArticleError>,
     pub usage: Option<ArticleUsageView>,
+    /// Recuperação sugerida pela origem da falha guardada; nunca inferida da
+    /// mensagem livre.
+    pub recovery: Option<ArticleRecovery>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -298,6 +321,14 @@ pub fn validate_answer_text(text: &str) -> Result<()> {
         return Err(invalid(
             "A resposta é demasiado longa (máximo 8 000 caracteres e 12 800 bytes). Reveja o texto antes de o enviar.",
         ));
+    }
+    Ok(())
+}
+
+/// Valida as preferências do leitor antes de as guardar; só aceita 0.8×, 1.0× e 1.2×.
+pub fn validate_article_preferences(preferences: &ArticlePreferences) -> Result<()> {
+    if !matches!(preferences.speed_x10, 8 | 10 | 12) {
+        return Err(invalid("A velocidade deve ser 0.8×, 1.0× ou 1.2×."));
     }
     Ok(())
 }

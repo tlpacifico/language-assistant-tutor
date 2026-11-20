@@ -13,9 +13,10 @@ use uuid::Uuid;
 use super::questions::utc_now;
 use super::Database;
 use crate::article::{
-    transition, validate_answer_text, validate_article, ArticleAudioView, ArticleAuthorization,
-    ArticleCommand, ArticleContext, ArticleCreate, ArticleError, ArticleEvent, ArticleMutation,
-    ArticleOutcome, ArticlePlayback, ArticleReport, ArticleRequestKind, ArticleSessionView,
+    transition, validate_answer_text, validate_article, validate_article_preferences,
+    ArticleAudioView, ArticleAuthorization, ArticleCommand, ArticleContext, ArticleCreate,
+    ArticleError, ArticleEvent, ArticleMutation, ArticleOutcome, ArticlePlayback,
+    ArticlePreferences, ArticleRecovery, ArticleReport, ArticleRequestKind, ArticleSessionView,
     ArticleSnapshot, ArticleSpeaker, ArticleState, ArticleSummary, ArticleTicket, ArticleTurnView,
     ArticleUsageView, ArticleVersionSource, ArticleVersionView, ContextRole, ContextTurn,
     ARTICLE_NOTICE_VERSION, MAX_TURNS_PER_BRANCH, SUGGEST_FINISH_AFTER,
@@ -270,6 +271,55 @@ impl Database {
             .map_err(write_failed)?;
             tx.commit().map_err(write_failed)?;
             Ok(true)
+        })
+    }
+}
+
+// -- preferências do leitor ---------------------------------------------------
+
+impl Database {
+    /// Preferências do leitor de artigos: a linha única criada pela migração v6.
+    pub fn article_preferences(&self) -> Result<ArticlePreferences> {
+        self.with_connection(|connection| {
+            let (autoplay, speed_x10) = connection
+                .query_row(
+                    "SELECT autoplay, speed_x10 FROM article_preferences WHERE id = 1",
+                    [],
+                    |row| Ok((row.get::<_, bool>(0)?, row.get::<_, u8>(1)?)),
+                )
+                .map_err(read_failed)?;
+            Ok(ArticlePreferences {
+                autoplay,
+                speed_x10,
+            })
+        })
+    }
+
+    /// Guarda as preferências do leitor e devolve a versão validada.
+    ///
+    /// A velocidade só aceita 0.8×, 1.0× e 1.2×; um valor desconhecido é
+    /// recusado sem escrever.
+    pub fn put_article_preferences(
+        &self,
+        preferences: &ArticlePreferences,
+    ) -> Result<ArticlePreferences> {
+        validate_article_preferences(preferences)?;
+        let now = utc_now();
+        let autoplay = preferences.autoplay;
+        let speed_x10 = preferences.speed_x10;
+        self.with_connection(|connection| {
+            connection
+                .execute(
+                    "UPDATE article_preferences
+                     SET autoplay = ?1, speed_x10 = ?2, updated_at = ?3
+                     WHERE id = 1",
+                    params![autoplay, speed_x10, now],
+                )
+                .map_err(write_failed)?;
+            Ok(ArticlePreferences {
+                autoplay,
+                speed_x10,
+            })
         })
     }
 }
@@ -667,6 +717,20 @@ fn resume_target(turns: &[ProjectedTurn]) -> ArticleState {
     }
 }
 
+/// Operação de recuperação sugerida pela origem da falha guardada, nunca pela
+/// mensagem livre: o envio falhou, o relatório falhou ou a captura foi
+/// interrompida. Sem falha registada não há recuperação.
+fn recovery_of(failed_from: Option<ArticleState>) -> Option<ArticleRecovery> {
+    match failed_from {
+        Some(ArticleState::AwaitingTutor) => Some(ArticleRecovery::RetrySend),
+        Some(ArticleState::Finishing) | Some(ArticleState::Completed) => {
+            Some(ArticleRecovery::RetryFeedback)
+        }
+        Some(ArticleState::Recording) => Some(ArticleRecovery::ReRecord),
+        _ => None,
+    }
+}
+
 fn snapshot(connection: &Connection, session_id: &str) -> Result<ArticleSnapshot> {
     let session = load_session(connection, session_id)?;
     if session.deleted {
@@ -735,6 +799,7 @@ fn build_snapshot(connection: &Connection, session: SessionRow) -> Result<Articl
             limit_reached: answers >= MAX_TURNS_PER_BRANCH || !context.has_room_for_next_answer(),
             error: session.error.clone(),
             usage: usage_view(connection, &session.id)?,
+            recovery: recovery_of(session.failed_from),
         },
         turns,
         report,
