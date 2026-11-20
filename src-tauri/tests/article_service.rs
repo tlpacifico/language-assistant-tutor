@@ -71,6 +71,8 @@ struct FakeAudio {
     pause_gate: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     /// Quantas vezes `pause_playback` foi invocado (antes do bloqueio).
     pause_attempts: Mutex<usize>,
+    /// Quando ligado, `start_playback` falha com `DEVICE_UNAVAILABLE`.
+    start_fail: Mutex<bool>,
 }
 
 impl FakeAudio {
@@ -102,6 +104,10 @@ impl FakeAudio {
         let (tx, rx) = std::sync::mpsc::channel();
         *self.pause_gate.lock().unwrap() = Some(rx);
         tx
+    }
+    /// Faz a próxima reprodução falhar como se o dispositivo estivesse ausente.
+    fn fail_start(&self) {
+        *self.start_fail.lock().unwrap() = true;
     }
 }
 
@@ -137,6 +143,13 @@ impl AudioPort for FakeAudio {
         })
     }
     fn start_playback(&self, path: PathBuf) -> Result<PlaybackId, AppError> {
+        if *self.start_fail.lock().unwrap() {
+            return Err(AppError::new(
+                error_code::DEVICE_UNAVAILABLE,
+                "dispositivo de saída indisponível.",
+                true,
+            ));
+        }
         let id = uuid::Uuid::new_v4().to_string();
         self.plays.lock().unwrap().push(path);
         *self.last_id.lock().unwrap() = Some(id.clone());
@@ -2043,12 +2056,19 @@ async fn disabling_autoplay_stops_automatic_voice_but_not_an_explicit_replay() {
         .unwrap();
     assert_eq!(playback(&h, &id).await, PlayerState::Idle);
 
-    // Uma repetição explícita continua a funcionar.
+    // Volta a ligar e inicia uma repetição explícita.
+    h.service
+        .article_preferences_save(ArticlePreferences {
+            autoplay: true,
+            speed_x10: 10,
+        })
+        .await
+        .unwrap();
     let view = h.service.article_player_play(&id, &tutor).await.unwrap();
     assert_eq!(view.state, PlayerState::Preparing);
     assert_eq!(view.trigger, Some(PlaybackTrigger::Explicit));
 
-    // Desligar a reprodução automática não pára uma repetição explícita.
+    // Desligar (true -> false) não pára a repetição explícita em curso.
     h.service
         .article_preferences_save(ArticlePreferences {
             autoplay: false,
@@ -2251,52 +2271,113 @@ async fn reopening_starts_the_player_idle() {
 #[tokio::test]
 async fn stale_autoplay_does_not_start_after_autoplay_is_disabled() {
     let h = Harness::new().await;
-    let created = h.create().await;
-    let id = created.session.id.clone();
-    h.service.article_view_focus(&id, "token").await.unwrap();
-    // Retém o pedido de abertura.
+    // Abertura resolvida (cache completa), pronta para uma resposta.
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let tutor = ready.turns[0].id.clone();
+    let opening = h.worker.streams()[0].clone();
+    send_chunk_file(&h, &opening, 0).await;
+    finish_stream(&h, &opening, 1).await;
+    h.service.article_stop_voice().await.unwrap();
+
+    // Retém a resposta do tutor; grava e transcreve uma resposta do utilizador.
     let gate = h.transport.hold_next();
-    h.service
-        .article_authorize(h.consent(&created))
-        .await
-        .unwrap();
-    h.wait_for_calls(1).await;
-    // Desliga a reprodução automática enquanto a abertura está em voo.
-    h.service
-        .article_preferences_save(ArticlePreferences {
+    h.record(&ready).await;
+    h.transcript_event("My answer.").await;
+    h.wait_for_calls(2).await;
+
+    // Uma reprodução explícita dá uma identidade de áudio; uma pausa pendente
+    // detém o coordenador serial.
+    h.service.article_player_play(&id, &tutor).await.unwrap();
+    let gen = h.snapshot(&id).await.audio.generation;
+    let release = h.audio.hold_pause();
+    let service = Arc::clone(&h.service);
+    let pause = tokio::spawn({
+        let id = id.clone();
+        async move {
+            let _ = service.article_player_pause(&id, gen).await;
+        }
+    });
+    for _ in 0..200 {
+        if h.audio.pause_attempts() >= 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert_eq!(h.audio.pause_attempts(), 1, "a pausa ficou pendente");
+
+    // A resposta chega e a autoplay bloqueia no coordenador; desliga-se a
+    // reprodução automática antes de o libertar.
+    gate.notify_one();
+    h.database
+        .put_article_preferences(&ArticlePreferences {
             autoplay: false,
             speed_x10: 10,
         })
-        .await
         .unwrap();
-    gate.notify_one();
+    drop(release);
+    pause.await.unwrap();
     h.service.article_settle().await;
+
     assert_eq!(h.snapshot(&id).await.session.state, ArticleState::Ready);
     assert_eq!(
         h.worker.streams().len(),
-        0,
-        "autoplay desligada antes da conclusão"
+        1,
+        "a resposta do tutor chegou sem nova síntese"
     );
 }
 
 #[tokio::test]
 async fn stale_autoplay_does_not_start_after_the_view_blurs() {
     let h = Harness::new().await;
-    let created = h.create().await;
-    let id = created.session.id.clone();
-    h.service.article_view_focus(&id, "token").await.unwrap();
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let tutor = ready.turns[0].id.clone();
+    let opening = h.worker.streams()[0].clone();
+    send_chunk_file(&h, &opening, 0).await;
+    finish_stream(&h, &opening, 1).await;
+    h.service.article_stop_voice().await.unwrap();
+
     let gate = h.transport.hold_next();
-    h.service
-        .article_authorize(h.consent(&created))
-        .await
-        .unwrap();
-    h.wait_for_calls(1).await;
-    // A vista desfoca enquanto a abertura está em voo.
-    h.service.article_view_blur("token").await.unwrap();
+    h.record(&ready).await;
+    h.transcript_event("My answer.").await;
+    h.wait_for_calls(2).await;
+
+    h.service.article_player_play(&id, &tutor).await.unwrap();
+    let gen = h.snapshot(&id).await.audio.generation;
+    let release = h.audio.hold_pause();
+    let service = Arc::clone(&h.service);
+    let pause = tokio::spawn({
+        let id = id.clone();
+        async move {
+            let _ = service.article_player_pause(&id, gen).await;
+        }
+    });
+    for _ in 0..200 {
+        if h.audio.pause_attempts() >= 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert_eq!(h.audio.pause_attempts(), 1, "a pausa ficou pendente");
+
+    // A vista desfoca (fica na fila do coordenador) e a resposta chega depois:
+    // a autoplay relê o foco já limpo e não toca.
+    let blur = {
+        let service = Arc::clone(&h.service);
+        tokio::spawn(async move {
+            let _ = service.article_view_blur("harness").await;
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     gate.notify_one();
+    drop(release);
+    pause.await.unwrap();
+    blur.await.unwrap();
     h.service.article_settle().await;
+
     assert_eq!(h.snapshot(&id).await.session.state, ArticleState::Ready);
-    assert_eq!(h.worker.streams().len(), 0, "sem autoplay depois do blur");
+    assert_eq!(h.worker.streams().len(), 1, "sem autoplay depois do blur");
 }
 
 #[tokio::test]
@@ -2567,5 +2648,60 @@ async fn play_errors_do_not_expose_paths() {
         !error.message.contains("original.wav"),
         "sem ficheiro: {}",
         error.message
+    );
+}
+
+#[tokio::test]
+async fn an_output_failure_cancels_the_pending_synthesis() {
+    use language_assistant_tutor::article::{PlayerOperation, PlayerState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+    // O dispositivo falha ao iniciar a reprodução do primeiro bloco.
+    h.audio.fail_start();
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+
+    // A falha de saída cancela a síntese pendente e é rotulada `Output`.
+    assert!(h.worker.cancels() >= 1, "a síntese pendente é cancelada");
+    let view = h.snapshot(&id).await.audio;
+    assert_eq!(view.state, PlayerState::Failed);
+    assert_eq!(
+        view.failure.as_ref().map(|f| f.operation),
+        Some(PlayerOperation::Output)
+    );
+
+    // Um bloco tardio não toca.
+    let appends = h.audio.appends().len();
+    send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
+    assert_eq!(h.audio.appends().len(), appends, "o bloco tardio não toca");
+}
+
+#[tokio::test]
+async fn a_cached_play_device_failure_is_labelled_output() {
+    use language_assistant_tutor::article::{PlayerOperation, PlayerState};
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let tutor = ready.turns[0].id.clone();
+    // Conclui a síntese automática para a cache ficar completa.
+    let request = h.worker.streams()[0].clone();
+    send_chunk_file(&h, &request, 0).await;
+    finish_stream(&h, &request, 1).await;
+    h.service.article_stop_voice().await.unwrap();
+
+    // O dispositivo falha ao reproduzir a entrada da cache.
+    h.audio.fail_start();
+    let error = h
+        .service
+        .article_player_play(&id, &tutor)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, error_code::DEVICE_UNAVAILABLE);
+    let view = h.snapshot(&id).await.audio;
+    assert_eq!(view.state, PlayerState::Failed);
+    assert_eq!(
+        view.failure.as_ref().map(|f| f.operation),
+        Some(PlayerOperation::Output)
     );
 }

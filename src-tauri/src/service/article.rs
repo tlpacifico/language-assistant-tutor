@@ -1251,7 +1251,13 @@ impl AppService {
         }
         let first = cached.chunks[0].path.clone();
         let audio = Arc::clone(&self.audio);
-        let id = audio_task(move || audio.start_playback(first)).await?;
+        let id = match audio_task(move || audio.start_playback(first)).await {
+            Ok(id) => id,
+            Err(error) => {
+                self.fail_player_output();
+                return Err(error);
+            }
+        };
         self.lock_article().playback_id = Some(id.clone());
         self.lock_article().player.note_queued();
         self.clear_star_playback();
@@ -1259,7 +1265,10 @@ impl AppService {
             let path = chunk.path.clone();
             let id2 = id.clone();
             let audio = Arc::clone(&self.audio);
-            audio_task(move || audio.append_chunk(path, &id2)).await?;
+            if let Err(error) = audio_task(move || audio.append_chunk(path, &id2)).await {
+                self.fail_player_output();
+                return Err(error);
+            }
         }
         let duration = cached.total_duration_ms();
         let generation = self.lock_article().player.generation();
@@ -1289,7 +1298,13 @@ impl AppService {
             storage_task(move || wav_duration_ms(&path)).await?
         };
         let audio = Arc::clone(&self.audio);
-        let id = audio_task(move || audio.start_playback(path)).await?;
+        let id = match audio_task(move || audio.start_playback(path)).await {
+            Ok(id) => id,
+            Err(error) => {
+                self.fail_player_output();
+                return Err(error);
+            }
+        };
         self.lock_article().playback_id = Some(id);
         self.lock_article().player.note_queued();
         self.clear_star_playback();
@@ -1393,8 +1408,12 @@ impl AppService {
     }
 
     /// Falha da saída ao tocar um bloco: a síntese continua válida, mas o
-    /// dispositivo falhou. O texto fica visível e a operação é `Output`.
+    /// dispositivo falhou. Cancela o auxiliar, esquece a sequência e marca a
+    /// operação como `Output`; o texto fica visível e a rendição é repetível.
     async fn fail_speech_output(&self, error: &AppError) {
+        if let Some(control) = self.worker_control() {
+            let _ = worker_task(move || control.cancel()).await;
+        }
         self.lock_article().speech = None;
         self.record_error(error);
         self.fail_player_output();
@@ -1525,10 +1544,11 @@ impl AppService {
             }
         }
         self.apply_player_event(generation, PlayerEvent::Resume);
-        // Retomar pode reabrir a fila dos blocos aceites mas ainda não tocados.
+        // Retomar pode reabrir a fila dos blocos aceites mas ainda não tocados;
+        // uma falha aqui é de saída (dispositivo), não de síntese.
         if let Err(error) = self.advance_speech_playback().await {
             self.record_error(&error);
-            self.fail_player_synthesis();
+            self.fail_player_output();
         }
         Ok(self.current_player_view())
     }
