@@ -27,9 +27,9 @@ use language_assistant_tutor::audio::{
 };
 use language_assistant_tutor::db::Database;
 use language_assistant_tutor::domain::{
-    error_code, AppError, CaptureMeta, ComponentState, TranscriptStatus,
+    error_code, AppError, CaptureMeta, ComponentState, PlaybackTarget, TranscriptStatus,
 };
-use language_assistant_tutor::interview::StartSession;
+use language_assistant_tutor::interview::{AudioSelection, StartSession};
 use language_assistant_tutor::service::{
     AppService, LaunchedWorker, ServicePaths, WorkerControl, WorkerLauncher,
 };
@@ -1274,6 +1274,100 @@ async fn a_momentarily_empty_queue_is_not_the_end_of_the_request() {
         .on_audio_event(AudioEvent::PlaybackFinished { id: last_id })
         .await;
     assert_eq!(playback(&h, &id).await, ArticlePlayback::Idle);
+}
+
+#[tokio::test]
+async fn starting_article_playback_clears_star_playback_state() {
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    h.record(&ready).await;
+    h.transcript("Remote work helps people focus.").await;
+    let replied = h.snapshot(&id).await;
+    let user_turn = replied
+        .turns
+        .iter()
+        .find(|t| t.speaker == ArticleSpeaker::User)
+        .expect("resposta do utilizador")
+        .id
+        .clone();
+
+    // Reprodução STAR ativa (um treino legado ouvido pela interface).
+    let attempt = "8a1f4c78-2a4b-4f0e-9b6b-1e6b0f2e4d11";
+    let dir = h
+        .directory
+        .path()
+        .join("phase1")
+        .join("attempts")
+        .join(attempt);
+    std::fs::create_dir_all(&dir).expect("pasta do treino");
+    write_wav(&dir.join("original.wav"));
+    let playing = h
+        .service
+        .play_audio(AudioSelection::Legacy {
+            attempt_id: attempt.to_owned(),
+        })
+        .await
+        .expect("ouvir o treino legado");
+    assert_eq!(playing.playback, Some(PlaybackTarget::Response));
+
+    // Ouvir a resposta do artigo substitui a reprodução do STAR: o estado do
+    // STAR deixa de apontar para a reprodução que perdeu o dispositivo.
+    h.service
+        .article_play_turn(&id, &user_turn)
+        .await
+        .expect("ouvir a resposta do artigo");
+    assert_eq!(
+        h.service.snapshot().playback,
+        None,
+        "a reprodução do STAR é limpa quando o artigo toma o dispositivo"
+    );
+}
+
+#[tokio::test]
+async fn starting_star_playback_stops_article_voice() {
+    use language_assistant_tutor::article::ArticlePlayback;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+    // Primeiro bloco: a voz do artigo fica em reprodução.
+    send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
+    assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
+
+    // Reprodução STAR (um treino legado) pára a voz do artigo.
+    let attempt = "9b2e5d89-3b5c-4f1f-aa7c-2f7c1e3f5e22";
+    let dir = h
+        .directory
+        .path()
+        .join("phase1")
+        .join("attempts")
+        .join(attempt);
+    std::fs::create_dir_all(&dir).expect("pasta do treino");
+    write_wav(&dir.join("original.wav"));
+    let playing = h
+        .service
+        .play_audio(AudioSelection::Legacy {
+            attempt_id: attempt.to_owned(),
+        })
+        .await
+        .expect("ouvir o treino legado");
+
+    assert!(
+        h.worker.cancels() >= 1,
+        "a síntese da voz do artigo é cancelada"
+    );
+    assert_eq!(
+        playback(&h, &id).await,
+        ArticlePlayback::Idle,
+        "a voz do artigo pára quando o STAR reproduz"
+    );
+    assert_eq!(playing.playback, Some(PlaybackTarget::Response));
+    assert_eq!(
+        h.service.snapshot().playback,
+        Some(PlaybackTarget::Response),
+        "o STAR fica com a reprodução pedida"
+    );
 }
 
 #[tokio::test]

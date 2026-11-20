@@ -843,6 +843,9 @@ impl AppService {
         target: PlaybackTarget,
         path: PathBuf,
     ) -> Result<InterviewSnapshot, AppError> {
+        // Reproduzir do STAR/prática substitui qualquer voz de artigo em curso:
+        // a síntese é cancelada e a identidade do artigo é descartada.
+        self.stop_article_speech_locked().await;
         let playback_id = self.lock_state().playback_id.clone();
         if let Some(id) = playback_id {
             let audio = Arc::clone(&self.audio);
@@ -1365,6 +1368,8 @@ impl AppService {
 
         // A síntese pode terminar enquanto um áudio está a ser ouvido; a
         // reprodução automática da pergunta substitui a reprodução em curso.
+        // Uma voz de artigo ativa também é parada antes de tocar a pergunta.
+        self.stop_article_speech_locked().await;
         let playback_id = self.lock_state().playback_id.clone();
         if let Some(id) = playback_id {
             let audio = Arc::clone(&self.audio);

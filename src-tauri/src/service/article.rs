@@ -842,7 +842,7 @@ impl AppService {
 
     /// Pára a voz: limpa a fila, invalida a sequência (blocos tardios são
     /// descartados) e pede ao auxiliar que pare entre blocos.
-    async fn stop_article_speech_locked(&self) {
+    pub(super) async fn stop_article_speech_locked(&self) {
         let (speech, playing, playback_id) = {
             let mut runtime = self.lock_article();
             let playing = matches!(runtime.playback, Some((_, _, ArticlePlayback::Playing)));
@@ -986,6 +986,14 @@ impl AppService {
                             match audio_task(move || audio.start_playback(path)).await {
                                 Ok(id) => {
                                     self.lock_article().playback_id = Some(id);
+                                    // A voz do artigo substitui a reprodução do
+                                    // STAR/prática: o estado antigo deixa de
+                                    // apontar para a identidade que perdeu o
+                                    // dispositivo.
+                                    self.commit(|state| {
+                                        state.playback = None;
+                                        state.playback_id = None;
+                                    });
                                     Ok(())
                                 }
                                 Err(error) => Err(error),
@@ -1147,6 +1155,11 @@ impl AppService {
         let audio = Arc::clone(&self.audio);
         let id = audio_task(move || audio.start_playback(path)).await?;
         self.lock_article().playback_id = Some(id);
+        // Ouvir uma resposta do artigo substitui a reprodução do STAR/prática.
+        self.commit(|state| {
+            state.playback = None;
+            state.playback_id = None;
+        });
         Ok(())
     }
 
