@@ -1861,6 +1861,63 @@ async fn restart_during_generation_reuses_its_ordered_prefix() {
 }
 
 #[tokio::test]
+async fn position_does_not_regress_when_a_drain_restarts_playback() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let request = h.worker.streams()[0].clone();
+
+    send_chunk_file(&h, &request, 0).await;
+    progress(&h, 500, 500).await;
+    assert_eq!(h.snapshot(&id).await.audio.position_ms, 500);
+
+    // A fila esvazia antes do 2.º bloco.
+    let first_id = h.audio.last_id();
+    h.service
+        .on_audio_event(AudioEvent::PlaybackFinished { id: first_id })
+        .await;
+    assert_eq!(playback(&h, &id).await, PlayerState::Buffering);
+
+    // O bloco seguinte continua a rendição: a posição não regride ao zero do
+    // dispositivo novo.
+    send_chunk_file(&h, &request, 1).await;
+    progress(&h, 300, 500).await;
+    let view = h.snapshot(&id).await.audio;
+    assert_eq!(view.position_ms, 800, "posição continua na rendição");
+    assert_eq!(view.buffered_ms, Some(1000));
+
+    // O fim da rendição fecha com a soma total, não com a posição local.
+    finish_stream(&h, &request, 2).await;
+    let view = h.snapshot(&id).await.audio;
+    assert_eq!(view.duration_ms, Some(1000));
+    assert_eq!(view.buffered_ms, Some(1000));
+}
+
+#[tokio::test]
+async fn an_explicit_restart_starts_the_position_at_zero() {
+    use language_assistant_tutor::article::PlayerState;
+    let h = Harness::new().await;
+    let ready = h.ready().await;
+    let id = ready.session.id.clone();
+    let tutor = ready.turns[0].id.clone();
+    let request = h.worker.streams()[0].clone();
+
+    send_chunk_file(&h, &request, 0).await;
+    progress(&h, 500, 500).await;
+    assert_eq!(h.snapshot(&id).await.audio.position_ms, 500);
+
+    // Reinicia a mesma fala do início: a posição e o desvio voltam a zero.
+    let view = h.service.article_player_play(&id, &tutor).await.unwrap();
+    assert_eq!(view.state, PlayerState::Preparing);
+    assert_eq!(view.position_ms, 0, "o reinício começa do início");
+
+    // O progresso seguinte é a posição local do dispositivo, sem desvio.
+    progress(&h, 100, 500).await;
+    assert_eq!(h.snapshot(&id).await.audio.position_ms, 100);
+}
+
+#[tokio::test]
 async fn a_new_selection_replaces_the_previous_article_playback() {
     use language_assistant_tutor::article::PlayerSource;
     let h = Harness::new().await;

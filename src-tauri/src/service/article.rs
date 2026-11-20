@@ -96,6 +96,11 @@ pub(super) struct ArticleRuntime {
     recording: RecordingRuntime,
     /// Identidade da reprodução atual devolvida pela porta de áudio.
     playback_id: Option<crate::audio::PlaybackId>,
+    /// Desvio da posição da rendição quando o dispositivo atual recomeçou do
+    /// zero (continuação depois de a fila esvaziar); zero numa seleção nova.
+    position_offset_ms: u64,
+    /// Desvio correspondente para a duração preparada.
+    buffered_offset_ms: u64,
     /// Foco da vista do artigo: (sessão, token). A reprodução automática só
     /// acontece na sessão focada.
     focus: Option<(String, String)>,
@@ -112,6 +117,8 @@ impl Default for ArticleRuntime {
             player: PlayerRuntime::idle(String::new()),
             recording: RecordingRuntime::new(String::new()),
             playback_id: None,
+            position_offset_ms: 0,
+            buffered_offset_ms: 0,
             focus: None,
             tasks: Vec::new(),
             this: None,
@@ -270,6 +277,10 @@ impl AppService {
             if runtime.player.view().session_id != session_id {
                 runtime.player = PlayerRuntime::idle(session_id.to_owned());
             }
+            // Uma seleção nova começa a rendição do início: o desvio usado para
+            // continuar depois de a fila esvaziar volta a zero.
+            runtime.position_offset_ms = 0;
+            runtime.buffered_offset_ms = 0;
             runtime
                 .player
                 .select(Some(turn_id.to_owned()), version_id, source, trigger)
@@ -985,7 +996,8 @@ impl AppService {
         let key = voice_key(text, ARTICLE_VOICE, speed_x10, ENGINE_ID);
 
         // Reinício durante uma geração ativa: conserva o prefixo ordenado e
-        // aceita os blocos restantes uma vez, sem regenerar.
+        // aceita os blocos restantes uma vez, sem regenerar. Tem de vir antes
+        // de `remove_incomplete`, que apagaria a entrada ainda em curso.
         let reuse = self
             .lock_article()
             .speech
@@ -1142,11 +1154,20 @@ impl AppService {
         }
         if id.is_none() {
             let first = directory.join(chunk_file(played));
+            // A posição da rendição continua: o dispositivo novo recomeça no
+            // zero, mas o leitor soma o desvio para a posição não regredir.
+            let (position_offset, buffered_offset) = {
+                let runtime = self.lock_article();
+                let view = runtime.player.view();
+                (view.position_ms, view.buffered_ms.unwrap_or(0))
+            };
             let audio = Arc::clone(&self.audio);
             let new_id = audio_task(move || audio.start_playback(first)).await?;
             {
                 let mut runtime = self.lock_article();
                 runtime.playback_id = Some(new_id.clone());
+                runtime.position_offset_ms = position_offset;
+                runtime.buffered_offset_ms = buffered_offset;
                 if let Some(speech) = runtime.speech.as_mut() {
                     speech.played = played + 1;
                 }
@@ -1492,18 +1513,22 @@ impl AppService {
         id: &crate::audio::PlaybackId,
         progress: PlaybackProgress,
     ) {
-        let generation = {
+        let (generation, position_offset, buffered_offset) = {
             let runtime = self.lock_article();
             if runtime.playback_id.as_deref() != Some(id.as_str()) {
                 return;
             }
-            runtime.player.generation()
+            (
+                runtime.player.generation(),
+                runtime.position_offset_ms,
+                runtime.buffered_offset_ms,
+            )
         };
         self.apply_player_event(
             generation,
             PlayerEvent::Progress {
-                position_ms: progress.position_ms,
-                buffered_ms: progress.buffered_ms,
+                position_ms: position_offset + progress.position_ms,
+                buffered_ms: buffered_offset + progress.buffered_ms,
             },
         );
     }
