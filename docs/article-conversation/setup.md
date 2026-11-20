@@ -32,3 +32,7 @@ New mode, distinct from the STAR interview, approved on 2026-11-04 ([design](../
 ```
 
 See [validation](validation.md) and [performance](performance.md).
+
+Proposed next improvements to debate, spoken practice and the conversation player
+are collected in the [2026-11-20 roadmap](roadmap.md). This roadmap does not change
+the implemented behaviour or the pending manual acceptance above.

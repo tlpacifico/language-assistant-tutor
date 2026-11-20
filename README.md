@@ -33,6 +33,10 @@ manual script and real paid inference are missing.
 The layout was updated from `docs/tutor-layout`, with side
 navigation, session preparation and adaptive views. See [validation and screenshots](docs/layout/validation.md).
 
+For article conversations, see [setup](docs/article-conversation/setup.md) and the
+[debate and conversation player roadmap](docs/article-conversation/roadmap.md)
+(proposed on 2026-11-20; implementation and manual acceptance remain separate).
+
 ## Requirements (Windows)
 
 Verified on this machine (details and versions in
