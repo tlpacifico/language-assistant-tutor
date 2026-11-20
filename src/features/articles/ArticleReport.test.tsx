@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ArticleReport as Report } from "../../lib/article-contracts";
-import { makeTurn } from "../../test/fake-article-client";
+import { makeSnapshot, makeTurn } from "../../test/fake-article-client";
 import ArticleReport from "./ArticleReport";
 
 const dimension = (
@@ -27,10 +27,23 @@ const report: Report = {
 };
 
 const turns = [makeTurn(2, "user", "Remote work helps people focus.")];
+const player = makeSnapshot().audio;
+
+const noop = () => undefined;
 
 describe("ArticleReport", () => {
   it("mostra as quatro dimensões com estado e insuficiência de evidência explícita", () => {
-    render(<ArticleReport report={report} turns={turns} onPlay={() => undefined} />);
+    render(
+      <ArticleReport
+        report={report}
+        turns={turns}
+        player={player}
+        onPlay={noop}
+        onPause={noop}
+        onResume={noop}
+        onRestart={noop}
+      />,
+    );
     for (const name of ["Coerência", "Coesão", "Desenvolvimento", "Interação"]) {
       expect(screen.getByRole("heading", { name })).toBeInTheDocument();
     }
@@ -44,16 +57,24 @@ describe("ArticleReport", () => {
   it("mostra as citações e só oferece áudio quando o turno tem gravação", async () => {
     const user = userEvent.setup();
     const onPlay = vi.fn();
-    render(<ArticleReport report={report} turns={turns} onPlay={onPlay} />);
+    render(
+      <ArticleReport
+        report={report}
+        turns={turns}
+        player={player}
+        onPlay={onPlay}
+        onPause={noop}
+        onResume={noop}
+        onRestart={noop}
+      />,
+    );
     const coherence = screen.getByRole("region", { name: "Coerência" });
     expect(within(coherence).getByText(/remote work helps/)).toBeInTheDocument();
-    await user.click(
-      within(coherence).getByRole("button", { name: "Ouvir a resposta citada" }),
-    );
+    await user.click(within(coherence).getByRole("button", { name: "Ouvir" }));
     expect(onPlay).toHaveBeenCalledWith("turn-2");
     const development = screen.getByRole("region", { name: "Desenvolvimento" });
     expect(
-      within(development).queryByRole("button", { name: "Ouvir a resposta citada" }),
+      within(development).queryByRole("button", { name: "Ouvir" }),
     ).not.toBeInTheDocument();
   });
 
@@ -62,7 +83,11 @@ describe("ArticleReport", () => {
       <ArticleReport
         report={{ ...report, improvements: ["a", "b", "c", "d"] }}
         turns={turns}
-        onPlay={() => undefined}
+        player={player}
+        onPlay={noop}
+        onPause={noop}
+        onResume={noop}
+        onRestart={noop}
       />,
     );
     const list = screen.getByRole("list", { name: "Melhorias prioritárias" });

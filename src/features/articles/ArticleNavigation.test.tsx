@@ -40,14 +40,14 @@ describe("navegação com a conversa sobre artigos", () => {
 
   it("não deixa mudar de página durante a gravação de um artigo", async () => {
     const { user } = await openArticle("recording");
-    await screen.findByRole("button", { name: "Parar gravação" });
+    await screen.findByRole("button", { name: "Parar e enviar" });
     await user.click(screen.getByRole("button", { name: "Histórico" }));
     expect(
       await screen.findByText(/Não é possível mudar de página/),
     ).toBeInTheDocument();
     // Continua na conversa, com o botão de parar acessível.
     expect(
-      screen.getByRole("button", { name: "Parar gravação" }),
+      screen.getByRole("button", { name: "Parar e enviar" }),
     ).toBeInTheDocument();
   });
 

@@ -6,11 +6,18 @@ import {
   ARTICLE_STATE_LABELS,
   MAX_ANSWER_CHARS,
   SUGGEST_FINISH_AFTER,
+  type ArticlePlayerView,
+  type ArticlePreferences as ArticlePreferencesView,
   type ArticleSnapshot,
+  type ArticleState,
   type ArticleTurnView,
 } from "../../lib/article-contracts";
 import ArticleConsent from "./ArticleConsent";
+import ArticlePlayerBar from "./ArticlePlayerBar";
+import ArticlePreferences from "./ArticlePreferences";
 import ArticleReport from "./ArticleReport";
+import ArticleTurnControls from "./ArticleTurnControls";
+import { canFinish, canReplayAudio } from "./player";
 import { useArticle } from "./useArticle";
 import { useArticlePlayback } from "./useArticlePlayback";
 
@@ -29,25 +36,55 @@ function isBusy(state: ArticleSnapshot["session"]["state"]): boolean {
 
 function Turn({
   turn,
+  player,
+  state,
   action,
+  onPlay,
+  onPause,
+  onResume,
+  onRestart,
 }: {
   turn: ArticleTurnView;
+  player: ArticlePlayerView;
+  state: ArticleState;
   action?: React.ReactNode;
+  onPlay: (turnId: string) => void;
+  onPause: () => void;
+  onResume: () => void;
+  onRestart: (turnId: string) => void;
 }) {
   const tutor = turn.speaker === "tutor";
+  const emptyUserTurn = !tutor && turn.version.text === "";
+  const active = player.turnId === turn.id;
   return (
     <li
       data-testid={tutor ? "turn-tutor" : "turn-user"}
       aria-label={tutor ? "Tutor" : "Você"}
-      className={`article__turn article__turn--${turn.speaker}`}
+      className={`article__turn article__turn--${turn.speaker}${
+        active ? " article__turn--active" : ""
+      }`}
     >
-      {paragraphs(turn.version.text).map((part, index) => (
-        <p key={index} lang="en">
-          {part}
-        </p>
-      ))}
+      {emptyUserTurn ? (
+        <p className="article__turn-placeholder">A transcrever…</p>
+      ) : (
+        paragraphs(turn.version.text).map((part, index) => (
+          <p key={index} lang="en">
+            {part}
+          </p>
+        ))
+      )}
       {turn.fromPreviousBranch ? (
         <small>Ramo anterior (só leitura)</small>
+      ) : null}
+      {canReplayAudio(state) ? (
+        <ArticleTurnControls
+          turn={turn}
+          player={player}
+          onPlay={onPlay}
+          onPause={onPause}
+          onResume={onResume}
+          onRestart={onRestart}
+        />
       ) : null}
       {action}
     </li>
@@ -76,9 +113,10 @@ export default function ArticleConversation({
   const [manual, setManual] = useState("");
   const [correcting, setCorrecting] = useState<string | null>(null);
   const [corrected, setCorrected] = useState("");
+  const [preferences, setPreferences] = useState<ArticlePreferencesView | null>(null);
   const alertRef = useRef<HTMLDivElement>(null);
 
-  const shownError = error ?? session.error;
+  const shownError = error ?? session.error ?? playback.error;
   const busy = isBusy(session.state);
 
   useEffect(() => {
@@ -102,27 +140,41 @@ export default function ArticleConversation({
     };
   }, [client, session.state]);
 
+  useEffect(() => {
+    let active = true;
+    void client
+      .preferences()
+      .then((value) => active && setPreferences(value))
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [client]);
+
+  function savePreferences(next: ArticlePreferencesView): void {
+    const previous = preferences;
+    setPreferences(next);
+    void client
+      .savePreferences(next)
+      .then(setPreferences)
+      .catch(() => previous && setPreferences(previous));
+  }
+
   const userTurns = turns.filter((t) => t.speaker === "user");
   const lastUser = userTurns[userTurns.length - 1];
   const state = session.state;
-  const canRecord = state === "ready" || state === "needs_review";
-  const canFinish =
-    state === "ready" ||
-    state === "needs_review" ||
-    state === "awaiting_tutor" ||
-    state === "recoverable_error";
-  const canRevoke = session.authorization !== null && canFinish;
+  const canRevoke = session.authorization !== null && canFinish(state);
+
+  // Um turno do utilizador sem texto só aparece como «A transcrever…» enquanto
+  // a transcrição está em curso; o texto nunca é fabricado.
+  const visibleTurns = turns.filter(
+    (t) =>
+      t.version.text !== "" ||
+      t.speaker === "tutor" ||
+      (state === "transcribing" && t.speaker === "user"),
+  );
 
   const statusLines: string[] = [];
-  if (state === "awaiting_tutor") {
-    statusLines.push("O tutor está a preparar a resposta…");
-  }
-  if (state === "transcribing") {
-    statusLines.push("A transcrever a resposta…");
-  }
-  if (state === "finishing") {
-    statusLines.push("A gerar o feedback…");
-  }
   if (session.limitReached) {
     statusLines.push(
       "Limite da conversa atingido. Termine para obter o feedback.",
@@ -143,6 +195,17 @@ export default function ArticleConversation({
             ? ` · consumo: ${session.usage.inputTokens ?? "?"} tokens de entrada, ${session.usage.outputTokens ?? "?"} de saída`
             : ""}
         </p>
+        {preferences ? (
+          <ArticlePreferences
+            preferences={preferences}
+            onAutoplayChange={(autoplay) =>
+              void savePreferences({ ...preferences, autoplay })
+            }
+            onSpeedChange={(speedX10) =>
+              void savePreferences({ ...preferences, speedX10 })
+            }
+          />
+        ) : null}
         <details>
           <summary>Ver o artigo</summary>
           <p lang="en" className="article__text">
@@ -152,30 +215,34 @@ export default function ArticleConversation({
       </header>
 
       <ol aria-label="Conversa" className="article__turns">
-        {turns
-          .filter((t) => t.version.text !== "" || t.speaker === "tutor")
-          .map((turn) => (
-            <Turn
-              key={turn.id}
-              turn={turn}
-              action={
-                state === "completed" &&
-                turn.speaker === "user" &&
-                !turn.fromPreviousBranch ? (
-                  <button
-                    type="button"
-                    disabled={pending}
-                    onClick={() => {
-                      setCorrecting(turn.id);
-                      setCorrected(turn.version.text);
-                    }}
-                  >
-                    Corrigir esta resposta
-                  </button>
-                ) : undefined
-              }
-            />
-          ))}
+        {visibleTurns.map((turn) => (
+          <Turn
+            key={turn.id}
+            turn={turn}
+            player={playback.player}
+            state={state}
+            onPlay={(turnId) => void playback.play(turnId)}
+            onPause={() => void playback.pause()}
+            onResume={() => void playback.resume()}
+            onRestart={(turnId) => void playback.play(turnId)}
+            action={
+              state === "completed" &&
+              turn.speaker === "user" &&
+              !turn.fromPreviousBranch ? (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => {
+                    setCorrecting(turn.id);
+                    setCorrected(turn.version.text);
+                  }}
+                >
+                  Corrigir esta resposta
+                </button>
+              ) : undefined
+            }
+          />
+        ))}
       </ol>
 
       {statusLines.length > 0 ? (
@@ -195,27 +262,6 @@ export default function ArticleConversation({
         >
           <p>{shownError.message}</p>
         </div>
-      ) : null}
-
-      {playback.player.state === "failed" && playback.player.turnId ? (
-        <div className="practice__notice" role="status">
-          <p>
-            A voz do tutor falhou; o texto está acima. Pode repetir só a voz,
-            sem nova chamada ao fornecedor.
-          </p>
-          <button
-            type="button"
-            onClick={() => void playback.play(playback.player.turnId ?? "")}
-          >
-            Repetir voz
-          </button>
-        </div>
-      ) : null}
-
-      {playback.player.state === "playing" ? (
-        <button type="button" onClick={() => void playback.stop()}>
-          Parar voz
-        </button>
       ) : null}
 
       {state === "draft" ? (
@@ -276,46 +322,8 @@ export default function ArticleConversation({
         </section>
       ) : null}
 
-      <div className="article__actions">
-        {state === "recording" ? (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => void run("stopRecording", (command) => client.stopRecording(command))}
-          >
-            Parar gravação
-          </button>
-        ) : null}
-        {canRecord ? (
-          <button
-            type="button"
-            disabled={pending || session.limitReached}
-            onClick={() =>
-              void run("startRecording", (command) => client.startRecording(command))
-            }
-          >
-            Gravar resposta
-          </button>
-        ) : null}
-        {state === "recoverable_error" && session.error?.retryable ? (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => void run("retry", (command) => client.retry(command))}
-          >
-            Repetir
-          </button>
-        ) : null}
-        {canFinish ? (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => void run("finish", (command) => client.finish(command))}
-          >
-            Terminar e ver feedback
-          </button>
-        ) : null}
-        {canRevoke ? (
+      {canRevoke ? (
+        <div className="article__actions">
           <button
             type="button"
             disabled={pending}
@@ -323,8 +331,8 @@ export default function ArticleConversation({
           >
             Revogar autorização
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       {correcting ? (
         <section className="practice__panel">
@@ -366,7 +374,11 @@ export default function ArticleConversation({
           <ArticleReport
             report={report}
             turns={turns}
+            player={playback.player}
             onPlay={(turnId) => void playback.play(turnId)}
+            onPause={() => void playback.pause()}
+            onResume={() => void playback.resume()}
+            onRestart={(turnId) => void playback.play(turnId)}
           />
         ) : (
           <p className="practice__hint">
@@ -375,6 +387,28 @@ export default function ArticleConversation({
           </p>
         )
       ) : null}
+
+      <ArticlePlayerBar
+        session={session}
+        player={playback.player}
+        recording={playback.recording}
+        busy={pending}
+        onPlay={(turnId) => void playback.play(turnId)}
+        onPause={() => void playback.pause()}
+        onResume={() => void playback.resume()}
+        onStop={() => void playback.stop()}
+        onRecord={() =>
+          void run("startRecording", (command) => client.startRecording(command))
+        }
+        onStopRecording={() =>
+          void run("stopRecording", (command) => client.stopRecording(command))
+        }
+        onFinish={() => void run("finish", (command) => client.finish(command))}
+        onRetry={() => void run("retry", (command) => client.retry(command))}
+        onResumeSession={() =>
+          void run("resume", (command) => client.resume(command))
+        }
+      />
     </div>
   );
 }
