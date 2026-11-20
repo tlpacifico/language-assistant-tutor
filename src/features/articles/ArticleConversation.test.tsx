@@ -151,11 +151,11 @@ describe("ArticleConversation", () => {
     const { fake } = setup(
       makeSnapshot({
         turns: dialogue,
-        audio: { state: "playing", turnId: "turn-3" },
+        audio: { state: "playing", turnId: "turn-3", generation: 1 },
       }),
     );
     await user.click(screen.getByRole("button", { name: "Parar voz" }));
-    expect(fake.client.stopVoice).toHaveBeenCalledTimes(1);
+    expect(fake.client.stop).toHaveBeenCalledWith("session-1", 1);
     expect(screen.getByText("Why does that matter?")).toBeInTheDocument();
   });
 
@@ -169,7 +169,7 @@ describe("ArticleConversation", () => {
     );
     expect(screen.getByText("Why does that matter?")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Repetir voz" }));
-    expect(fake.client.speakTurn).toHaveBeenCalledWith("session-1", "turn-3");
+    expect(fake.client.play).toHaveBeenCalledWith("session-1", "turn-3");
     // Nenhum comando que chame o fornecedor de texto.
     expect(fake.client.retry).not.toHaveBeenCalled();
     expect(fake.client.finish).not.toHaveBeenCalled();

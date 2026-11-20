@@ -12,6 +12,7 @@ import {
 import ArticleConsent from "./ArticleConsent";
 import ArticleReport from "./ArticleReport";
 import { useArticle } from "./useArticle";
+import { useArticlePlayback } from "./useArticlePlayback";
 
 /** Comentário e pergunta chegam num só turno, separados por uma linha em branco. */
 function paragraphs(text: string): string[] {
@@ -68,7 +69,8 @@ export default function ArticleConversation({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const { snapshot, error, pending, run } = useArticle(client, initial);
-  const { session, turns, report, audio } = snapshot;
+  const playback = useArticlePlayback(client, initial.session.id, initial);
+  const { session, turns, report } = snapshot;
   const [destination, setDestination] = useState<string | null>(null);
   const [consent, setConsent] = useState(false);
   const [manual, setManual] = useState("");
@@ -195,7 +197,7 @@ export default function ArticleConversation({
         </div>
       ) : null}
 
-      {audio.state === "failed" && audio.turnId ? (
+      {playback.player.state === "failed" && playback.player.turnId ? (
         <div className="practice__notice" role="status">
           <p>
             A voz do tutor falhou; o texto está acima. Pode repetir só a voz,
@@ -203,17 +205,15 @@ export default function ArticleConversation({
           </p>
           <button
             type="button"
-            onClick={() =>
-              void client.speakTurn(session.id, audio.turnId ?? "").catch(() => undefined)
-            }
+            onClick={() => void playback.play(playback.player.turnId ?? "")}
           >
             Repetir voz
           </button>
         </div>
       ) : null}
 
-      {audio.state === "playing" ? (
-        <button type="button" onClick={() => void client.stopVoice()}>
+      {playback.player.state === "playing" ? (
+        <button type="button" onClick={() => void playback.stop()}>
           Parar voz
         </button>
       ) : null}
@@ -366,9 +366,7 @@ export default function ArticleConversation({
           <ArticleReport
             report={report}
             turns={turns}
-            onPlay={(turnId) =>
-              void client.playTurn(session.id, turnId).catch(() => undefined)
-            }
+            onPlay={(turnId) => void playback.play(turnId)}
           />
         ) : (
           <p className="practice__hint">

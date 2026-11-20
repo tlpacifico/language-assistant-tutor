@@ -200,3 +200,63 @@ export const ARTICLE_STATE_LABELS: Record<ArticleState, string> = {
   completed: "Concluída",
   paused: "Em pausa",
 };
+
+export type ArticleMergeMode = "event" | "snapshot";
+
+/**
+ * Funde uma vista de reprodução.
+ *
+ * Um evento aplica-se apenas com uma sequência estritamente superior; uma
+ * fotografia aplica-se com uma sequência igual ou superior. Vistas de outra
+ * sessão nunca são aceites.
+ */
+export function mergePlayer(
+  current: ArticlePlayerView,
+  next: ArticlePlayerView,
+  mode: ArticleMergeMode = "event",
+): ArticlePlayerView {
+  if (next.sessionId !== current.sessionId) {
+    return current;
+  }
+  const newer =
+    mode === "snapshot"
+      ? next.sequence >= current.sequence
+      : next.sequence > current.sequence;
+  return newer ? next : current;
+}
+
+/**
+ * Funde uma vista de gravação.
+ *
+ * Tal como na reprodução, um evento aplica-se apenas com uma sequência
+ * estritamente superior e uma fotografia com uma sequência igual ou superior.
+ * Além disso, um evento `active` (início ou progresso) de uma captura antiga
+ * nunca regride a captura mais recente: quando a vista atual já está `active`,
+ * exige-se a mesma `captureId`. `inactive` e `ended` aplicam-se sempre quando
+ * mais recentes.
+ */
+export function mergeRecording(
+  current: ArticleRecordingView,
+  next: ArticleRecordingView,
+  mode: ArticleMergeMode = "event",
+): ArticleRecordingView {
+  if (next.sessionId !== current.sessionId) {
+    return current;
+  }
+  const newer =
+    mode === "snapshot"
+      ? next.sequence >= current.sequence
+      : next.sequence > current.sequence;
+  if (!newer) {
+    return current;
+  }
+  if (
+    mode === "event" &&
+    next.state === "active" &&
+    current.state === "active" &&
+    next.captureId !== current.captureId
+  ) {
+    return current;
+  }
+  return next;
+}
