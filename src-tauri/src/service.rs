@@ -1076,6 +1076,10 @@ impl AppService {
             AudioEvent::PlaybackProgress { .. } => {
                 // O progresso é consumido pelo leitor de artigos (tarefas 6 e 7).
             }
+            AudioEvent::CaptureProgress { .. } => {
+                // O progresso da captura é consumido pelo leitor de artigos
+                // (tarefa 7), que o mapeia para `ArticleRecordingView`.
+            }
         }
     }
 

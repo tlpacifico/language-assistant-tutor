@@ -42,6 +42,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// Intervalo mínimo entre eventos de progresso de reprodução.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 
+/// Intervalo mínimo entre eventos de progresso de captura.
+const CAPTURE_PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
+
 /// Identidade única de uma reprodução de saída.
 ///
 /// Gerada pela thread de áudio em cada [`AudioPort::start_playback`]; os
@@ -55,6 +58,14 @@ pub struct PlaybackProgress {
     pub position_ms: u64,
     pub buffered_ms: u64,
     pub paused: bool,
+}
+
+/// Progresso de uma captura em curso: tempo efetivamente gravado e o nível do
+/// microfone mais recente (`None` antes do primeiro bloco).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CaptureProgress {
+    pub elapsed_ms: u64,
+    pub level: Option<f32>,
 }
 
 /// Reserva de uma gravação: identificador e pasta próprios.
@@ -113,6 +124,15 @@ pub enum AudioEvent {
     PlaybackProgress {
         id: PlaybackId,
         progress: PlaybackProgress,
+    },
+    /// Progresso periódico de uma captura em curso.
+    ///
+    /// `recording_id` identifica a gravação que o originou: um evento atrasado
+    /// de uma gravação já terminada não pode atualizar a gravação nova.
+    CaptureProgress {
+        recording_id: Option<String>,
+        elapsed_ms: u64,
+        level: Option<f32>,
     },
 }
 
@@ -184,6 +204,10 @@ pub trait AudioBackend {
         None
     }
     fn playback_finished(&mut self) -> bool;
+    /// Progresso atual da captura (tempo e nível), quando existe.
+    fn capture_progress(&mut self) -> Option<CaptureProgress> {
+        None
+    }
 }
 
 /// Comandos aceites pela thread de áudio.
@@ -451,6 +475,7 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
     let mut paused = false;
     let mut interruption_error: Option<AppError> = None;
     let mut last_progress: Option<Instant> = None;
+    let mut last_capture_progress: Option<Instant> = None;
 
     loop {
         let command = if capturing || current_id.is_some() {
@@ -484,6 +509,10 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                             capturing = true;
                             capturing_id = Some(recording_id);
                             interruption_error = None;
+                            // Primeiro progresso imediato; os seguintes no
+                            // máximo a cada 100 ms enquanto houver captura.
+                            emit_capture_progress(&mut backend, &events, capturing_id.as_deref());
+                            last_capture_progress = Some(Instant::now());
                             let _ = reply.send(Ok(()));
                         }
                         Err(error) => {
@@ -619,6 +648,10 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                     capture: interruption.capture,
                     error: interruption.error,
                 });
+            } else if last_capture_progress.is_none_or(|t| t.elapsed() >= CAPTURE_PROGRESS_INTERVAL)
+            {
+                emit_capture_progress(&mut backend, &events, capturing_id.as_deref());
+                last_capture_progress = Some(Instant::now());
             }
         }
         if let Some(id) = current_id.clone() {
@@ -640,6 +673,26 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
             }
         }
     }
+}
+
+/// Publica o progresso atual da captura com a identidade da gravação ativa.
+///
+/// Sem progresso (captura já encerrada) não emite nada; a identidade vem da
+/// thread de áudio, que só passa a gravação ativa, para que uma gravação antiga
+/// não atualize uma mais recente.
+fn emit_capture_progress(
+    backend: &mut Box<dyn AudioBackend>,
+    events: &EventSink,
+    recording_id: Option<&str>,
+) {
+    let Some(progress) = backend.capture_progress() else {
+        return;
+    };
+    events(AudioEvent::CaptureProgress {
+        recording_id: recording_id.map(str::to_owned),
+        elapsed_ms: progress.elapsed_ms,
+        level: progress.level,
+    });
 }
 
 /// Fecha a captura ativa e publica a interrupção com o áudio recuperável.
@@ -711,6 +764,10 @@ impl AudioBackend for NativeDevices {
             }
         }
         result
+    }
+
+    fn capture_progress(&mut self) -> Option<CaptureProgress> {
+        self.capture.capture_progress()
     }
 
     fn play(&mut self, path: PathBuf) -> Result<(), AppError> {

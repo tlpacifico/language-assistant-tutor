@@ -15,12 +15,12 @@ use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use sha2::{Digest, Sha256};
 
 use language_assistant_tutor::audio::capture::{
-    channel, CaptureFailure, CaptureSpec, FailureKind, PendingCapture, PARTIAL_FILE,
+    channel, peak_level, CaptureFailure, CaptureSpec, FailureKind, PendingCapture, PARTIAL_FILE,
 };
 use language_assistant_tutor::audio::normalize::normalize_wav;
 use language_assistant_tutor::audio::{
-    AudioBackend, AudioEvent, AudioPort, AvailabilityAudio, CaptureInterruption, CapturedAudio,
-    NativeAudio, PlaybackProgress, RecordingTarget,
+    AudioBackend, AudioEvent, AudioPort, AvailabilityAudio, CaptureInterruption, CaptureProgress,
+    CapturedAudio, NativeAudio, PlaybackProgress, RecordingTarget,
 };
 use language_assistant_tutor::domain::{AppError, CaptureMeta, ComponentState, ComponentStatus};
 
@@ -146,6 +146,8 @@ struct FakeAudio {
     finished: Arc<Mutex<bool>>,
     /// Progresso que a próxima leitura devolve.
     progress: Arc<Mutex<Option<PlaybackProgress>>>,
+    /// Progresso de captura que a próxima leitura devolve.
+    capture_progress: Arc<Mutex<Option<CaptureProgress>>>,
 }
 
 impl FakeAudio {
@@ -169,6 +171,14 @@ impl FakeAudio {
     /// Muda o progresso devolvido até nova alteração.
     fn set_progress(&self, progress: PlaybackProgress) {
         *self.progress.lock().expect("progresso programado") = Some(progress);
+    }
+
+    /// Muda o progresso de captura devolvido até nova alteração.
+    fn set_capture_progress(&self, progress: CaptureProgress) {
+        *self
+            .capture_progress
+            .lock()
+            .expect("progresso de captura programado") = Some(progress);
     }
 
     fn steps(&self) -> Vec<String> {
@@ -255,6 +265,13 @@ impl AudioBackend for FakeAudio {
         self.progress.lock().expect("ler progresso").clone()
     }
 
+    fn capture_progress(&mut self) -> Option<CaptureProgress> {
+        *self
+            .capture_progress
+            .lock()
+            .expect("ler progresso de captura")
+    }
+
     fn playback_finished(&mut self) -> bool {
         *self.finished.lock().expect("ler fim")
     }
@@ -263,6 +280,21 @@ impl AudioBackend for FakeAudio {
 // ---------------------------------------------------------------------------
 // Testes exigidos
 // ---------------------------------------------------------------------------
+
+#[test]
+fn peak_level_uses_actual_samples() {
+    // Silêncio, com ou sem amostras, é 0.0.
+    assert_eq!(peak_level(&[]), 0.0);
+    assert_eq!(peak_level(&[0i16; 64]), 0.0);
+
+    // Meia amplitude dá metade do pico.
+    let half = i16::MAX / 2;
+    let expected = f32::from(half) / f32::from(i16::MAX);
+    assert_eq!(peak_level(&[half, -half]), expected);
+
+    // Amplitude máxima, positiva e negativa, dá 1.0.
+    assert_eq!(peak_level(&[i16::MAX, -i16::MAX]), 1.0);
+}
 
 #[test]
 fn normalizes_stereo_48k_without_mutating_source() {
@@ -589,6 +621,57 @@ fn playback_is_blocked_while_recording() {
         .start_playback(audio_file)
         .expect("reproduzir depois de gravar");
     assert_eq!(probe.steps().last().map(String::as_str), Some("play"));
+}
+
+#[test]
+fn capture_progress_names_the_recording_and_reports_elapsed() {
+    let root = tempfile::tempdir().expect("pasta temporária");
+    let fake = FakeAudio::default();
+    let factory = fake.clone();
+    let events: Arc<Mutex<Vec<AudioEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    let audio = NativeAudio::with_backend(
+        move || Box::new(factory.clone()),
+        move |event: AudioEvent| sink.lock().expect("evento").push(event),
+    )
+    .expect("criar porta de áudio");
+
+    let folder = target(root.path(), "gravacao");
+    fake.set_capture_progress(CaptureProgress {
+        elapsed_ms: 123,
+        level: Some(0.5),
+    });
+    audio
+        .start_capture(folder.clone())
+        .expect("começar a gravar");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let progress = events.lock().expect("eventos").iter().find_map(|event| {
+            if let AudioEvent::CaptureProgress {
+                recording_id,
+                elapsed_ms,
+                level,
+            } = event
+            {
+                Some((recording_id.clone(), *elapsed_ms, *level))
+            } else {
+                None
+            }
+        });
+        if let Some((recording_id, elapsed_ms, level)) = progress {
+            assert_eq!(
+                recording_id.as_deref(),
+                Some(folder.id.as_str()),
+                "o progresso identifica a gravação que o originou"
+            );
+            assert_eq!(elapsed_ms, 123, "o tempo gravado vem das frames escritas");
+            assert_eq!(level, Some(0.5), "o nível vem do pico do microfone");
+            return;
+        }
+        assert!(Instant::now() < deadline, "o progresso não chegou à porta");
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 // ---------------------------------------------------------------------------
