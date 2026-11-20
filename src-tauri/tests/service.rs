@@ -258,11 +258,11 @@ impl AudioPort for FakeAudio {
         Ok(format!("playback-{}", state.played.len()))
     }
 
-    fn append_chunk(&self, path: PathBuf, _id: &PlaybackId) -> Result<(), AppError> {
+    fn append_chunk(&self, path: PathBuf, id: &PlaybackId) -> Result<PlaybackId, AppError> {
         let mut state = self.state.lock().expect("estado do áudio");
         state.played.push(path.clone());
         state.playing = Some(path);
-        Ok(())
+        Ok(id.clone())
     }
 
     fn pause_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {

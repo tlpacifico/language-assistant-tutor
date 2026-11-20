@@ -22,7 +22,9 @@ use language_assistant_tutor::audio::{
     AudioBackend, AudioEvent, AudioPort, AvailabilityAudio, CaptureInterruption, CaptureProgress,
     CapturedAudio, NativeAudio, PlaybackProgress, RecordingTarget,
 };
-use language_assistant_tutor::domain::{AppError, CaptureMeta, ComponentState, ComponentStatus};
+use language_assistant_tutor::domain::{
+    error_code, AppError, CaptureMeta, ComponentState, ComponentStatus,
+};
 
 // ---------------------------------------------------------------------------
 // Utilitários
@@ -787,9 +789,10 @@ fn append_from_a_previous_rendition_is_ignored() {
         .expect("primeira reprodução");
     let current = audio.start_playback(file.clone()).expect("substituição");
 
-    audio
-        .append_chunk(file.clone(), &stale)
-        .expect("bloco antigo é inofensivo");
+    assert_eq!(
+        audio.append_chunk(file.clone(), &stale).unwrap_err().code,
+        error_code::STALE_SOURCE
+    );
     assert_eq!(
         probe.steps(),
         vec!["play", "play"],
@@ -862,7 +865,7 @@ fn finished_event_carries_the_unique_id() {
     )
     .expect("criar porta de áudio");
 
-    let id = audio.start_playback(file).expect("reproduzir");
+    let id = audio.start_playback(file.clone()).expect("reproduzir");
     probe.mark_finished();
 
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -876,6 +879,11 @@ fn finished_event_carries_the_unique_id() {
         });
         if let Some(finished) = finished {
             assert_eq!(finished, id, "o fim identifica a reprodução que terminou");
+            let next = audio
+                .append_chunk(file, &id)
+                .expect("continuar a fila esvaziada");
+            assert_ne!(next, id);
+            assert_eq!(probe.steps(), vec!["play", "append"]);
             return;
         }
         assert!(Instant::now() < deadline, "o fim não chegou à porta");

@@ -195,9 +195,9 @@ impl AudioPort for FakeAudio {
         *self.last_id.lock().unwrap() = Some(id.clone());
         Ok(id)
     }
-    fn append_chunk(&self, path: PathBuf, _id: &PlaybackId) -> Result<(), AppError> {
+    fn append_chunk(&self, path: PathBuf, id: &PlaybackId) -> Result<PlaybackId, AppError> {
         self.appends.lock().unwrap().push(path);
-        Ok(())
+        Ok(id.clone())
     }
     fn pause_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
         *self.pause_attempts.lock().unwrap() += 1;
@@ -241,6 +241,7 @@ impl AudioPort for FakeAudio {
 #[derive(Default)]
 struct FakeWorker {
     requests: Mutex<Vec<WorkerRequest>>,
+    busy: Mutex<bool>,
     cancels: Mutex<usize>,
     order: OrderLog,
 }
@@ -279,7 +280,13 @@ impl FakeWorker {
 }
 
 impl WorkerControl for FakeWorker {
+    fn is_busy(&self) -> bool {
+        *self.busy.lock().unwrap()
+    }
     fn submit(&self, request: WorkerRequest) -> Result<(), AppError> {
+        if self.is_busy() {
+            return Err(AppError::busy("O auxiliar está ocupado."));
+        }
         self.requests.lock().unwrap().push(request);
         Ok(())
     }
@@ -623,7 +630,8 @@ async fn audio_is_saved_first_and_the_send_follows_only_the_transcript() {
         .unwrap();
     assert_eq!(stopped.session.state, ArticleState::Transcribing);
     // O áudio já está guardado no disco antes de qualquer envio.
-    assert_eq!(stopped.turns.len(), 1, "o turno sem texto não aparece");
+    assert_eq!(stopped.turns.len(), 2, "a gravação aguarda transcrição");
+    assert!(stopped.turns[1].version.text.is_empty());
     let id = ready.session.id.clone();
     let original = h
         .directory
@@ -1266,12 +1274,14 @@ async fn a_new_tutor_turn_is_spoken_in_ordered_chunks_and_bad_chunks_stop_the_vo
     assert_eq!(h.audio.appends().len(), 1);
     assert_eq!(playback(&h, &id).await, PlayerState::Playing);
 
+    let stops = h.audio.stops();
     // Fora de ordem ou fora da pasta do pedido: a voz falha e o auxiliar é parado.
     send_chunk(&h, &request, 5, chunk_path(&request, 5)).await;
     assert_eq!(playback(&h, &id).await, PlayerState::Failed);
     assert_eq!(h.audio.appends().len(), 1);
     assert_eq!(h.audio.plays().len(), 1);
     assert!(h.worker.cancels() >= 1);
+    assert_eq!(h.audio.stops(), stops + 1);
     // O texto continua visível.
     assert!(h.snapshot(&id).await.turns[0]
         .version
@@ -1760,6 +1770,39 @@ async fn a_stale_stop_after_the_audio_closed_does_not_leave_the_microphone_stuck
 }
 
 // -- leitor de artigos: cache, pausa, autoplay, foco e geração ------------------
+
+#[tokio::test]
+async fn replacing_a_busy_synthesis_waits_for_worker_release_and_honours_stop() {
+    for stop in [false, true] {
+        let h = Harness::new().await;
+        let ready = h.ready().await;
+        let id = &ready.session.id;
+        let first = h.worker.streams()[0].clone();
+        *h.worker.busy.lock().unwrap() = true;
+        let mut prefs = h.service.article_preferences_load().await.unwrap();
+        prefs.speed_x10 = 12;
+        h.service.article_preferences_save(prefs).await.unwrap();
+        let view = h
+            .service
+            .article_player_play(id, &ready.turns[0].id)
+            .await
+            .unwrap();
+        assert_eq!(
+            view.state,
+            language_assistant_tutor::article::PlayerState::Preparing
+        );
+        assert_eq!(h.worker.streams().len(), 1);
+        if stop {
+            h.service
+                .article_player_stop(id, view.generation)
+                .await
+                .unwrap();
+        }
+        *h.worker.busy.lock().unwrap() = false;
+        finish_stream(&h, &first, 0).await;
+        assert_eq!(h.worker.streams().len(), if stop { 1 } else { 2 });
+    }
+}
 
 #[tokio::test]
 async fn play_reuses_a_complete_cache_without_a_worker_request() {

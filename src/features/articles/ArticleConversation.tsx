@@ -72,7 +72,9 @@ function Turn({
       }`}
     >
       {emptyUserTurn ? (
-        <p className="article__turn-placeholder">A transcrever…</p>
+        <p className="article__turn-placeholder">
+          {state === "transcribing" ? "A transcrever…" : "Transcrição indisponível."}
+        </p>
       ) : (
         paragraphs(turn.version.text).map((part, index) => (
           <p key={index} lang="en">
@@ -181,7 +183,8 @@ export default function ArticleConversation({
     (t) =>
       t.version.text !== "" ||
       t.speaker === "tutor" ||
-      (state === "transcribing" && t.speaker === "user"),
+      (t.speaker === "user" && (state === "transcribing" ||
+        (state === "needs_review" && t.id === lastUser?.id))),
   );
   const latestQuestion = visibleTurns.filter((turn) => turn.speaker === "tutor").at(-1);
   const follow = useFollowTail(chatRef, visibleTurns.map((turn) => turn.id));
@@ -194,10 +197,12 @@ export default function ArticleConversation({
   }
 
   const primary = primaryAction(session, playback.player);
+  const captureUnavailable = !playback.conversationReady &&
+    (primary.kind === "record" || primary.kind === "respond");
   const canPause = canReplayAudio(state) && playback.player.turnId !== null &&
     playbackActive(playback.player);
   useArticleShortcuts({
-    onRecord: pending || primary.disabled || !primary.shortcut
+    onRecord: pending || captureUnavailable || primary.disabled || !primary.shortcut
       ? null
       : primary.kind === "stop" ? stopRecording : record,
     onPauseToggle: pending || playback.pending || !playback.ready || !canPause
@@ -456,6 +461,7 @@ export default function ArticleConversation({
         onPause={() => void playback.pause()}
         onResume={() => void playback.resume()}
         onStop={() => void playback.stop()}
+        recordDisabled={captureUnavailable}
         onRecord={record}
         onStopRecording={stopRecording}
         onFinish={() => void run("finish", (command) => client.finish(command))}

@@ -100,9 +100,9 @@ impl AudioPort for Audio {
     fn append_chunk(
         &self,
         _: std::path::PathBuf,
-        _: &PlaybackId,
-    ) -> std::result::Result<(), AppError> {
-        Ok(())
+        id: &PlaybackId,
+    ) -> std::result::Result<PlaybackId, AppError> {
+        Ok(id.clone())
     }
     fn pause_playback(&self, _: &PlaybackId) -> std::result::Result<(), AppError> {
         Ok(())

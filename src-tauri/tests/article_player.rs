@@ -42,6 +42,25 @@ fn preparing_only_becomes_playing_after_playback_progress() {
 }
 
 #[test]
+fn short_audio_can_drain_before_the_first_positive_progress_event() {
+    for completed in [false, true] {
+        let mut player = PlayerRuntime::idle("session");
+        select(&mut player, "turn", "version");
+        player.note_queued();
+        if completed {
+            player.apply(1, PlayerEvent::Completed { duration_ms: 40 });
+        }
+        assert!(player.apply(1, PlayerEvent::Drained));
+        if completed {
+            assert_eq!(player.view().state, PlayerState::Ended);
+            assert_eq!(player.view().position_ms, 40);
+        } else {
+            assert_eq!(player.view().state, PlayerState::Buffering);
+        }
+    }
+}
+
+#[test]
 fn empty_queue_while_generating_is_buffering_not_ended() {
     let mut p = PlayerRuntime::idle("session-1");
     select(&mut p, "turn-3", "version-3");

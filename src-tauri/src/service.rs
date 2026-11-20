@@ -120,6 +120,9 @@ pub trait WorkerControl: Send + Sync {
     fn shutdown(&self) -> Result<(), AppError>;
     fn generation(&self) -> u64;
     fn is_running(&self) -> bool;
+    fn is_busy(&self) -> bool {
+        false
+    }
     /// Cancelamento cooperativo da síntese incremental em curso.
     fn cancel(&self) -> Result<(), AppError> {
         Ok(())
@@ -145,6 +148,9 @@ impl WorkerControl for WorkerClient {
 
     fn is_running(&self) -> bool {
         WorkerClient::is_running(self)
+    }
+    fn is_busy(&self) -> bool {
+        WorkerClient::is_busy(self)
     }
 
     fn cancel(&self) -> Result<(), AppError> {

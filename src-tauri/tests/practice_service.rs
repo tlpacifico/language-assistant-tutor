@@ -131,8 +131,8 @@ impl AudioPort for FakeAudio {
         Ok("playback".to_owned())
     }
 
-    fn append_chunk(&self, _path: PathBuf, _id: &PlaybackId) -> Result<(), AppError> {
-        Ok(())
+    fn append_chunk(&self, _path: PathBuf, id: &PlaybackId) -> Result<PlaybackId, AppError> {
+        Ok(id.clone())
     }
 
     fn pause_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {

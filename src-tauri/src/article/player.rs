@@ -300,7 +300,12 @@ impl PlayerRuntime {
             PlayerEvent::Drained => {
                 self.queued = false;
                 match self.view.state {
-                    S::Playing => {
+                    S::Preparing | S::Playing | S::Buffering => {
+                        self.view.position_ms = self
+                            .view
+                            .duration_ms
+                            .or(self.view.buffered_ms)
+                            .unwrap_or(self.view.position_ms);
                         self.view.state = if self.view.duration_ms.is_some() {
                             S::Ended
                         } else {

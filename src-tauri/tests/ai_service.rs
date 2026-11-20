@@ -79,8 +79,12 @@ impl AudioPort for Audio {
     fn start_playback(&self, _: PathBuf) -> std::result::Result<PlaybackId, AppError> {
         Ok("playback".to_owned())
     }
-    fn append_chunk(&self, _: PathBuf, _: &PlaybackId) -> std::result::Result<(), AppError> {
-        Ok(())
+    fn append_chunk(
+        &self,
+        _: PathBuf,
+        id: &PlaybackId,
+    ) -> std::result::Result<PlaybackId, AppError> {
+        Ok(id.clone())
     }
     fn pause_playback(&self, _: &PlaybackId) -> std::result::Result<(), AppError> {
         Ok(())

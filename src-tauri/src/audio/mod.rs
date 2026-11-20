@@ -160,8 +160,9 @@ pub trait AudioPort: Send + Sync {
     /// Começa uma reprodução nova, substituindo a anterior, e devolve a
     /// identidade única que passa a controlá-la.
     fn start_playback(&self, path: PathBuf) -> Result<PlaybackId, AppError>;
-    /// Acrescenta um WAV à fila da reprodução identificada.
-    fn append_chunk(&self, path: PathBuf, id: &PlaybackId) -> Result<(), AppError>;
+    /// Acrescenta um WAV e devolve a identidade da fila. Continuar uma fila
+    /// já esvaziada atribui uma identidade nova aos seus eventos seguintes.
+    fn append_chunk(&self, path: PathBuf, id: &PlaybackId) -> Result<PlaybackId, AppError>;
     fn pause_playback(&self, id: &PlaybackId) -> Result<(), AppError>;
     fn resume_playback(&self, id: &PlaybackId) -> Result<(), AppError>;
     fn stop_playback(&self, id: &PlaybackId) -> Result<(), AppError>;
@@ -225,7 +226,7 @@ enum Command {
     AppendChunk {
         path: PathBuf,
         id: PlaybackId,
-        reply: Sender<Result<(), AppError>>,
+        reply: Sender<Result<PlaybackId, AppError>>,
     },
     PausePlayback {
         id: PlaybackId,
@@ -397,7 +398,7 @@ impl AudioPort for NativeAudio {
         self.request(|reply| Command::StartPlayback { path, reply })?
     }
 
-    fn append_chunk(&self, path: PathBuf, id: &PlaybackId) -> Result<(), AppError> {
+    fn append_chunk(&self, path: PathBuf, id: &PlaybackId) -> Result<PlaybackId, AppError> {
         self.request(|reply| Command::AppendChunk {
             path,
             id: id.clone(),
@@ -472,6 +473,7 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
     let mut capturing = false;
     let mut capturing_id: Option<String> = None;
     let mut current_id: Option<PlaybackId> = None;
+    let mut drained_id: Option<PlaybackId> = None;
     let mut paused = false;
     let mut interruption_error: Option<AppError> = None;
     let mut last_progress: Option<Instant> = None;
@@ -503,6 +505,7 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                         current_id = None;
                         paused = false;
                     }
+                    drained_id = None;
                     let recording_id = target.id.clone();
                     match backend.start_capture(target) {
                         Ok(()) => {
@@ -549,6 +552,7 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                         let id = uuid::Uuid::new_v4().to_string();
                         match backend.play(path) {
                             Ok(()) => {
+                                drained_id = None;
                                 current_id = Some(id.clone());
                                 paused = false;
                                 last_progress = None;
@@ -565,12 +569,25 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                         let _ = reply.send(Err(AppError::busy(
                             "Não é possível reproduzir áudio enquanto o microfone está a gravar.",
                         )));
-                    } else if current_id.as_deref() != Some(id.as_str()) {
-                        // Bloco de uma reprodução já substituída: ignorado sem
-                        // tocar no dispositivo.
-                        let _ = reply.send(Ok(()));
+                    } else if current_id.as_ref() == Some(&id) {
+                        let _ = reply.send(backend.append(path).map(|()| id));
+                    } else if drained_id.as_ref() == Some(&id) {
+                        // A fila acabou antes de o serviço receber PlaybackFinished.
+                        // O novo bloco continua o mesmo Player e o respetivo relógio.
+                        let result = backend.append(path).map(|()| {
+                            let next = uuid::Uuid::new_v4().to_string();
+                            current_id = Some(next.clone());
+                            drained_id = None;
+                            last_progress = None;
+                            next
+                        });
+                        let _ = reply.send(result);
                     } else {
-                        let _ = reply.send(backend.append(path));
+                        let _ = reply.send(Err(AppError::new(
+                            error_code::STALE_SOURCE,
+                            "Esta reprodução já foi substituída.",
+                            false,
+                        )));
                     }
                 }
                 Command::PausePlayback { id, reply } => {
@@ -604,6 +621,9 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                     }
                 }
                 Command::StopPlayback { id, reply } => {
+                    if drained_id.as_ref() == Some(&id) {
+                        drained_id = None;
+                    }
                     if current_id.as_deref() == Some(id.as_str()) {
                         let result = backend.stop_playback();
                         if result.is_ok() {
@@ -617,6 +637,7 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
                     }
                 }
                 Command::StopAllPlayback(reply) => {
+                    drained_id = None;
                     let result = backend.stop_playback();
                     if result.is_ok() {
                         current_id = None;
@@ -669,6 +690,7 @@ fn audio_loop(mut backend: Box<dyn AudioBackend>, events: EventSink, commands: R
             if !paused && backend.playback_finished() {
                 current_id = None;
                 paused = false;
+                drained_id = Some(id.clone());
                 events(AudioEvent::PlaybackFinished { id });
             }
         }

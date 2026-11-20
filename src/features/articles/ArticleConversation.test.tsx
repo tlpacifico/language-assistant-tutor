@@ -248,6 +248,22 @@ describe("ArticleConversation", () => {
     );
   });
 
+  it.each(["snapshot", "focusView"] as const)(
+    "mantém as atualizações da conversa quando %s falha",
+    async (operation) => {
+      const initial = makeSnapshot();
+      const fake = fakeArticleClient(initial);
+      fake.client[operation].mockRejectedValueOnce(new Error("IPC"));
+      render(<ArticleConversation client={fake.client} initial={initial} />);
+      await screen.findByRole("alert");
+      act(() => fake.emit(makeSnapshot({ session: { state: "transcribing", version: 4 } })));
+      expect(screen.getByText("A transcrever a resposta…")).toBeInTheDocument();
+      act(() => fake.emit(makeSnapshot({ session: { state: "ready", version: 5 } })));
+      expect(screen.getByRole("button", { name: "Gravar resposta" })).toBeEnabled();
+      expect(screen.queryByText("A transcrever a resposta…")).not.toBeInTheDocument();
+    },
+  );
+
   it("pede texto manual quando a transcrição falhou", async () => {
     const user = userEvent.setup();
     const { fake } = setup(
@@ -259,6 +275,12 @@ describe("ArticleConversation", () => {
         ],
       }),
     );
+    const original = within(screen.getByTestId("turn-user"));
+    expect(original.getByText("Transcrição indisponível.")).toBeInTheDocument();
+    const play = original.getByRole("button", { name: "Ouvir" });
+    await waitFor(() => expect(play).toBeEnabled());
+    await user.click(play);
+    expect(fake.client.play).toHaveBeenCalledWith("session-1", "turn-2");
     const send = screen.getByRole("button", { name: "Enviar texto" });
     expect(send).toBeDisabled();
     await user.type(

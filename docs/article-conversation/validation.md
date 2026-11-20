@@ -64,6 +64,15 @@ The R1 implementation follows the [design](../superpowers/specs/2026-11-20-artic
 
 The rehearsals used controlled or synthetic data. Real recording, listening to Kokoro, paid inference, installer validation and performance measurements remain pending.
 
+### PR #5 regression coverage
+
+After the review fixes, `scripts/verify.ps1` passed all eight checks in 172.0 s, including 433 distinct Rust tests, 190 Vitest tests and 56 Python tests (two model tests deselected). The no-bundle release build also succeeded.
+
+- The conversation continues receiving session snapshots if player initialization fails. The persisted snapshot exposes the saved turn during transcription. When transcription fails, the manual editor and the saved recording are available together.
+- Selecting an uncached voice while the helper finishes a cancelled synthesis defers the new request. Stopping playback also discards that pending selection.
+- A chunk arriving after the native queue drains receives a new playback ID. The delayed end event belongs to the previous queue. Short recordings can reach the ended state before the first positive position sample.
+- A synthesis or chunk protocol failure stops audio already queued for that rendition. The conversation text remains available for an explicit retry.
+
 ### R1 acceptance criteria
 
 | ID | Automated evidence | Manual acceptance |

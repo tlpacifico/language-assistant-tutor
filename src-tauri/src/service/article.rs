@@ -89,11 +89,19 @@ pub(super) struct ArticleSpeech {
     first_reported: bool,
 }
 
+struct PendingVoice {
+    session_id: String,
+    text: String,
+    key: String,
+    speed_x10: u8,
+}
+
 /// Estado em memória do modo artigo.
 pub(super) struct ArticleRuntime {
     capture: Option<ArticleCapture>,
     transcription: Option<ArticleTranscription>,
     speech: Option<ArticleSpeech>,
+    pending_voice: Option<PendingVoice>,
     /// Máquina de estados da reprodução; única dona de generation/sequence.
     player: PlayerRuntime,
     /// Máquina de estados da gravação; dona de capture_id/sequence.
@@ -118,6 +126,7 @@ impl Default for ArticleRuntime {
             capture: None,
             transcription: None,
             speech: None,
+            pending_voice: None,
             player: PlayerRuntime::idle(String::new()),
             recording: RecordingRuntime::new(String::new()),
             playback_id: None,
@@ -650,6 +659,7 @@ impl AppService {
     fn invalidate_article_player_locked(&self) {
         let view = {
             let mut runtime = self.lock_article();
+            runtime.pending_voice = None;
             runtime.position_offset_ms = 0;
             runtime.buffered_offset_ms = 0;
             runtime.player.invalidate()
@@ -676,6 +686,7 @@ impl AppService {
     async fn cancel_article_synthesis(&self) {
         let speech = {
             let mut runtime = self.lock_article();
+            runtime.pending_voice = None;
             runtime.speech.take()
         };
         if speech.is_some_and(|speech| !speech.completed) {
@@ -905,6 +916,21 @@ impl AppService {
         generation: u64,
         message: &WorkerMessage,
     ) -> bool {
+        if matches!(
+            message,
+            WorkerMessage::Completed { .. } | WorkerMessage::Failed { .. }
+        ) {
+            let pending = self.lock_article().pending_voice.take();
+            if let Some(voice) = pending {
+                if let Err(error) = self
+                    .begin_synthesis(&voice.session_id, &voice.text, &voice.key, voice.speed_x10)
+                    .await
+                {
+                    self.record_error(&error);
+                    self.fail_player_synthesis();
+                }
+            }
+        }
         let request_id = match message {
             WorkerMessage::Progress { request_id, .. }
             | WorkerMessage::AudioChunk { request_id, .. }
@@ -1209,7 +1235,7 @@ impl AppService {
 
         // Reinício durante uma geração ativa: conserva o prefixo ordenado e
         // aceita os blocos restantes uma vez, sem regenerar. Tem de vir antes
-        // de `remove_incomplete`, que apagaria a entrada ainda em curso. A
+        // da preparação da cache, que apagaria a entrada ainda em curso. A
         // reutilização é limitada à mesma sessão: o prefixo de uma conversa
         // nunca é reproduzido noutra com texto idêntico.
         let reuse = self.lock_article().speech.as_ref().is_some_and(|speech| {
@@ -1238,11 +1264,9 @@ impl AppService {
         }
 
         let dir = self.session_dir(session_id);
-        let dir2 = dir.clone();
-        storage_task(move || remove_incomplete(&dir2)).await?;
-        let dir3 = dir.clone();
+
         let key3 = key.clone();
-        let cached = storage_task(move || Ok(read_cache(&dir3, &key3))).await?;
+        let cached = storage_task(move || Ok(read_cache(&dir, &key3))).await?;
 
         if let Some(cached) = cached {
             // Cache completa: começa já, do início.
@@ -1295,11 +1319,26 @@ impl AppService {
                 "O auxiliar Python não está em execução; reinicie-o antes de sintetizar a voz.",
             ));
         }
+        // O supervisor só liberta o pedido cancelado ao publicar o evento terminal.
+        // Até lá guardamos a seleção, sem tocar na pasta que o auxiliar ainda usa.
+        if control.is_busy() {
+            self.lock_article().pending_voice = Some(PendingVoice {
+                session_id: session_id.to_owned(),
+                text: text.to_owned(),
+                key: key.to_owned(),
+                speed_x10,
+            });
+            return Ok(());
+        }
         let dir = self.session_dir(session_id);
         let entry = {
             let dir = dir.clone();
             let key = key.to_owned();
-            storage_task(move || begin_entry(&dir, &key)).await?
+            storage_task(move || {
+                remove_incomplete(&dir)?;
+                begin_entry(&dir, &key)
+            })
+            .await?
         };
         let request_id = format!("voice-{}", uuid::Uuid::new_v4());
         let params = SynthesizeStreamParams {
@@ -1336,6 +1375,7 @@ impl AppService {
     async fn stop_device_now(&self) {
         let (speech, playback_id) = {
             let mut runtime = self.lock_article();
+            runtime.pending_voice = None;
             let speech = runtime.speech.take();
             let playback_id = runtime.playback_id.take();
             (speech, playback_id)
@@ -1420,7 +1460,9 @@ impl AppService {
             let path = directory.join(chunk_file(played));
             let id2 = id.clone().expect("identidade da voz em curso");
             let audio = Arc::clone(&self.audio);
-            audio_task(move || audio.append_chunk(path, &id2)).await?;
+            let next_id = audio_task(move || audio.append_chunk(path, &id2)).await?;
+            self.lock_article().playback_id = Some(next_id.clone());
+            id = Some(next_id);
             played += 1;
         }
         let mut runtime = self.lock_article();
@@ -1440,7 +1482,7 @@ impl AppService {
         }
         let first = cached.chunks[0].path.clone();
         let audio = Arc::clone(&self.audio);
-        let id = match audio_task(move || audio.start_playback(first)).await {
+        let mut id = match audio_task(move || audio.start_playback(first)).await {
             Ok(id) => id,
             Err(error) => {
                 self.fail_player_output();
@@ -1454,10 +1496,16 @@ impl AppService {
             let path = chunk.path.clone();
             let id2 = id.clone();
             let audio = Arc::clone(&self.audio);
-            if let Err(error) = audio_task(move || audio.append_chunk(path, &id2)).await {
-                self.stop_device_now().await;
-                self.fail_player_output();
-                return Err(error);
+            match audio_task(move || audio.append_chunk(path, &id2)).await {
+                Ok(next_id) => {
+                    self.lock_article().playback_id = Some(next_id.clone());
+                    id = next_id;
+                }
+                Err(error) => {
+                    self.stop_device_now().await;
+                    self.fail_player_output();
+                    return Err(error);
+                }
             }
         }
         let duration = cached.total_duration_ms();
@@ -1620,10 +1668,7 @@ impl AppService {
     /// Falha da síntese: cancela o auxiliar, esquece a sequência e marca a
     /// reprodução `failed` sem perder o texto.
     async fn fail_speech_after_error(&self, error: &AppError) {
-        if let Some(control) = self.worker_control() {
-            let _ = worker_task(move || control.cancel()).await;
-        }
-        self.lock_article().speech = None;
+        self.stop_device_now().await;
         self.record_error(error);
         self.fail_player_synthesis();
     }
@@ -1632,10 +1677,7 @@ impl AppService {
     /// dispositivo falhou. Cancela o auxiliar, esquece a sequência e marca a
     /// operação como `Output`; o texto fica visível e a rendição é repetível.
     async fn fail_speech_output(&self, error: &AppError) {
-        if let Some(control) = self.worker_control() {
-            let _ = worker_task(move || control.cancel()).await;
-        }
-        self.lock_article().speech = None;
+        self.stop_device_now().await;
         self.record_error(error);
         self.fail_player_output();
     }

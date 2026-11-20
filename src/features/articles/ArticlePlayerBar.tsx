@@ -83,6 +83,7 @@ export default function ArticlePlayerBar({
   recording,
   busy,
   mediaDisabled = false,
+  recordDisabled = false,
   onPlay,
   onPause,
   onResume,
@@ -98,6 +99,7 @@ export default function ArticlePlayerBar({
   recording: ArticleRecordingView;
   busy: boolean;
   mediaDisabled?: boolean;
+  recordDisabled?: boolean;
   onPlay: (turnId: string) => void;
   onPause: () => void;
   onResume: () => void;
@@ -247,7 +249,7 @@ export default function ArticlePlayerBar({
         <PrimaryButton
           buttonRef={trackPrimary}
           action={action}
-          busy={busy}
+          busy={busy || recordDisabled}
           onRecord={onRecord}
           onStopRecording={onStopRecording}
           onFinish={onFinish}

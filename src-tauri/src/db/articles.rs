@@ -745,10 +745,12 @@ fn build_snapshot(connection: &Connection, session: SessionRow) -> Result<Articl
     let projected = project_branch(connection, &session.branch)?;
     let answers = answer_count(&projected);
     let context = context_of(&session, &projected);
-    // Um turno do utilizador sem texto só aparece quando aguarda texto manual.
-    let awaiting_review = session.state == ArticleState::NeedsReview
-        || (session.state == ArticleState::Paused
-            && session.paused_from == Some(ArticleState::NeedsReview));
+    // Depois de guardar o áudio, o último turno pode aguardar transcrição ou revisão.
+    let awaiting_text = matches!(
+        session.state,
+        ArticleState::Transcribing | ArticleState::NeedsReview
+    ) || (session.state == ArticleState::Paused
+        && session.paused_from == Some(ArticleState::NeedsReview));
     let last = projected.len().saturating_sub(1);
     let turns = projected
         .iter()
@@ -756,7 +758,7 @@ fn build_snapshot(connection: &Connection, session: SessionRow) -> Result<Articl
         .filter(|(index, t)| {
             t.speaker == ArticleSpeaker::Tutor
                 || !t.text.is_empty()
-                || (awaiting_review && *index == last)
+                || (awaiting_text && *index == last)
         })
         .map(|(_, t)| t)
         .enumerate()

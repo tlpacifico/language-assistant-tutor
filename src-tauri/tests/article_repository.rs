@@ -664,14 +664,16 @@ fn deleting_while_recording_is_refused_until_the_recording_stops() {
 }
 
 #[test]
-fn empty_user_turns_are_hidden_unless_they_await_manual_text() {
+fn saved_turn_is_visible_during_transcription_and_manual_review() {
     let (_d, mut flow) = Flow::new("Article.");
     flow.authorize_and_ask();
     flow.start("u1");
     // A gravar: só a pergunta do tutor aparece, sem balão vazio.
     assert_eq!(flow.snapshot.turns.len(), 1);
     flow.apply(ArticleMutation::StopRecording);
-    assert_eq!(flow.snapshot.turns.len(), 1);
+    assert_eq!(flow.snapshot.turns.len(), 2);
+    assert_eq!(flow.snapshot.turns[1].id, "u1");
+    assert!(flow.snapshot.turns[1].version.text.is_empty());
     // Transcrição vazia: o turno é necessário para o texto manual.
     flow.apply(ArticleMutation::RecordTranscript {
         turn_id: "u1".into(),

@@ -31,6 +31,7 @@ export interface ArticlePlaybackApi {
   stop: () => Promise<void>;
   pending: boolean;
   ready: boolean;
+  conversationReady: boolean;
   error: AppError | null;
 }
 
@@ -44,6 +45,7 @@ export function useArticlePlayback(
   const [recording, setRecording] = useState(initial.recording);
   const [error, setError] = useState<AppError | null>(null);
   const [pending, setPending] = useState(false);
+  const [conversationReady, setConversationReady] = useState(false);
   const [ready, setReady] = useState(false);
 
   const playerRef = useRef(initial.audio);
@@ -57,6 +59,7 @@ export function useArticlePlayback(
     let cancelled = false;
     mountedRef.current = true;
     setReady(false);
+    setConversationReady(false);
     const token = newRequestId();
     const unlisteners: (() => void)[] = [];
 
@@ -103,7 +106,9 @@ export function useArticlePlayback(
       await Promise.all([
         onSnapshot && trackSubscription(client.subscribe((snapshot) => {
           if (!cancelled) onSnapshot(snapshot);
-        })),
+        })).then(() => {
+          if (!cancelled) setConversationReady(true);
+        }),
         trackSubscription(client.subscribePlayer(handlePlayer)),
         trackSubscription(client.subscribeRecording(handleRecording)),
       ]);
@@ -148,7 +153,7 @@ export function useArticlePlayback(
     })().catch((failure) => {
       if (!cancelled) {
         setError(toAppError(failure));
-        removeListeners();
+        // Keep receiving conversation snapshots even if media setup failed.
       }
     });
 
@@ -207,5 +212,5 @@ export function useArticlePlayback(
     return runAction(() => client.stop(sessionId, generation));
   }, [client, sessionId, runAction]);
 
-  return { player, recording, play, pause, resume, stop, pending, ready, error };
+  return { player, recording, play, pause, resume, stop, pending, ready, conversationReady, error };
 }
