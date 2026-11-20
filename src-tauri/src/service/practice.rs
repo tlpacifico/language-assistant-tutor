@@ -246,13 +246,19 @@ impl AppService {
         let slot_id = answer_id.clone();
 
         let audio = Arc::clone(&self.audio);
-        if let Err(error) = audio_task(move || audio.stop_playback()).await {
-            self.record_error(&error);
-            return Err(error);
+        let playback_id = self.lock_state().playback_id.clone();
+        if let Some(id) = playback_id {
+            if let Err(error) = audio_task(move || audio.stop_playback(&id)).await {
+                self.record_error(&error);
+                return Err(error);
+            }
         }
         let playing = self.lock_state().playback.is_some();
         if playing {
-            self.commit(|state| state.playback = None);
+            self.commit(|state| {
+                state.playback = None;
+                state.playback_id = None;
+            });
         }
 
         // Uma preparação pendente por resolver impede nova reserva: nada é
@@ -340,6 +346,7 @@ impl AppService {
                 self.commit(|state| {
                     state.recording_id = Some(recording_id.clone());
                     state.playback = None;
+                    state.playback_id = None;
                     state.last_error = None;
                 });
                 // Marca o arranque sem parar a captura se a escrita falhar: a
@@ -365,6 +372,7 @@ impl AppService {
                 let _ = database_task(move || db.mark_preparation_failed(&id)).await;
                 self.commit(|state| {
                     state.playback = None;
+                    state.playback_id = None;
                     state.last_error = Some(error.clone());
                 });
                 self.resample_after_device_error(&error).await;

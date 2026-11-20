@@ -301,15 +301,21 @@ impl AppService {
         }
 
         let audio = Arc::clone(&self.audio);
-        if let Err(error) = audio_task(move || audio.stop_playback()).await {
-            self.record_error(&error);
-            return Err(error);
+        let playback_id = self.lock_state().playback_id.clone();
+        if let Some(id) = playback_id {
+            if let Err(error) = audio_task(move || audio.stop_playback(&id)).await {
+                self.record_error(&error);
+                return Err(error);
+            }
         }
         // A reprodução terminou antes de abrir a entrada; o estado acompanha a
         // paragem mesmo que a reserva falhe de seguida.
         let playing = self.lock_state().playback.is_some();
         if playing {
-            self.commit(|state| state.playback = None);
+            self.commit(|state| {
+                state.playback = None;
+                state.playback_id = None;
+            });
         }
 
         let db = database.clone();
@@ -357,6 +363,7 @@ impl AppService {
                 Ok(self.commit(|state| {
                     state.recording_id = Some(recording_id);
                     state.playback = None;
+                    state.playback_id = None;
                     state.last_error = None;
                 }))
             }
@@ -368,6 +375,7 @@ impl AppService {
                 let _ = database_task(move || db.mark_interrupted(&id)).await;
                 self.commit(|state| {
                     state.playback = None;
+                    state.playback_id = None;
                     state.last_error = Some(error.clone());
                 });
                 // Um microfone que desapareceu tem de aparecer no painel de
@@ -515,6 +523,7 @@ impl AppService {
             state.pending_recording_id = None;
             state.finalizing = false;
             state.playback = None;
+            state.playback_id = None;
             state.last_error = None;
         });
         if let Err(error) = self.refresh_session(&database).await {

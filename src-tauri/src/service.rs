@@ -241,6 +241,8 @@ struct InterviewState {
     finalizing: bool,
     model_job: Option<ModelJobView>,
     playback: Option<PlaybackTarget>,
+    /// Identidade da reprodução em curso, devolvida pela porta de áudio.
+    playback_id: Option<crate::audio::PlaybackId>,
     warnings: Vec<AppError>,
     last_error: Option<AppError>,
     worker_generation: u64,
@@ -272,6 +274,7 @@ impl InterviewState {
             finalizing: false,
             model_job: None,
             playback: None,
+            playback_id: None,
             warnings: Vec::new(),
             last_error: None,
             worker_generation: 0,
@@ -818,12 +821,15 @@ impl AppService {
     /// Pára a reprodução em curso, se existir.
     pub async fn stop_audio(&self) -> Result<InterviewSnapshot, AppError> {
         let _transition = self.transitions.lock().await;
-        if self.lock_state().playback.is_none() {
+        let Some(id) = self.lock_state().playback_id.clone() else {
             return Ok(self.snapshot());
-        }
+        };
         let audio = Arc::clone(&self.audio);
-        match audio_task(move || audio.stop_playback()).await {
-            Ok(()) => Ok(self.commit(|state| state.playback = None)),
+        match audio_task(move || audio.stop_playback(&id)).await {
+            Ok(()) => Ok(self.commit(|state| {
+                state.playback = None;
+                state.playback_id = None;
+            })),
             Err(error) => {
                 self.record_error(&error);
                 Err(error)
@@ -837,23 +843,26 @@ impl AppService {
         target: PlaybackTarget,
         path: PathBuf,
     ) -> Result<InterviewSnapshot, AppError> {
-        if self.lock_state().playback.is_some() {
+        let playback_id = self.lock_state().playback_id.clone();
+        if let Some(id) = playback_id {
             let audio = Arc::clone(&self.audio);
-            if let Err(error) = audio_task(move || audio.stop_playback()).await {
+            if let Err(error) = audio_task(move || audio.stop_playback(&id)).await {
                 self.record_error(&error);
                 return Err(error);
             }
         }
         let audio = Arc::clone(&self.audio);
-        match audio_task(move || audio.play(path)).await {
-            Ok(()) => Ok(self.commit(|state| {
+        match audio_task(move || audio.start_playback(path)).await {
+            Ok(id) => Ok(self.commit(|state| {
                 state.playback = Some(target);
+                state.playback_id = Some(id);
                 state.last_error = None;
             })),
             Err(error) => {
                 let shown = error.clone();
                 self.commit(|state| {
                     state.playback = None;
+                    state.playback_id = None;
                     state.last_error = Some(shown);
                 });
                 Err(error)
@@ -1025,12 +1034,13 @@ impl AppService {
         }
 
         let audio = Arc::clone(&self.audio);
-        let _ = audio_task(move || audio.stop_playback()).await;
+        let _ = audio_task(move || audio.stop_all_playback()).await;
 
         Ok(self.commit(|state| {
             state.finish_model_job();
             state.set_worker_generation(0);
             state.playback = None;
+            state.playback_id = None;
             state.finalizing = false;
         }))
     }
@@ -1049,13 +1059,19 @@ impl AppService {
                 self.apply_capture_interruption(recording_id, capture, error)
                     .await;
             }
-            AudioEvent::PlaybackFinished => {
-                self.article_playback_finished().await;
-                let playing = self.lock_state().playback.is_some();
-                if !playing {
+            AudioEvent::PlaybackFinished { id } => {
+                self.article_playback_finished(&id).await;
+                let matches = self.lock_state().playback_id.as_deref() == Some(id.as_str());
+                if !matches {
                     return; // fim de uma reprodução já substituída
                 }
-                self.commit(|state| state.playback = None);
+                self.commit(|state| {
+                    state.playback = None;
+                    state.playback_id = None;
+                });
+            }
+            AudioEvent::PlaybackProgress { .. } => {
+                // O progresso é consumido pelo leitor de artigos (tarefas 6 e 7).
             }
         }
     }
@@ -1349,14 +1365,15 @@ impl AppService {
 
         // A síntese pode terminar enquanto um áudio está a ser ouvido; a
         // reprodução automática da pergunta substitui a reprodução em curso.
-        let playing = self.lock_state().playback.is_some();
-        if playing {
+        let playback_id = self.lock_state().playback_id.clone();
+        if let Some(id) = playback_id {
             let audio = Arc::clone(&self.audio);
-            if let Err(error) = audio_task(move || audio.stop_playback()).await {
+            if let Err(error) = audio_task(move || audio.stop_playback(&id)).await {
                 let shown = error.clone();
                 self.commit(|state| {
                     state.finish_model_job();
                     state.playback = None;
+                    state.playback_id = None;
                     state.last_error = Some(shown);
                 });
                 return;
@@ -1364,18 +1381,20 @@ impl AppService {
         }
 
         let audio = Arc::clone(&self.audio);
-        match audio_task(move || audio.play(expected)).await {
-            Ok(()) => {
+        match audio_task(move || audio.start_playback(expected)).await {
+            Ok(id) => {
                 let target = pending.target;
                 self.commit(|state| {
                     state.finish_model_job();
                     state.playback = Some(target);
+                    state.playback_id = Some(id);
                 });
             }
             Err(error) => {
                 self.commit(|state| {
                     state.finish_model_job();
                     state.playback = None;
+                    state.playback_id = None;
                     state.last_error = Some(error);
                 });
             }

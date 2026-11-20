@@ -68,6 +68,8 @@ pub(super) struct ArticleRuntime {
     speech: Option<ArticleSpeech>,
     /// Estado de reprodução da voz, independente do estado da conversa.
     playback: Option<(String, String, ArticlePlayback)>,
+    /// Identidade da reprodução atual devolvida pela porta de áudio.
+    playback_id: Option<crate::audio::PlaybackId>,
     /// A fila de áudio esvaziou enquanto a síntese ainda decorria.
     drained: bool,
     tasks: Vec<JoinHandle<()>>,
@@ -316,8 +318,11 @@ impl AppService {
         .await?;
 
         let audio = Arc::clone(&self.audio);
-        let _ = audio_task(move || audio.stop_playback()).await;
-        self.commit(|state| state.playback = None);
+        let _ = audio_task(move || audio.stop_all_playback()).await;
+        self.commit(|state| {
+            state.playback = None;
+            state.playback_id = None;
+        });
 
         let db = database.clone();
         let session_id = command.session_id.clone();
@@ -838,13 +843,14 @@ impl AppService {
     /// Pára a voz: limpa a fila, invalida a sequência (blocos tardios são
     /// descartados) e pede ao auxiliar que pare entre blocos.
     async fn stop_article_speech_locked(&self) {
-        let (speech, playing) = {
+        let (speech, playing, playback_id) = {
             let mut runtime = self.lock_article();
             let playing = matches!(runtime.playback, Some((_, _, ArticlePlayback::Playing)));
             let speech = runtime.speech.take();
-            (speech, playing)
+            let playback_id = runtime.playback_id.take();
+            (speech, playing, playback_id)
         };
-        if speech.is_none() && !playing {
+        if speech.is_none() && !playing && playback_id.is_none() {
             return;
         }
         if speech.is_some() {
@@ -852,8 +858,10 @@ impl AppService {
                 let _ = worker_task(move || control.cancel()).await;
             }
         }
-        let audio = Arc::clone(&self.audio);
-        let _ = audio_task(move || audio.stop_playback()).await;
+        if let Some(id) = playback_id {
+            let audio = Arc::clone(&self.audio);
+            let _ = audio_task(move || audio.stop_playback(&id)).await;
+        }
         let session = {
             let mut runtime = self.lock_article();
             let session = runtime.playback.as_ref().map(|(s, _, _)| s.clone());
@@ -897,13 +905,34 @@ impl AppService {
 
     /// Fim momentâneo da fila não é fim do pedido: só passa a `idle` quando a
     /// síntese terminou e a fila esvaziou.
-    pub(super) async fn article_playback_finished(&self) {
+    pub(super) async fn article_playback_finished(&self, id: &crate::audio::PlaybackId) {
         let session = {
             let mut runtime = self.lock_article();
+            if runtime.playback_id.as_deref() != Some(id.as_str()) {
+                return;
+            }
+            runtime.playback_id = None;
             if runtime.speech.is_some() {
                 runtime.drained = true;
                 return;
             }
+            match runtime.playback.clone() {
+                Some((session, _, ArticlePlayback::Playing)) => {
+                    runtime.playback = None;
+                    Some(session)
+                }
+                _ => None,
+            }
+        };
+        if let Some(session) = session {
+            self.republish_article(&session).await;
+        }
+    }
+
+    /// Conclui a reprodução de voz já sem síntese em curso.
+    async fn finalize_article_playback(&self) {
+        let session = {
+            let mut runtime = self.lock_article();
             match runtime.playback.clone() {
                 Some((session, _, ArticlePlayback::Playing)) => {
                     runtime.playback = None;
@@ -949,8 +978,27 @@ impl AppService {
                     // Repetição de um bloco já entregue: inofensiva.
                     Some(Err(ChunkRejection::Duplicate)) => {}
                     Some(Ok(path)) if current => {
+                        // O primeiro bloco aceite começa a reprodução; os
+                        // seguintes acrescentam à fila da mesma identidade.
+                        let needs_start = self.lock_article().playback_id.is_none();
                         let audio = Arc::clone(&self.audio);
-                        match audio_task(move || audio.append(path)).await {
+                        let outcome = if needs_start {
+                            match audio_task(move || audio.start_playback(path)).await {
+                                Ok(id) => {
+                                    self.lock_article().playback_id = Some(id);
+                                    Ok(())
+                                }
+                                Err(error) => Err(error),
+                            }
+                        } else {
+                            let id = self
+                                .lock_article()
+                                .playback_id
+                                .clone()
+                                .expect("identidade da voz em curso");
+                            audio_task(move || audio.append_chunk(path, &id)).await
+                        };
+                        match outcome {
                             Ok(()) => {
                                 let mut runtime = self.lock_article();
                                 runtime.drained = false;
@@ -987,7 +1035,7 @@ impl AppService {
                     self.mark_speech_failed().await;
                 } else if drained {
                     // A fila já tinha esvaziado antes do resultado final.
-                    self.article_playback_finished().await;
+                    self.finalize_article_playback().await;
                 }
             }
             WorkerMessage::Completed { .. } => {
@@ -1097,7 +1145,9 @@ impl AppService {
             ));
         }
         let audio = Arc::clone(&self.audio);
-        audio_task(move || audio.play(path)).await
+        let id = audio_task(move || audio.start_playback(path)).await?;
+        self.lock_article().playback_id = Some(id);
+        Ok(())
     }
 
     /// Texto escrito pelo utilizador quando a transcrição falhou ou excedeu o

@@ -24,7 +24,7 @@ use serde_json::json;
 
 use language_assistant_tutor::artifacts::{reconcile, ArtifactStore, NORMALIZED_FILE};
 use language_assistant_tutor::audio::{
-    AudioEvent, AudioPort, AvailabilityAudio, CapturedAudio, RecordingTarget,
+    AudioEvent, AudioPort, AvailabilityAudio, CapturedAudio, PlaybackId, RecordingTarget,
 };
 use language_assistant_tutor::db::Database;
 use language_assistant_tutor::domain::{
@@ -251,14 +251,36 @@ impl AudioPort for FakeAudio {
         })
     }
 
-    fn play(&self, path: PathBuf) -> Result<(), AppError> {
+    fn start_playback(&self, path: PathBuf) -> Result<PlaybackId, AppError> {
+        let mut state = self.state.lock().expect("estado do áudio");
+        state.played.push(path.clone());
+        state.playing = Some(path);
+        Ok("playback".to_owned())
+    }
+
+    fn append_chunk(&self, path: PathBuf, _id: &PlaybackId) -> Result<(), AppError> {
         let mut state = self.state.lock().expect("estado do áudio");
         state.played.push(path.clone());
         state.playing = Some(path);
         Ok(())
     }
 
-    fn stop_playback(&self) -> Result<(), AppError> {
+    fn pause_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn resume_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn stop_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        let mut state = self.state.lock().expect("estado do áudio");
+        state.playing = None;
+        state.stops += 1;
+        Ok(())
+    }
+
+    fn stop_all_playback(&self) -> Result<(), AppError> {
         let mut state = self.state.lock().expect("estado do áudio");
         state.playing = None;
         state.stops += 1;

@@ -23,7 +23,7 @@ use language_assistant_tutor::article::{
 };
 use language_assistant_tutor::artifacts::ArtifactStore;
 use language_assistant_tutor::audio::{
-    AudioPort, AvailabilityAudio, CapturedAudio, RecordingTarget,
+    AudioPort, AvailabilityAudio, CapturedAudio, PlaybackId, RecordingTarget,
 };
 use language_assistant_tutor::db::Database;
 use language_assistant_tutor::domain::{
@@ -63,6 +63,7 @@ struct FakeAudio {
     plays: Mutex<Vec<PathBuf>>,
     appends: Mutex<Vec<PathBuf>>,
     stops: Mutex<usize>,
+    last_id: Mutex<Option<PlaybackId>>,
 }
 
 impl FakeAudio {
@@ -77,6 +78,14 @@ impl FakeAudio {
     }
     fn stops(&self) -> usize {
         *self.stops.lock().unwrap()
+    }
+    /// A identidade da última reprodução iniciada, para simular o fim.
+    fn last_id(&self) -> PlaybackId {
+        self.last_id
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("reprodução iniciada")
     }
 }
 
@@ -111,15 +120,27 @@ impl AudioPort for FakeAudio {
             },
         })
     }
-    fn play(&self, path: PathBuf) -> Result<(), AppError> {
+    fn start_playback(&self, path: PathBuf) -> Result<PlaybackId, AppError> {
+        let id = uuid::Uuid::new_v4().to_string();
         self.plays.lock().unwrap().push(path);
-        Ok(())
+        *self.last_id.lock().unwrap() = Some(id.clone());
+        Ok(id)
     }
-    fn append(&self, path: PathBuf) -> Result<(), AppError> {
+    fn append_chunk(&self, path: PathBuf, _id: &PlaybackId) -> Result<(), AppError> {
         self.appends.lock().unwrap().push(path);
         Ok(())
     }
-    fn stop_playback(&self) -> Result<(), AppError> {
+    fn pause_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn resume_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn stop_playback(&self, _id: &PlaybackId) -> Result<(), AppError> {
+        *self.stops.lock().unwrap() += 1;
+        Ok(())
+    }
+    fn stop_all_playback(&self) -> Result<(), AppError> {
         *self.stops.lock().unwrap() += 1;
         Ok(())
     }
@@ -1089,19 +1110,19 @@ async fn a_new_tutor_turn_is_spoken_in_ordered_chunks_and_bad_chunks_stop_the_vo
 
     send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
     send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
-    assert_eq!(
-        h.audio.appends(),
-        vec![chunk_path(&request, 0), chunk_path(&request, 1)]
-    );
+    // O primeiro bloco inicia a reprodução; o segundo acrescenta à fila.
+    assert_eq!(h.audio.plays(), vec![chunk_path(&request, 0)]);
+    assert_eq!(h.audio.appends(), vec![chunk_path(&request, 1)]);
     // Duplicado: inofensivo, não toca duas vezes nem pára a voz.
     send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
-    assert_eq!(h.audio.appends().len(), 2);
+    assert_eq!(h.audio.appends().len(), 1);
     assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
 
     // Fora de ordem ou fora da pasta do pedido: a voz falha e o auxiliar é parado.
     send_chunk(&h, &request, 5, chunk_path(&request, 5)).await;
     assert_eq!(playback(&h, &id).await, ArticlePlayback::Failed);
-    assert_eq!(h.audio.appends().len(), 2);
+    assert_eq!(h.audio.appends().len(), 1);
+    assert_eq!(h.audio.plays().len(), 1);
     assert!(h.worker.cancels() >= 1);
     // O texto continua visível.
     assert!(h.snapshot(&id).await.turns[0]
@@ -1170,7 +1191,8 @@ async fn stopping_the_voice_clears_the_queue_and_late_chunks_are_dropped() {
 
     // Um bloco tardio do pedido cancelado não toca.
     send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
-    assert_eq!(h.audio.appends().len(), 1);
+    assert!(h.audio.appends().is_empty());
+    assert_eq!(h.audio.plays().len(), 1);
     // Parar sem voz ativa é inofensivo.
     h.service.article_stop_voice().await.unwrap();
     assert_eq!(h.worker.cancels(), 1);
@@ -1188,7 +1210,7 @@ async fn starting_to_record_stops_the_voice_first() {
         .unwrap();
     assert_eq!(h.worker.cancels(), 1);
     send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
-    assert_eq!(h.audio.appends().len(), 1, "o bloco tardio não toca");
+    assert!(h.audio.appends().is_empty(), "o bloco tardio não toca");
 }
 
 #[tokio::test]
@@ -1238,13 +1260,19 @@ async fn a_momentarily_empty_queue_is_not_the_end_of_the_request() {
     let request = h.worker.streams()[0].clone();
     send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
     // A fila esvazia antes do 2.º bloco: continua a tocar.
-    h.service.on_audio_event(AudioEvent::PlaybackFinished).await;
+    let first_id = h.audio.last_id();
+    h.service
+        .on_audio_event(AudioEvent::PlaybackFinished { id: first_id })
+        .await;
     assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
     send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
     finish_stream(&h, &request, 2).await;
     // Só termina quando a síntese acabou e a fila voltou a esvaziar.
     assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
-    h.service.on_audio_event(AudioEvent::PlaybackFinished).await;
+    let last_id = h.audio.last_id();
+    h.service
+        .on_audio_event(AudioEvent::PlaybackFinished { id: last_id })
+        .await;
     assert_eq!(playback(&h, &id).await, ArticlePlayback::Idle);
 }
 

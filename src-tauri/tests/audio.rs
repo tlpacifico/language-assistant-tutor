@@ -20,7 +20,7 @@ use language_assistant_tutor::audio::capture::{
 use language_assistant_tutor::audio::normalize::normalize_wav;
 use language_assistant_tutor::audio::{
     AudioBackend, AudioEvent, AudioPort, AvailabilityAudio, CaptureInterruption, CapturedAudio,
-    NativeAudio, RecordingTarget,
+    NativeAudio, PlaybackProgress, RecordingTarget,
 };
 use language_assistant_tutor::domain::{AppError, CaptureMeta, ComponentState, ComponentStatus};
 
@@ -142,6 +142,10 @@ struct FakeAudio {
     start_delay: Duration,
     /// Falha que a próxima verificação entrega como interrupção da captura.
     interruption: Arc<Mutex<Option<AppError>>>,
+    /// Fim de reprodução que a próxima verificação devolve.
+    finished: Arc<Mutex<bool>>,
+    /// Progresso que a próxima leitura devolve.
+    progress: Arc<Mutex<Option<PlaybackProgress>>>,
 }
 
 impl FakeAudio {
@@ -155,6 +159,16 @@ impl FakeAudio {
     /// Faz a próxima verificação entregar uma interrupção sem áudio recuperável.
     fn interrupt_next(&self, error: AppError) {
         *self.interruption.lock().expect("falha programada") = Some(error);
+    }
+
+    /// Faz a próxima verificação indicar que a reprodução terminou.
+    fn mark_finished(&self) {
+        *self.finished.lock().expect("fim programado") = true;
+    }
+
+    /// Muda o progresso devolvido até nova alteração.
+    fn set_progress(&self, progress: PlaybackProgress) {
+        *self.progress.lock().expect("progresso programado") = Some(progress);
     }
 
     fn steps(&self) -> Vec<String> {
@@ -210,14 +224,39 @@ impl AudioBackend for FakeAudio {
         Ok(())
     }
 
+    fn append(&mut self, _path: PathBuf) -> Result<(), AppError> {
+        self.record("append");
+        Ok(())
+    }
+
+    fn pause_playback(&mut self) -> Result<(), AppError> {
+        self.record("pause");
+        if let Some(progress) = self.progress.lock().expect("progresso").as_mut() {
+            progress.paused = true;
+        }
+        Ok(())
+    }
+
+    fn resume_playback(&mut self) -> Result<(), AppError> {
+        self.record("resume");
+        if let Some(progress) = self.progress.lock().expect("progresso").as_mut() {
+            progress.paused = false;
+        }
+        Ok(())
+    }
+
     fn stop_playback(&mut self) -> Result<(), AppError> {
         self.record("stop_playback");
         self.playing = None;
         Ok(())
     }
 
+    fn playback_progress(&mut self) -> Option<PlaybackProgress> {
+        self.progress.lock().expect("ler progresso").clone()
+    }
+
     fn playback_finished(&mut self) -> bool {
-        false
+        *self.finished.lock().expect("ler fim")
     }
 }
 
@@ -394,7 +433,7 @@ fn recording_stops_playback() {
     let audio = NativeAudio::with_backend(move || Box::new(fake.clone()), |_event: AudioEvent| {})
         .expect("criar porta de áudio");
 
-    audio.play(audio_file).expect("reproduzir");
+    audio.start_playback(audio_file).expect("reproduzir");
     let folder = target(root.path(), "gravacao");
     audio
         .start_capture(folder.clone())
@@ -488,7 +527,7 @@ fn timed_out_command_fails_the_port_until_reopen() {
     // novo é enviado para lá até a porta ser reaberta explicitamente.
     let steps_before = probe.steps();
     let refused = audio
-        .stop_playback()
+        .stop_playback(&"stale".to_string())
         .expect_err("a porta falhada recusa comandos");
     assert_eq!(refused.code, "AUDIO_TIMEOUT");
     assert_eq!(
@@ -522,14 +561,16 @@ fn playback_is_blocked_while_recording() {
     let audio = NativeAudio::with_backend(move || Box::new(fake.clone()), |_event: AudioEvent| {})
         .expect("criar porta de áudio");
 
-    audio.play(audio_file.clone()).expect("reproduzir");
+    audio
+        .start_playback(audio_file.clone())
+        .expect("reproduzir");
     let folder = target(root.path(), "gravacao");
     audio
         .start_capture(folder.clone())
         .expect("começar a gravar");
 
     let error = audio
-        .play(audio_file.clone())
+        .start_playback(audio_file.clone())
         .expect_err("reproduzir durante a gravação tem de ser recusado");
     assert_eq!(error.code, "BUSY");
     assert!(error.retryable);
@@ -544,8 +585,273 @@ fn playback_is_blocked_while_recording() {
     assert_eq!(captured.id, folder.id);
 
     // Terminada a captura, a saída volta a estar disponível.
-    audio.play(audio_file).expect("reproduzir depois de gravar");
+    audio
+        .start_playback(audio_file)
+        .expect("reproduzir depois de gravar");
     assert_eq!(probe.steps().last().map(String::as_str), Some("play"));
+}
+
+// ---------------------------------------------------------------------------
+// Identidade de reprodução, pausa/retoma e progresso
+// ---------------------------------------------------------------------------
+
+/// Recolhe os eventos de progresso até haver pelo menos `min`.
+fn collect_progress(
+    events: &Arc<Mutex<Vec<AudioEvent>>>,
+    min: usize,
+) -> Vec<(String, PlaybackProgress)> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let collected: Vec<(String, PlaybackProgress)> = events
+            .lock()
+            .expect("eventos")
+            .iter()
+            .filter_map(|event| match event {
+                AudioEvent::PlaybackProgress { id, progress } => {
+                    Some((id.clone(), progress.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        if collected.len() >= min {
+            return collected;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "não chegou progresso suficiente: {collected:?}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_new_selection_replaces_the_previous_playback_with_a_new_id() {
+    let root = tempfile::tempdir().expect("pasta temporária");
+    let first = root.path().join("primeiro.wav");
+    let second = root.path().join("segundo.wav");
+    write_wav(&first, int_spec(48_000, 1), &tone(48_000, 440.0, 0.1, 0.2));
+    write_wav(&second, int_spec(48_000, 1), &tone(48_000, 440.0, 0.1, 0.2));
+
+    let fake = FakeAudio::default();
+    let probe = fake.clone();
+    let audio = NativeAudio::with_backend(move || Box::new(fake.clone()), |_event: AudioEvent| {})
+        .expect("criar porta de áudio");
+
+    let first_id = audio.start_playback(first).expect("primeira reprodução");
+    let second_id = audio.start_playback(second).expect("segunda reprodução");
+
+    assert_ne!(
+        first_id, second_id,
+        "cada reprodução tem identidade própria"
+    );
+    assert_eq!(
+        probe.steps(),
+        vec!["play", "play"],
+        "a segunda seleção substitui a primeira"
+    );
+}
+
+#[test]
+fn stale_id_cannot_pause_or_stop_a_replacement() {
+    let root = tempfile::tempdir().expect("pasta temporária");
+    let file = root.path().join("resposta.wav");
+    write_wav(&file, int_spec(48_000, 1), &tone(48_000, 440.0, 0.1, 0.2));
+
+    let fake = FakeAudio::default();
+    let probe = fake.clone();
+    let audio = NativeAudio::with_backend(move || Box::new(fake.clone()), |_event: AudioEvent| {})
+        .expect("criar porta de áudio");
+
+    let stale = audio
+        .start_playback(file.clone())
+        .expect("primeira reprodução");
+    let current = audio.start_playback(file.clone()).expect("substituição");
+
+    audio
+        .pause_playback(&stale)
+        .expect("pausa antiga é inofensiva");
+    audio
+        .stop_playback(&stale)
+        .expect("paragem antiga é inofensiva");
+    assert_eq!(
+        probe.steps(),
+        vec!["play", "play"],
+        "uma identidade substituída não toca no dispositivo"
+    );
+
+    audio.pause_playback(&current).expect("pausa atual");
+    audio.stop_playback(&current).expect("paragem atual");
+    assert_eq!(
+        probe.steps(),
+        vec!["play", "play", "pause", "stop_playback"],
+        "a identidade atual controla a reprodução"
+    );
+}
+
+#[test]
+fn append_from_a_previous_rendition_is_ignored() {
+    let root = tempfile::tempdir().expect("pasta temporária");
+    let file = root.path().join("resposta.wav");
+    write_wav(&file, int_spec(48_000, 1), &tone(48_000, 440.0, 0.1, 0.2));
+
+    let fake = FakeAudio::default();
+    let probe = fake.clone();
+    let audio = NativeAudio::with_backend(move || Box::new(fake.clone()), |_event: AudioEvent| {})
+        .expect("criar porta de áudio");
+
+    let stale = audio
+        .start_playback(file.clone())
+        .expect("primeira reprodução");
+    let current = audio.start_playback(file.clone()).expect("substituição");
+
+    audio
+        .append_chunk(file.clone(), &stale)
+        .expect("bloco antigo é inofensivo");
+    assert_eq!(
+        probe.steps(),
+        vec!["play", "play"],
+        "um bloco de uma reprodução substituída não chega ao dispositivo"
+    );
+
+    audio
+        .append_chunk(file, &current)
+        .expect("bloco da reprodução atual");
+    assert_eq!(probe.steps(), vec!["play", "play", "append"]);
+}
+
+#[test]
+fn pause_and_resume_keep_the_queue_and_position() {
+    let root = tempfile::tempdir().expect("pasta temporária");
+    let file = root.path().join("resposta.wav");
+    write_wav(&file, int_spec(48_000, 1), &tone(48_000, 440.0, 0.1, 0.2));
+
+    let fake = FakeAudio::default();
+    let probe = fake.clone();
+    let audio = NativeAudio::with_backend(move || Box::new(fake.clone()), |_event: AudioEvent| {})
+        .expect("criar porta de áudio");
+
+    probe.set_progress(PlaybackProgress {
+        position_ms: 500,
+        buffered_ms: 1_000,
+        paused: false,
+    });
+    let id = audio.start_playback(file.clone()).expect("reproduzir");
+
+    audio.pause_playback(&id).expect("pausar");
+    assert!(
+        audio.playback_progress().expect("progresso").paused,
+        "a pausa é visível no progresso"
+    );
+    audio.resume_playback(&id).expect("retomar");
+    assert!(
+        !audio.playback_progress().expect("progresso").paused,
+        "a retoma limpa a pausa"
+    );
+    // A fila mantém-se: um bloco novo ainda entra na mesma reprodução.
+    audio
+        .append_chunk(file, &id)
+        .expect("acrescentar depois da pausa");
+    assert_eq!(
+        probe.steps(),
+        vec!["play", "pause", "resume", "append"],
+        "a pausa e a retoma não limpam a fila"
+    );
+    assert_eq!(
+        audio.playback_progress().expect("progresso").position_ms,
+        500,
+        "a posição não recua depois da pausa"
+    );
+}
+
+#[test]
+fn finished_event_carries_the_unique_id() {
+    let root = tempfile::tempdir().expect("pasta temporária");
+    let file = root.path().join("resposta.wav");
+    write_wav(&file, int_spec(48_000, 1), &tone(48_000, 440.0, 0.1, 0.2));
+
+    let fake = FakeAudio::default();
+    let probe = fake.clone();
+    let events: Arc<Mutex<Vec<AudioEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    let audio = NativeAudio::with_backend(
+        move || Box::new(fake.clone()),
+        move |event: AudioEvent| sink.lock().expect("evento").push(event),
+    )
+    .expect("criar porta de áudio");
+
+    let id = audio.start_playback(file).expect("reproduzir");
+    probe.mark_finished();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let finished = events.lock().expect("eventos").iter().find_map(|event| {
+            if let AudioEvent::PlaybackFinished { id } = event {
+                Some(id.clone())
+            } else {
+                None
+            }
+        });
+        if let Some(finished) = finished {
+            assert_eq!(finished, id, "o fim identifica a reprodução que terminou");
+            return;
+        }
+        assert!(Instant::now() < deadline, "o fim não chegou à porta");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn progress_is_monotonic_across_chunks() {
+    let root = tempfile::tempdir().expect("pasta temporária");
+    let file = root.path().join("resposta.wav");
+    write_wav(&file, int_spec(48_000, 1), &tone(48_000, 440.0, 0.1, 0.2));
+
+    let fake = FakeAudio::default();
+    let probe = fake.clone();
+    let events: Arc<Mutex<Vec<AudioEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    let audio = NativeAudio::with_backend(
+        move || Box::new(fake.clone()),
+        move |event: AudioEvent| sink.lock().expect("evento").push(event),
+    )
+    .expect("criar porta de áudio");
+
+    probe.set_progress(PlaybackProgress {
+        position_ms: 100,
+        buffered_ms: 100,
+        paused: false,
+    });
+    let id = audio.start_playback(file.clone()).expect("reproduzir");
+    let first = collect_progress(&events, 1)
+        .into_iter()
+        .next()
+        .expect("primeiro");
+    assert_eq!(first.0, id, "o progresso identifica a reprodução");
+
+    // Um bloco novo aumenta a fila; o progresso seguinte não pode recuar.
+    probe.set_progress(PlaybackProgress {
+        position_ms: 250,
+        buffered_ms: 400,
+        paused: false,
+    });
+    audio.append_chunk(file, &id).expect("acrescentar bloco");
+    let last = collect_progress(&events, 2)
+        .into_iter()
+        .last()
+        .expect("segundo");
+    assert_eq!(last.0, id);
+    assert!(
+        last.1.position_ms >= first.1.position_ms,
+        "posição monotónica: {} -> {}",
+        first.1.position_ms,
+        last.1.position_ms
+    );
+    assert!(
+        last.1.buffered_ms >= first.1.buffered_ms,
+        "buffered monotónico: {} -> {}",
+        first.1.buffered_ms,
+        last.1.buffered_ms
+    );
 }
 
 /// Um WAV cujo cabeçalho não pôde ser fechado não é publicado como recuperável.
