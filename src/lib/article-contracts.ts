@@ -23,7 +23,19 @@ export type ArticleState =
 export type ArticleVersionSource = "automatic_sent" | "manual_review";
 export type ArticleSpeaker = "tutor" | "user";
 export type DimensionStatus = "clear" | "partial" | "insufficient_evidence";
-export type ArticlePlayback = "idle" | "playing" | "failed";
+
+export type PlayerState =
+  | "idle"
+  | "preparing"
+  | "playing"
+  | "paused"
+  | "buffering"
+  | "ended"
+  | "failed";
+export type PlayerSource = "tutor_voice" | "user_recording";
+export type PlaybackTrigger = "autoplay" | "explicit";
+export type PlayerOperation = "synthesis" | "output";
+export type RecordingState = "inactive" | "active" | "ended";
 
 export interface ArticleCommand {
   requestId: string;
@@ -128,16 +140,43 @@ export interface ArticleReport {
   improvements: string[];
 }
 
-export interface ArticleAudioView {
-  playback: ArticlePlayback;
+export interface PlayerFailure {
+  operation: PlayerOperation;
+  retryable: boolean;
+}
+
+export interface ArticlePlayerView {
+  sessionId: string;
   turnId: string | null;
+  versionId: string | null;
+  generation: number;
+  sequence: number;
+  state: PlayerState;
+  positionMs: number;
+  durationMs: number | null;
+  bufferedMs: number | null;
+  source: PlayerSource | null;
+  trigger: PlaybackTrigger | null;
+  failure: PlayerFailure | null;
+}
+
+export interface ArticleRecordingView {
+  sessionId: string;
+  turnId: string;
+  captureId: string;
+  sequence: number;
+  state: RecordingState;
+  elapsedMs: number;
+  level: number | null;
+  available: boolean;
 }
 
 export interface ArticleSnapshot {
   session: ArticleSessionView;
   turns: ArticleTurnView[];
   report: ArticleReport | null;
-  audio: ArticleAudioView;
+  audio: ArticlePlayerView;
+  recording: ArticleRecordingView;
 }
 
 export interface ArticleSummary {

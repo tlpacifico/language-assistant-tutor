@@ -151,7 +151,7 @@ describe("ArticleConversation", () => {
     const { fake } = setup(
       makeSnapshot({
         turns: dialogue,
-        audio: { playback: "playing", turnId: "turn-3" },
+        audio: { state: "playing", turnId: "turn-3" },
       }),
     );
     await user.click(screen.getByRole("button", { name: "Parar voz" }));
@@ -164,7 +164,7 @@ describe("ArticleConversation", () => {
     const { fake } = setup(
       makeSnapshot({
         turns: dialogue,
-        audio: { playback: "failed", turnId: "turn-3" },
+        audio: { state: "failed", turnId: "turn-3" },
       }),
     );
     expect(screen.getByText("Why does that matter?")).toBeInTheDocument();

@@ -5,11 +5,13 @@
 //! `state` valida as transições e o consentimento.
 
 mod mutation;
+mod player;
 mod state;
 mod types;
 mod voice;
 
 pub use mutation::*;
+pub use player::*;
 pub use state::*;
 pub use types::*;
 pub use voice::*;

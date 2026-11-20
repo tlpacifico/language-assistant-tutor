@@ -14,9 +14,9 @@ use super::questions::utc_now;
 use super::Database;
 use crate::article::{
     transition, validate_answer_text, validate_article, validate_article_preferences,
-    ArticleAudioView, ArticleAuthorization, ArticleCommand, ArticleContext, ArticleCreate,
-    ArticleError, ArticleEvent, ArticleMutation, ArticleOutcome, ArticlePlayback,
-    ArticlePreferences, ArticleRecovery, ArticleReport, ArticleRequestKind, ArticleSessionView,
+    ArticleAuthorization, ArticleCommand, ArticleContext, ArticleCreate, ArticleError,
+    ArticleEvent, ArticleMutation, ArticleOutcome, ArticlePlayerView, ArticlePreferences,
+    ArticleRecordingView, ArticleRecovery, ArticleReport, ArticleRequestKind, ArticleSessionView,
     ArticleSnapshot, ArticleSpeaker, ArticleState, ArticleSummary, ArticleTicket, ArticleTurnView,
     ArticleUsageView, ArticleVersionSource, ArticleVersionView, ContextRole, ContextTurn,
     ARTICLE_NOTICE_VERSION, MAX_TURNS_PER_BRANCH, SUGGEST_FINISH_AFTER,
@@ -803,10 +803,8 @@ fn build_snapshot(connection: &Connection, session: SessionRow) -> Result<Articl
         },
         turns,
         report,
-        audio: ArticleAudioView {
-            playback: ArticlePlayback::Idle,
-            turn_id: None,
-        },
+        audio: ArticlePlayerView::idle(session.id.clone()),
+        recording: ArticleRecordingView::inactive(session.id.clone()),
     })
 }
 

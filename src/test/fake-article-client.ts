@@ -35,6 +35,7 @@ export function makeSnapshot(
     turns?: ArticleTurnView[];
     report?: ArticleSnapshot["report"];
     audio?: Partial<ArticleSnapshot["audio"]>;
+    recording?: Partial<ArticleSnapshot["recording"]>;
   } = {},
 ): ArticleSnapshot {
   return {
@@ -61,7 +62,32 @@ export function makeSnapshot(
       makeTurn(1, "tutor", "What is the main argument?"),
     ],
     report: overrides.report ?? null,
-    audio: { playback: "idle", turnId: null, ...overrides.audio },
+    audio: {
+      sessionId: "session-1",
+      turnId: null,
+      versionId: null,
+      generation: 0,
+      sequence: 0,
+      state: "idle",
+      positionMs: 0,
+      durationMs: null,
+      bufferedMs: null,
+      source: null,
+      trigger: null,
+      failure: null,
+      ...overrides.audio,
+    },
+    recording: {
+      sessionId: "session-1",
+      turnId: "",
+      captureId: "",
+      sequence: 0,
+      state: "inactive",
+      elapsedMs: 0,
+      level: null,
+      available: true,
+      ...overrides.recording,
+    },
   };
 }
 

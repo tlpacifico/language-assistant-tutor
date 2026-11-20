@@ -1089,13 +1089,13 @@ async fn finish_stream(h: &Harness, request: &WorkerRequest, chunks: u32) {
         .await;
 }
 
-async fn playback(h: &Harness, id: &str) -> language_assistant_tutor::article::ArticlePlayback {
-    h.snapshot(id).await.audio.playback
+async fn playback(h: &Harness, id: &str) -> language_assistant_tutor::article::PlayerState {
+    h.snapshot(id).await.audio.state
 }
 
 #[tokio::test]
 async fn a_new_tutor_turn_is_spoken_in_ordered_chunks_and_bad_chunks_stop_the_voice() {
-    use language_assistant_tutor::article::ArticlePlayback;
+    use language_assistant_tutor::article::PlayerState;
     let h = Harness::new().await;
     let ready = h.ready().await;
     let id = ready.session.id.clone();
@@ -1106,7 +1106,7 @@ async fn a_new_tutor_turn_is_spoken_in_ordered_chunks_and_bad_chunks_stop_the_vo
         .as_str()
         .unwrap()
         .contains("main argument"));
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
 
     send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
     send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
@@ -1116,11 +1116,11 @@ async fn a_new_tutor_turn_is_spoken_in_ordered_chunks_and_bad_chunks_stop_the_vo
     // Duplicado: inofensivo, não toca duas vezes nem pára a voz.
     send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
     assert_eq!(h.audio.appends().len(), 1);
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
 
     // Fora de ordem ou fora da pasta do pedido: a voz falha e o auxiliar é parado.
     send_chunk(&h, &request, 5, chunk_path(&request, 5)).await;
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Failed);
+    assert_eq!(playback(&h, &id).await, PlayerState::Failed);
     assert_eq!(h.audio.appends().len(), 1);
     assert_eq!(h.audio.plays().len(), 1);
     assert!(h.worker.cancels() >= 1);
@@ -1133,16 +1133,13 @@ async fn a_new_tutor_turn_is_spoken_in_ordered_chunks_and_bad_chunks_stop_the_vo
 
 #[tokio::test]
 async fn an_outside_path_is_refused_without_playing_it() {
-    use language_assistant_tutor::article::ArticlePlayback;
+    use language_assistant_tutor::article::PlayerState;
     let h = Harness::new().await;
     let ready = h.ready().await;
     let request = h.worker.streams()[0].clone();
     send_chunk(&h, &request, 0, PathBuf::from(r"C:\Windows\chunk-0000.wav")).await;
     assert!(h.audio.appends().is_empty());
-    assert_eq!(
-        playback(&h, &ready.session.id).await,
-        ArticlePlayback::Failed
-    );
+    assert_eq!(playback(&h, &ready.session.id).await, PlayerState::Failed);
 }
 
 #[tokio::test]
@@ -1176,7 +1173,7 @@ async fn opening_listing_or_resuming_never_starts_the_voice() {
 
 #[tokio::test]
 async fn stopping_the_voice_clears_the_queue_and_late_chunks_are_dropped() {
-    use language_assistant_tutor::article::ArticlePlayback;
+    use language_assistant_tutor::article::PlayerState;
     let h = Harness::new().await;
     let ready = h.ready().await;
     let id = ready.session.id.clone();
@@ -1187,7 +1184,7 @@ async fn stopping_the_voice_clears_the_queue_and_late_chunks_are_dropped() {
     h.service.article_stop_voice().await.unwrap();
     assert_eq!(h.worker.cancels(), 1);
     assert!(h.audio.stops() > stops);
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Idle);
+    assert_eq!(playback(&h, &id).await, PlayerState::Idle);
 
     // Um bloco tardio do pedido cancelado não toca.
     send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
@@ -1215,7 +1212,7 @@ async fn starting_to_record_stops_the_voice_first() {
 
 #[tokio::test]
 async fn a_failed_voice_keeps_the_text_and_repeats_without_the_text_provider() {
-    use language_assistant_tutor::article::ArticlePlayback;
+    use language_assistant_tutor::article::PlayerState;
     let h = Harness::new().await;
     let ready = h.ready().await;
     let id = ready.session.id.clone();
@@ -1230,7 +1227,7 @@ async fn a_failed_voice_keeps_the_text_and_repeats_without_the_text_provider() {
             },
         })
         .await;
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Failed);
+    assert_eq!(playback(&h, &id).await, PlayerState::Failed);
     let calls = h.transport.calls().len();
     let tutor = h.snapshot(&id).await.turns[0].id.clone();
     assert!(h.snapshot(&id).await.turns[0]
@@ -1245,14 +1242,14 @@ async fn a_failed_voice_keeps_the_text_and_repeats_without_the_text_provider() {
         h.worker.streams()[1].params["outputDir"]
     );
     assert_eq!(h.transport.calls().len(), calls, "sem nova chamada IA");
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
     // Só falas do tutor da conversa ativa se repetem.
     assert!(h.service.article_speak_turn(&id, "missing").await.is_err());
 }
 
 #[tokio::test]
 async fn a_momentarily_empty_queue_is_not_the_end_of_the_request() {
-    use language_assistant_tutor::article::ArticlePlayback;
+    use language_assistant_tutor::article::PlayerState;
     use language_assistant_tutor::audio::AudioEvent;
     let h = Harness::new().await;
     let ready = h.ready().await;
@@ -1264,16 +1261,16 @@ async fn a_momentarily_empty_queue_is_not_the_end_of_the_request() {
     h.service
         .on_audio_event(AudioEvent::PlaybackFinished { id: first_id })
         .await;
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
     send_chunk(&h, &request, 1, chunk_path(&request, 1)).await;
     finish_stream(&h, &request, 2).await;
     // Só termina quando a síntese acabou e a fila voltou a esvaziar.
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
     let last_id = h.audio.last_id();
     h.service
         .on_audio_event(AudioEvent::PlaybackFinished { id: last_id })
         .await;
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Idle);
+    assert_eq!(playback(&h, &id).await, PlayerState::Idle);
 }
 
 #[tokio::test]
@@ -1326,14 +1323,14 @@ async fn starting_article_playback_clears_star_playback_state() {
 
 #[tokio::test]
 async fn starting_star_playback_stops_article_voice() {
-    use language_assistant_tutor::article::ArticlePlayback;
+    use language_assistant_tutor::article::PlayerState;
     let h = Harness::new().await;
     let ready = h.ready().await;
     let id = ready.session.id.clone();
     let request = h.worker.streams()[0].clone();
     // Primeiro bloco: a voz do artigo fica em reprodução.
     send_chunk(&h, &request, 0, chunk_path(&request, 0)).await;
-    assert_eq!(playback(&h, &id).await, ArticlePlayback::Playing);
+    assert_eq!(playback(&h, &id).await, PlayerState::Playing);
 
     // Reprodução STAR (um treino legado) pára a voz do artigo.
     let attempt = "9b2e5d89-3b5c-4f1f-aa7c-2f7c1e3f5e22";
@@ -1359,7 +1356,7 @@ async fn starting_star_playback_stops_article_voice() {
     );
     assert_eq!(
         playback(&h, &id).await,
-        ArticlePlayback::Idle,
+        PlayerState::Idle,
         "a voz do artigo pára quando o STAR reproduz"
     );
     assert_eq!(playing.playback, Some(PlaybackTarget::Response));

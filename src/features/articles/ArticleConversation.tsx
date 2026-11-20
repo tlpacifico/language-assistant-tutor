@@ -195,7 +195,7 @@ export default function ArticleConversation({
         </div>
       ) : null}
 
-      {audio.playback === "failed" && audio.turnId ? (
+      {audio.state === "failed" && audio.turnId ? (
         <div className="practice__notice" role="status">
           <p>
             A voz do tutor falhou; o texto está acima. Pode repetir só a voz,
@@ -212,7 +212,7 @@ export default function ArticleConversation({
         </div>
       ) : null}
 
-      {audio.playback === "playing" ? (
+      {audio.state === "playing" ? (
         <button type="button" onClick={() => void client.stopVoice()}>
           Parar voz
         </button>

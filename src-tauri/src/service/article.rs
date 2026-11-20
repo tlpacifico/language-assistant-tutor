@@ -24,10 +24,11 @@ use crate::ai::{
 };
 use crate::article::{
     can_send_automatically, ArticleCommand, ArticleConsent, ArticleCorrection, ArticleCreate,
-    ArticleError, ArticleMutation, ArticleOutcome, ArticlePreferences, ArticleRequestKind,
-    ArticleSnapshot, ArticleSpeaker, ArticleState, ArticleSummary, ARTICLE_NOTICE_VERSION,
+    ArticleError, ArticleMutation, ArticleOutcome, ArticlePlayerView, ArticlePreferences,
+    ArticleRequestKind, ArticleSnapshot, ArticleSpeaker, ArticleState, ArticleSummary,
+    PlaybackTrigger, PlayerSource, PlayerState, ARTICLE_NOTICE_VERSION,
 };
-use crate::article::{ArticleAudioView, ArticlePlayback, ChunkRejection, ChunkSequence};
+use crate::article::{ChunkRejection, ChunkSequence};
 use crate::audio::RecordingTarget;
 use crate::worker::protocol::{SynthesizeStreamParams, TranscribeParams};
 
@@ -67,7 +68,7 @@ pub(super) struct ArticleRuntime {
     transcription: Option<ArticleTranscription>,
     speech: Option<ArticleSpeech>,
     /// Estado de reprodução da voz, independente do estado da conversa.
-    playback: Option<(String, String, ArticlePlayback)>,
+    playback: Option<(String, String, PlayerState)>,
     /// Identidade da reprodução atual devolvida pela porta de áudio.
     playback_id: Option<crate::audio::PlaybackId>,
     /// A fila de áudio esvaziou enquanto a síntese ainda decorria.
@@ -133,11 +134,21 @@ impl AppService {
 
     /// Junta à fotografia persistida o estado (em memória) da voz.
     fn with_audio(&self, mut snapshot: ArticleSnapshot) -> ArticleSnapshot {
-        if let Some((session, turn, playback)) = self.lock_article().playback.clone() {
+        if let Some((session, turn, state)) = self.lock_article().playback.clone() {
             if session == snapshot.session.id {
-                snapshot.audio = ArticleAudioView {
-                    playback,
+                snapshot.audio = ArticlePlayerView {
+                    session_id: snapshot.session.id.clone(),
                     turn_id: Some(turn),
+                    version_id: None,
+                    generation: 0,
+                    sequence: 0,
+                    state,
+                    position_ms: 0,
+                    duration_ms: None,
+                    buffered_ms: None,
+                    source: Some(PlayerSource::TutorVoice),
+                    trigger: Some(PlaybackTrigger::Autoplay),
+                    failure: None,
                 };
             }
         }
@@ -157,7 +168,7 @@ impl AppService {
         }
     }
 
-    fn set_playback(&self, session_id: &str, turn_id: &str, playback: Option<ArticlePlayback>) {
+    fn set_playback(&self, session_id: &str, turn_id: &str, playback: Option<PlayerState>) {
         self.lock_article().playback =
             playback.map(|p| (session_id.to_owned(), turn_id.to_owned(), p));
     }
@@ -785,7 +796,7 @@ impl AppService {
         }
         self.stop_article_speech_locked().await;
         let fail = |this: &Self| {
-            this.set_playback(session_id, turn_id, Some(ArticlePlayback::Failed));
+            this.set_playback(session_id, turn_id, Some(PlayerState::Failed));
         };
         let Some(control) = self.worker_control().filter(|c| c.is_running()) else {
             fail(self);
@@ -831,7 +842,7 @@ impl AppService {
             started: Instant::now(),
             first_reported: false,
         });
-        self.set_playback(session_id, turn_id, Some(ArticlePlayback::Playing));
+        self.set_playback(session_id, turn_id, Some(PlayerState::Playing));
         if let Err(error) = worker_task(move || control.submit(request)).await {
             self.lock_article().speech = None;
             fail(self);
@@ -845,7 +856,7 @@ impl AppService {
     pub(super) async fn stop_article_speech_locked(&self) {
         let (speech, playing, playback_id) = {
             let mut runtime = self.lock_article();
-            let playing = matches!(runtime.playback, Some((_, _, ArticlePlayback::Playing)));
+            let playing = matches!(runtime.playback, Some((_, _, PlayerState::Playing)));
             let speech = runtime.speech.take();
             let playback_id = runtime.playback_id.take();
             (speech, playing, playback_id)
@@ -917,7 +928,7 @@ impl AppService {
                 return;
             }
             match runtime.playback.clone() {
-                Some((session, _, ArticlePlayback::Playing)) => {
+                Some((session, _, PlayerState::Playing)) => {
                     runtime.playback = None;
                     Some(session)
                 }
@@ -934,7 +945,7 @@ impl AppService {
         let session = {
             let mut runtime = self.lock_article();
             match runtime.playback.clone() {
-                Some((session, _, ArticlePlayback::Playing)) => {
+                Some((session, _, PlayerState::Playing)) => {
                     runtime.playback = None;
                     Some(session)
                 }
@@ -1073,7 +1084,7 @@ impl AppService {
             let Some((session, turn, _)) = runtime.playback.clone() else {
                 return;
             };
-            runtime.playback = Some((session.clone(), turn, ArticlePlayback::Failed));
+            runtime.playback = Some((session.clone(), turn, PlayerState::Failed));
             session
         };
         self.republish_article(&session).await;

@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::player::{ArticlePlayerView, ArticleRecordingView};
 use crate::domain::{error_code, AppError};
 
 pub type Result<T> = std::result::Result<T, AppError>;
@@ -65,7 +66,7 @@ pub struct ArticleCorrection {
     pub text: String,
 }
 
-/// Estados da sessão. A reprodução é um estado independente (`ArticleAudioView`).
+/// Estados da sessão. A reprodução é um estado independente (`ArticlePlayerView`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ArticleState {
@@ -217,28 +218,14 @@ pub struct ArticleReport {
     pub improvements: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ArticlePlayback {
-    Idle,
-    Playing,
-    Failed,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ArticleAudioView {
-    pub playback: ArticlePlayback,
-    pub turn_id: Option<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArticleSnapshot {
     pub session: ArticleSessionView,
     pub turns: Vec<ArticleTurnView>,
     pub report: Option<ArticleReport>,
-    pub audio: ArticleAudioView,
+    pub audio: ArticlePlayerView,
+    pub recording: ArticleRecordingView,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
