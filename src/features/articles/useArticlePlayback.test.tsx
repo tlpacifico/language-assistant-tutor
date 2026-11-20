@@ -3,10 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ArticleClient } from "../../lib/article-client";
-import type {
-  ArticlePlayerView,
-  ArticleRecordingView,
-  ArticleSnapshot,
+import {
+  mergePlayer,
+  mergeRecording,
+  type ArticlePlayerView,
+  type ArticleRecordingView,
+  type ArticleSnapshot,
 } from "../../lib/article-contracts";
 import { fakeArticleClient, makeSnapshot } from "../../test/fake-article-client";
 import { useArticlePlayback } from "./useArticlePlayback";
@@ -320,7 +322,7 @@ describe("useArticlePlayback", () => {
     expect(fake.client.resume).toHaveBeenCalledWith("session-1", 7);
   });
 
-  it("unmount_stops_only_a_real_selection", async () => {
+  it("stop_is_a_no_op_without_a_real_selection", async () => {
     const user = userEvent.setup();
     const initial = makeSnapshot({
       audio: playerView({ state: "idle", generation: 0, sequence: 0 }),
@@ -344,6 +346,108 @@ describe("useArticlePlayback", () => {
     await user.click(screen.getByTestId("stop"));
     await waitFor(() =>
       expect(fake.client.stop).toHaveBeenCalledWith("session-1", 3),
+    );
+  });
+
+  it("events_delivered_before_the_subscribe_resolves_do_not_update_an_unmounted_hook", async () => {
+    const initial = makeSnapshot();
+    const fake = fakeArticleClient(initial);
+    const playerSub = deferred<() => void>();
+    const recordingSub = deferred<() => void>();
+    let delivered: ((view: ArticlePlayerView) => void) | undefined;
+    fake.client.subscribePlayer.mockImplementation((handler) => {
+      delivered = handler;
+      return playerSub.promise;
+    });
+    fake.client.subscribeRecording.mockReturnValue(recordingSub.promise);
+
+    const unP = vi.fn();
+    const unR = vi.fn();
+
+    const { unmount } = render(
+      <Probe client={fake.client} sessionId="session-1" initial={initial} />,
+    );
+    unmount();
+
+    // Evento entregue na janela entre a desmontagem e a resolução da subscrição:
+    // o handler já não atualiza estado nem regista nada.
+    act(() => {
+      delivered?.(
+        playerView({
+          state: "playing",
+          generation: 1,
+          sequence: 1,
+          turnId: "turn-1",
+        }),
+      );
+    });
+
+    await act(async () => {
+      playerSub.resolve(unP);
+      recordingSub.resolve(unR);
+      await Promise.all([playerSub.promise, recordingSub.promise]);
+    });
+
+    expect(unP).toHaveBeenCalledTimes(1);
+    expect(unR).toHaveBeenCalledTimes(1);
+    expect(fake.client.focusView).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("player-state")).not.toBeInTheDocument();
+  });
+
+  it("a_focus_that_resolves_after_unmount_is_blurred", async () => {
+    const initial = makeSnapshot();
+    const fake = fakeArticleClient(initial);
+    const focus = deferred<void>();
+    fake.client.focusView.mockReturnValue(focus.promise);
+
+    const { unmount } = render(
+      <Probe client={fake.client} sessionId="session-1" initial={initial} />,
+    );
+    await waitFor(() => expect(fake.client.focusView).toHaveBeenCalledTimes(1));
+    const token = (
+      fake.client.focusView.mock.calls[0] as unknown as [string, string]
+    )[1];
+
+    unmount();
+    await waitFor(() => expect(fake.client.blurView).toHaveBeenCalledWith(token));
+
+    await act(async () => {
+      focus.resolve();
+      await focus.promise;
+    });
+
+    // O foco em voo é limpo depois de resolver, com o mesmo token.
+    expect(fake.client.blurView).toHaveBeenCalledTimes(2);
+    expect(fake.client.blurView).toHaveBeenCalledWith(token);
+  });
+});
+
+describe("merge helpers", () => {
+  it("a_snapshot_with_equal_sequence_applies", () => {
+    const currentPlayer = playerView({ state: "idle", sequence: 3 });
+    const nextPlayer = playerView({ state: "playing", generation: 1, sequence: 3 });
+    expect(mergePlayer(currentPlayer, nextPlayer, "snapshot")).toBe(nextPlayer);
+
+    const currentRecording = recordingView({ state: "inactive", sequence: 3 });
+    const nextRecording = recordingView({
+      state: "ended",
+      sequence: 3,
+      captureId: "cap",
+    });
+    expect(mergeRecording(currentRecording, nextRecording, "snapshot")).toBe(
+      nextRecording,
+    );
+  });
+
+  it("an_event_with_equal_sequence_is_rejected", () => {
+    const currentPlayer = playerView({ state: "playing", generation: 1, sequence: 3 });
+    const nextPlayer = playerView({ state: "ended", generation: 1, sequence: 3 });
+    expect(mergePlayer(currentPlayer, nextPlayer, "event")).toBe(currentPlayer);
+
+    const currentRecording = recordingView({ state: "ended", sequence: 3, captureId: "cap" });
+    const nextRecording = recordingView({ state: "inactive", sequence: 3 });
+    expect(mergeRecording(currentRecording, nextRecording, "event")).toBe(
+      currentRecording,
     );
   });
 });
